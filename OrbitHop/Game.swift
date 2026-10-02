@@ -133,6 +133,11 @@ struct Popup {
     let text: String
     let color: Color
     var age: CGFloat
+
+    /// So lange bleibt der Text voll sichtbar, danach blendet er über `fade` aus.
+    static let hold: CGFloat = 2.0
+    static let fade: CGFloat = 0.8
+    static var lifetime: CGFloat { hold + fade }
 }
 
 struct Wave {
@@ -1494,7 +1499,7 @@ final class Game {
         particles.removeAll { $0.life <= 0 }
 
         for i in popups.indices { popups[i].age += dt }
-        popups.removeAll { $0.age > 1.3 }
+        popups.removeAll { $0.age > Popup.lifetime }
 
         for i in waves.indices { waves[i].age += dt }
         waves.removeAll { $0.age > $0.maxAge }

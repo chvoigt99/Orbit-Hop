@@ -913,8 +913,10 @@ extension Game {
         c.addFilter(.shadow(color: .black.opacity(0.85), radius: 3))
         for pp in popups {
             let sp = screenPoint(pp.pos, size)
-            let sy = sp.y - 18 - pp.age * 55
-            let alpha = Double(max(0, 1 - pp.age / 1.3))
+            // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
+            let rise = 1 - exp(-pp.age * 3)
+            let sy = sp.y - 18 - rise * 40
+            let alpha = Double(min(1, max(0, (Popup.lifetime - pp.age) / Popup.fade)))
             let text = Text(pp.text)
                 .font(.system(size: 18, weight: .bold, design: .monospaced))
                 .foregroundColor(pp.color.opacity(alpha))
