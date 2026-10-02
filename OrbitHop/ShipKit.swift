@@ -553,15 +553,15 @@ final class ShipKit {
     }
 
     /// Glaskanzel mit Rahmen
-    func canopy(_ x: Float, _ y: Float, len: CGFloat, height: CGFloat, width: CGFloat) {
+    func canopy(_ x: Float, _ y: Float, z: Float = 0, len: CGFloat, height: CGFloat, width: CGFloat) {
         let l = len, h = height
         profile([(l * 0.55, 0), (l * 0.1, h), (-l * 0.35, h * 0.85), (-l * 0.5, 0)].map { ($0.0 + CGFloat(x), $0.1 + CGFloat(y)) },
-                z: 0, thick: width, glass, chamfer: width * 0.4, mirror: false)
+                z: z, thick: width, glass, chamfer: width * 0.4, mirror: false)
         for t in [-0.3, -0.05, 0.2] as [CGFloat] {
-            box(x + Float(l * t), y + Float(h * (0.82 - abs(t) * 0.6)), 0, 0.05, 0.07, width * 1.03, metal, mirror: false)
+            box(x + Float(l * t), y + Float(h * (0.82 - abs(t) * 0.6)), z, 0.05, 0.07, width * 1.03, metal, mirror: false)
         }
-        box(x - Float(l * 0.05), y + Float(h * 0.9), 0, l * 0.75, 0.05, 0.05, metal, mirror: false)
-        box(x - Float(l * 0.05), y + 0.02, 0, l * 1.05, 0.08, width * 1.12, dark, chamfer: 0.03, mirror: false)
+        box(x - Float(l * 0.05), y + Float(h * 0.9), z, l * 0.75, 0.05, 0.05, metal, mirror: false)
+        box(x - Float(l * 0.05), y + 0.02, z, l * 1.05, 0.08, width * 1.12, dark, chamfer: 0.03, mirror: false)
     }
 
     /// Kanone mit Gehäuse, Mündungsbremse und Glühspitze
@@ -893,7 +893,13 @@ enum ShipDesigns {
         k.engine(-2.4, -0.1, 0.36, r: 0.26, len: 1.0)
         k.fin(-1.7, 0.5, 0.0, height: 0.8, len: 0.9, tilt: 0, k.accent)
         k.box(-2.0, -0.35, 0, 0.7, 0.3, 0.06, k.accent, chamfer: 0.02, mirror: false)
-        k.canopy(1.05, 0.6, len: 1.3, height: 0.34, width: 0.46)
+        // Cockpit seitlich in eigener Kapsel, damit die Railgun frei über den Rumpf laufen kann
+        k.hull([.init(2.9, 0.22, 0.04, 0.04), .init(2.5, 0.25, 0.22, 0.18), .init(1.4, 0.26, 0.26, 0.2), .init(0.9, 0.24, 0.18, 0.14)],
+               z: 0.78, k.stripe, mirror: false)
+        k.box(1.5, 0.22, 0.48, 0.6, 0.14, 0.4, k.dark, chamfer: 0.03, mirror: false)
+        k.box(1.0, 0.22, 0.48, 0.2, 0.1, 0.4, k.metal, chamfer: 0.02, mirror: false)
+        k.canopy(2.2, 0.4, z: 0.78, len: 0.9, height: 0.24, width: 0.34)
+        k.lamp(1.0, 0.4, 0.78, size: 0.08)
         k.plates(x0: -2.0, x1: 1.0, y: 0.5, width: 0.55, count: 5)
         k.belly(x0: -1.8, x1: 2.4, y: -0.25, width: 0.5)
         k.sidePanels(x0: 0.2, x1: 2.6, y: 0.12, z: 0.4, count: 4)
@@ -902,7 +908,7 @@ enum ShipDesigns {
         k.sensorNose(4.0, 0.05)
         k.lamp(3.0, 0.1, 0.3)
         k.antenna(-1.2, 0.55, 0.22, h: 0.5)
-        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (2.1, 4.1, 0.5), belly: (0.5, -0.5))
+        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (0.4, 4.0, 0.74), belly: (0.5, -0.5))
     }
 
     // Abfangjäger: vorwärts gepfeilte Flügel, zwei enge Triebwerke
@@ -968,7 +974,10 @@ enum ShipDesigns {
         // flacher Rückenkamm mit Kanzel
         k.hull([.init(2.0, 0.5, 0.05, 0.02), .init(1.2, 0.56, 0.3, 0.12), .init(-0.6, 0.54, 0.34, 0.12), .init(-1.3, 0.46, 0.2, 0.06)],
                top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
-        k.canopy(0.6, 0.64, len: 1.6, height: 0.36, width: 0.52)
+        // Cockpit seitlich in eigener Kapsel auf dem Flügel
+        k.hull([.init(2.0, 0.2, 0.04, 0.04), .init(1.6, 0.23, 0.2, 0.14), .init(0.6, 0.23, 0.24, 0.16), .init(0.2, 0.2, 0.16, 0.1)],
+               z: 1.1, k.second, mirror: false)
+        k.canopy(1.3, 0.34, z: 1.1, len: 0.85, height: 0.22, width: 0.3)
         // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
         k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
@@ -984,7 +993,7 @@ enum ShipDesigns {
         k.belly(x0: -1.2, x1: 1.6, y: -0.12, width: 0.7)
         k.sensorNose(3.5, 0.08)
         k.lamp(-0.9, 0.08, 2.95, size: 0.1)
-        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (2.0, 3.9, 0.42), belly: (-0.2, -0.4))
+        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-0.6, 3.4, 0.8), belly: (-0.2, -0.4))
     }
 
     // Flaggschiff: elegant, Flügelspitzen-Triebwerke, goldene Akzente
