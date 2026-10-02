@@ -28,9 +28,16 @@ final class SoundFX {
     private let fxBus = AVAudioMixerNode()
     private let reverb = AVAudioUnitReverb()
     private var nextPlayer = 0
-    private var buffers: [Effect: AVAudioPCMBuffer] = [:]
+    private var buffers: [Effect: [AVAudioPCMBuffer]] = [:]
     private let hum = HumState()
     private var started = false
+    // aufgenommener Triebwerks-Loop, Tonhöhe über Varispeed (falls im Bundle vorhanden)
+    private let humPlayer = AVAudioPlayerNode()
+    private let humSpeed = AVAudioUnitVarispeed()
+    private var humLoop = false
+    private var humVolume: Float = 0
+    private var humRate: Float = 1
+    private var lastHumUpdate = Date()
 
     private init() {}
 
@@ -59,6 +66,11 @@ final class SoundFX {
         let humNode = makeHumNode()
         engine.attach(humNode)
         engine.connect(humNode, to: engine.mainMixerNode, format: format)
+        engine.attach(humPlayer)
+        engine.attach(humSpeed)
+        engine.connect(humPlayer, to: humSpeed, format: format)
+        engine.connect(humSpeed, to: engine.mainMixerNode, format: format)
+        humPlayer.volume = 0
         engine.mainMixerNode.outputVolume = 0.9
         engine.prepare()
         startEngine()
@@ -70,11 +82,21 @@ final class SoundFX {
 
         let format = self.format
         DispatchQueue.global(qos: .userInitiated).async {
-            var made: [Effect: AVAudioPCMBuffer] = [:]
+            var made: [Effect: [AVAudioPCMBuffer]] = [:]
             for e in Effect.allCases {
-                if let b = Synth.buffer(for: e, format: format) { made[e] = b }
+                // Aufnahmen im Bundle haben Vorrang, sonst der erzeugte Klang
+                let recorded = Samples.load(e, format: format)
+                if !recorded.isEmpty {
+                    made[e] = recorded
+                } else if let b = Synth.buffer(for: e, format: format) {
+                    made[e] = [b]
+                }
             }
-            DispatchQueue.main.async { self.buffers = made }
+            let loop = Samples.loop("loop-engine", format: format)
+            DispatchQueue.main.async {
+                self.buffers = made
+                if let loop { self.startHumLoop(loop) }
+            }
         }
     }
 
@@ -85,7 +107,7 @@ final class SoundFX {
 
     /// Effekt abspielen (nur vom Main-Thread)
     func play(_ effect: Effect, volume: CGFloat = 1) {
-        guard Self.enabled, let buf = buffers[effect] else { return }
+        guard Self.enabled, let buf = buffers[effect]?.randomElement() else { return }
         startEngine()
         guard engine.isRunning else { return }
         let p = players[nextPlayer]
@@ -98,8 +120,30 @@ final class SoundFX {
 
     /// Triebwerkston pro Frame setzen: `level` 0…1, `pitch` in Hz. Die Werte werden im Synth weich angeglichen.
     func engineHum(level: CGFloat, pitch: CGFloat) {
-        hum.level = Self.enabled ? Float(max(0, min(1, level))) : 0
-        hum.pitch = Float(max(20, pitch))
+        let target = Self.enabled ? Float(max(0, min(1, level))) : 0
+        guard humLoop else {
+            hum.level = target
+            hum.pitch = Float(max(20, pitch))
+            return
+        }
+        // Aufnahme: Lautstärke und Abspieltempo weich nachführen (50 Hz entspricht Originaltempo)
+        let now = Date()
+        let dt = Float(min(0.1, now.timeIntervalSince(lastHumUpdate)))
+        lastHumUpdate = now
+        let k = 1 - exp(-dt * 6)
+        humVolume += (target * 0.55 - humVolume) * k
+        humRate += (Float(max(0.5, min(2.2, pitch / 50))) - humRate) * k
+        humPlayer.volume = humVolume
+        humSpeed.rate = humRate
+        hum.level = 0
+    }
+
+    private func startHumLoop(_ buffer: AVAudioPCMBuffer) {
+        startEngine()
+        guard engine.isRunning else { return }
+        humPlayer.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+        humPlayer.play()
+        humLoop = true
     }
 
 
@@ -161,6 +205,76 @@ final class SoundFX {
             }
             return noErr
         }
+    }
+}
+
+// MARK: - Aufnahmen
+
+/// Lädt Soundeffekte aus dem App-Bundle. Namensschema: `sfx-<effekt>.caf` oder mehrere Varianten
+/// `sfx-<effekt>-1.caf`, `sfx-<effekt>-2.caf` …, eine davon wird pro Abspielen zufällig gewählt.
+/// Erlaubt sind caf, wav, m4a und aif. Alles wird auf das Format der Engine umgerechnet.
+private enum Samples {
+    static func load(_ e: SoundFX.Effect, format: AVAudioFormat) -> [AVAudioPCMBuffer] {
+        let base = "sfx-\(e)"
+        var urls: [URL] = []
+        for ext in ["caf", "wav", "m4a", "aif", "aiff"] {
+            for url in Bundle.main.urls(forResourcesWithExtension: ext, subdirectory: nil) ?? [] {
+                let name = url.deletingPathExtension().lastPathComponent
+                if name == base || name.hasPrefix(base + "-") { urls.append(url) }
+            }
+        }
+        let maxLength = trim[e]
+        return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
+            guard let b = read(url, format: format) else { return nil }
+            if let maxLength { shorten(b, to: maxLength) }
+            return b
+        }
+    }
+
+    /// Lange Aufnahmen (Triebwerks-Schübe) werden auf diese Länge gekürzt und weich ausgeblendet
+    static let trim: [SoundFX.Effect: Double] = [.launch: 1.1, .rocket: 0.7, .rescue: 1.4]
+
+    static func loop(_ name: String, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        for ext in ["caf", "wav", "m4a", "aif"] {
+            if let url = Bundle.main.url(forResource: name, withExtension: ext) { return read(url, format: format) }
+        }
+        return nil
+    }
+
+    private static func shorten(_ b: AVAudioPCMBuffer, to seconds: Double) {
+        let n = min(Int(b.frameLength), Int(seconds * b.format.sampleRate))
+        let fade = min(n, Int(0.25 * b.format.sampleRate))
+        b.frameLength = AVAudioFrameCount(n)
+        guard let ch = b.floatChannelData else { return }
+        for c in 0..<Int(b.format.channelCount) {
+            for i in (n - fade)..<n {
+                let k = Float(n - i) / Float(fade)
+                ch[c][i] *= k * k
+            }
+        }
+    }
+
+    private static func read(_ url: URL, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let file = try? AVAudioFile(forReading: url),
+              let src = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: src)) != nil else { return nil }
+        if src.format == format { return src }
+        guard let conv = AVAudioConverter(from: src.format, to: format) else { return nil }
+        let ratio = format.sampleRate / src.format.sampleRate
+        let cap = AVAudioFrameCount(Double(src.frameLength) * ratio) + 1024
+        guard let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: cap) else { return nil }
+        var given = false
+        var err: NSError?
+        let status = conv.convert(to: dst, error: &err) { _, outStatus in
+            if given {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            given = true
+            outStatus.pointee = .haveData
+            return src
+        }
+        return status == .error ? nil : dst
     }
 }
 
