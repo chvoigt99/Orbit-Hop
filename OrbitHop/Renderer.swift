@@ -13,7 +13,7 @@ extension Game {
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
-        drawPopups(context, size)
+        if !stationOpen { drawPopups(context, size) }
         drawScreenFrame(context, size)
         if !stationOpen { drawRadar(context, size) }
         drawOverlays(context, size)

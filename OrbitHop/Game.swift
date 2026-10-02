@@ -562,9 +562,10 @@ final class Game {
     /// Flug endete durch zerstörte Panzerung statt leerer Energie
     private(set) var destroyed = false
 
-    /// Tech-Teile für eine volle Reparatur: 1 je 10 % Panzerung, 1 je 25 Energie
+    /// Tech-Teile für eine volle Reparatur: etwa 1 je 10 % Panzerung und 1 je 25 Energie, mindestens 1
     var repairCost: Int {
-        Int(ceil((Game.maxHull - hull - 0.5) / 10)) + Int(ceil((maxEnergy - energy - 0.5) / 25))
+        let missing = (Game.maxHull - hull) / 10 + (maxEnergy - energy) / 25
+        return missing < 0.05 ? 0 : max(1, Int(missing.rounded()))
     }
     var needsRepair: Bool { repairCost > 0 }
 
@@ -1004,7 +1005,7 @@ final class Game {
             else if atStation && stationMenuAt != nil {}
             else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
         }
-        if Game.popupTest, phase == .orbiting, Int((time - dt) / 3) != Int(time / 3) {
+        if Game.popupTest, phase == .orbiting, !atStation, Int((time - dt) / 3) != Int(time / 3) {
             for (t, h) in [("+1 TECH-TEIL", ItemKind.tech.hue), ("KOMET ZERSTÖRT", 200.0), ("+24", 140.0)] {
                 popups.append(Popup(pos: pos, text: t, color: hsl(h, 0.85, 0.65), age: 0))
             }
