@@ -397,19 +397,24 @@ enum Ship3D {
         }
     }
 
-    /// Einfache Umgebung für Spiegelungen auf Metall
-    private static let environment: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
+    /// Studio-Umgebung für Spiegelungen: dunkler Raum mit großen Softboxen, die Kanten auf Metall
+    /// und Lack aufblitzen lassen (äquirektangulär, oben = Himmel)
+    private static let environment: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 512)).image { ctx in
         let g = ctx.cgContext
-        let colors = [UIColor(red: 0.35, green: 0.45, blue: 0.65, alpha: 1).cgColor,
-                      UIColor(red: 0.06, green: 0.08, blue: 0.16, alpha: 1).cgColor,
-                      UIColor(red: 0.01, green: 0.01, blue: 0.03, alpha: 1).cgColor] as CFArray
-        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.5, 1])!
-        g.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
-        g.setFillColor(UIColor(white: 1, alpha: 0.9).cgColor)
-        g.fill(CGRect(x: 120, y: 30, width: 90, height: 18))
-        g.fill(CGRect(x: 330, y: 50, width: 40, height: 40))
-        g.setFillColor(UIColor(red: 0.3, green: 0.9, blue: 0.8, alpha: 0.6).cgColor)
-        g.fill(CGRect(x: 0, y: 118, width: 512, height: 6))
+        let colors = [UIColor(red: 0.16, green: 0.17, blue: 0.2, alpha: 1).cgColor,
+                      UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1).cgColor,
+                      UIColor(red: 0.02, green: 0.02, blue: 0.02, alpha: 1).cgColor] as CFArray
+        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.55, 1])!
+        g.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: 512), options: [])
+        // Softboxen: breite Streifen oben und seitlich
+        func box(_ r: CGRect, _ c: UIColor) {
+            g.setFillColor(c.cgColor)
+            g.fill(r)
+        }
+        box(CGRect(x: 180, y: 40, width: 260, height: 70), UIColor(white: 1, alpha: 1))
+        box(CGRect(x: 640, y: 120, width: 60, height: 200), UIColor(red: 0.75, green: 0.85, blue: 1, alpha: 1))
+        box(CGRect(x: 900, y: 150, width: 90, height: 120), UIColor(red: 1, green: 0.85, blue: 0.7, alpha: 0.8))
+        box(CGRect(x: 0, y: 236, width: 1024, height: 4), UIColor(white: 0.5, alpha: 1))
     }
 
     private static func scaledPath(_ hull: HullClass, sx: CGFloat, sy: CGFloat, dx: CGFloat) -> CGPath {
@@ -459,7 +464,7 @@ enum Ship3D {
         let scene = SCNScene()
         scene.background.contents = UIColor.clear
         scene.lightingEnvironment.contents = environment
-        scene.lightingEnvironment.intensity = 1.6
+        scene.lightingEnvironment.intensity = showcase ? 1.3 : 1.6
 
         let accent = ui(m.weapon.hue, 0.85, 0.6)
         let pivot = shipNode(for: m, showcase: showcase)
@@ -470,21 +475,33 @@ enum Ship3D {
         let key = SCNNode()
         key.light = SCNLight()
         key.light?.type = .directional
-        key.light?.intensity = 1100
+        key.light?.intensity = showcase ? 2200 : 1100
         key.light?.color = UIColor(red: 1, green: 0.95, blue: 0.88, alpha: 1)
+        if showcase {
+            // weiche Schatten geben den Bauteilen Tiefe
+            key.light?.castsShadow = true
+            key.light?.shadowMode = .deferred
+            key.light?.shadowMapSize = CGSize(width: 2048, height: 2048)
+            key.light?.shadowSampleCount = 16
+            key.light?.shadowRadius = 2.5
+            key.light?.shadowColor = UIColor(white: 0, alpha: 0.75)
+            key.light?.orthographicScale = 6
+            key.light?.zNear = 1
+            key.light?.zFar = 40
+        }
         key.eulerAngles = showcase ? SCNVector3(-Float.pi / 3, Float.pi / 5, 0) : SCNVector3(-Float.pi / 2.4, Float.pi / 6, 0)
         scene.rootNode.addChildNode(key)
         let rim = SCNNode()
         rim.light = SCNLight()
         rim.light?.type = .directional
-        rim.light?.intensity = 600
+        rim.light?.intensity = showcase ? 1500 : 600
         rim.light?.color = UIColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)
         rim.eulerAngles = SCNVector3(-Float.pi / 6, Float.pi, 0)
         scene.rootNode.addChildNode(rim)
         let amb = SCNNode()
         amb.light = SCNLight()
         amb.light?.type = .ambient
-        amb.light?.intensity = 250
+        amb.light?.intensity = showcase ? 70 : 250
         amb.light?.color = UIColor(red: 0.6, green: 0.7, blue: 0.9, alpha: 1)
         scene.rootNode.addChildNode(amb)
 
@@ -493,13 +510,27 @@ enum Ship3D {
         cam.name = "camera"
         if showcase {
             // Holo-Plattform
-            let platform = UIColor(red: 0.31, green: 0.89, blue: 0.76, alpha: 1)
+            let platform = UIColor(red: 0.31, green: 0.89, blue: 0.76, alpha: 0.45)
             scene.rootNode.addChildNode(node(SCNTorus(ringRadius: 3.8, pipeRadius: 0.025), glow(platform), SCNVector3(0, -1.1, 0)))
             scene.rootNode.addChildNode(node(SCNTorus(ringRadius: 3.2, pipeRadius: 0.012), glow(platform.withAlphaComponent(0.5)), SCNVector3(0, -1.1, 0)))
             let discMat = glow(UIColor(red: 0.02, green: 0.12, blue: 0.11, alpha: 1))
             discMat.blendMode = .add
             let disc = node(SCNCylinder(radius: 3.8, height: 0.01), discMat, SCNVector3(0, -1.12, 0))
             scene.rootNode.addChildNode(disc)
+            // unsichtbarer Boden, der nur den Schatten des Schiffs zeigt
+            let catcher = SCNMaterial()
+            catcher.lightingModel = .shadowOnly
+            let floor = node(SCNPlane(width: 14, height: 14), catcher, SCNVector3(0, -1.1, 0))
+            floor.eulerAngles.x = -.pi / 2
+            scene.rootNode.addChildNode(floor)
+            // schwaches Gegenlicht von unten, damit die Unterseite nicht absäuft
+            let fill = SCNNode()
+            fill.light = SCNLight()
+            fill.light?.type = .directional
+            fill.light?.intensity = 300
+            fill.light?.color = UIColor(red: 1, green: 0.7, blue: 0.45, alpha: 1)
+            fill.eulerAngles = SCNVector3(Float.pi / 5, -Float.pi / 1.5, 0)
+            scene.rootNode.addChildNode(fill)
 
             pivot.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 12)))
             let up = SCNAction.moveBy(x: 0, y: 0.15, z: 0, duration: 1.6)
@@ -513,7 +544,13 @@ enum Ship3D {
             cam.camera?.bloomIntensity = 0.6
             cam.camera?.bloomThreshold = 0.95
             cam.camera?.bloomBlurRadius = 8
-            cam.camera?.screenSpaceAmbientOcclusionIntensity = 0.8
+            cam.camera?.screenSpaceAmbientOcclusionIntensity = 1.6
+            cam.camera?.screenSpaceAmbientOcclusionRadius = 0.35
+            cam.camera?.screenSpaceAmbientOcclusionBias = 0.02
+            cam.camera?.vignettingIntensity = 0.7
+            cam.camera?.vignettingPower = 1.2
+            cam.camera?.saturation = 0.95
+            cam.camera?.contrast = 0.15
             cam.position = SCNVector3(0, 5.4, 9.8)
             cam.look(at: SCNVector3(0, -0.1, 0))
         } else {

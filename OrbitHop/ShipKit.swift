@@ -11,18 +11,68 @@ enum WornPaint {
     static func material(_ key: String, base: UIColor, stripe: UIColor? = nil, marking: String? = nil) -> SCNMaterial {
         let id = "\(key)-\(marking ?? "")"
         if let m = cache[id] { return m }
-        let (albedo, normal, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: marking)
+        // Kennungen würden sich beim Kacheln überall wiederholen, deshalb ohne Beschriftung
+        let (albedo, height, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: nil)
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
+        // Fallback, falls der Shader nicht greift
         m.diffuse.contents = albedo
-        m.normal.contents = normal
-        m.normal.intensity = 0.8
         m.roughness.contents = rough
         m.metalness.contents = metal
+        // Texturen werden dreiachsig im Modellraum projiziert: gleiche Detaildichte auf jedem Bauteil,
+        // egal wie groß oder klein es ist. Nähte und Kanten kommen als Relief über die Höhenkarte.
+        m.shaderModifiers = [.surface: triplanar]
+        m.setValue(SCNMaterialProperty(contents: albedo), forKey: "tpAlbedo")
+        m.setValue(SCNMaterialProperty(contents: rough), forKey: "tpRough")
+        m.setValue(SCNMaterialProperty(contents: metal), forKey: "tpMetal")
+        m.setValue(SCNMaterialProperty(contents: height), forKey: "tpHeight")
+        m.setValue(NSNumber(value: 1.0 / 2.4), forKey: "tpScale")
+        m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
         return m
     }
 
+    /// Dreiachsige Projektion (Triplanar) im Modellraum plus Relief aus der Höhenkarte über Bildschirm-Ableitungen.
+    static let triplanar = """
+    #pragma arguments
+    texture2d<float> tpAlbedo;
+    texture2d<float> tpRough;
+    texture2d<float> tpMetal;
+    texture2d<float> tpHeight;
+    float tpScale;
+    float tpBump;
+
+    #pragma body
+    constexpr sampler tpS(filter::linear, mip_filter::linear, address::repeat);
+    float3 tpPos = (scn_node.inverseModelViewTransform * float4(_surface.position, 1.0)).xyz * tpScale;
+    float3 tpN = normalize((scn_node.inverseModelViewTransform * float4(_surface.normal, 0.0)).xyz);
+    float3 tpW = pow(abs(tpN), float3(6.0));
+    tpW = tpW / (tpW.x + tpW.y + tpW.z);
+    float2 tpUX = tpPos.zy;
+    float2 tpUY = tpPos.xz;
+    float2 tpUZ = tpPos.xy;
+    float4 tpA = tpAlbedo.sample(tpS, tpUX) * tpW.x + tpAlbedo.sample(tpS, tpUY) * tpW.y + tpAlbedo.sample(tpS, tpUZ) * tpW.z;
+    float tpR = tpRough.sample(tpS, tpUX).r * tpW.x + tpRough.sample(tpS, tpUY).r * tpW.y + tpRough.sample(tpS, tpUZ).r * tpW.z;
+    float tpM = tpMetal.sample(tpS, tpUX).r * tpW.x + tpMetal.sample(tpS, tpUY).r * tpW.y + tpMetal.sample(tpS, tpUZ).r * tpW.z;
+    float tpH = tpHeight.sample(tpS, tpUX).r * tpW.x + tpHeight.sample(tpS, tpUY).r * tpW.y + tpHeight.sample(tpS, tpUZ).r * tpW.z;
+    _surface.diffuse = float4(tpA.rgb, 1.0);
+    _surface.roughness = tpR;
+    _surface.metalness = tpM;
+    // Relief: Normale anhand der Höhenänderung pro Bildpunkt kippen
+    float3 tpDpx = dfdx(_surface.position);
+    float3 tpDpy = dfdy(_surface.position);
+    float tpDhx = dfdx(tpH);
+    float tpDhy = dfdy(tpH);
+    float3 tpNv = _surface.normal;
+    float3 tpR1 = cross(tpDpy, tpNv);
+    float3 tpR2 = cross(tpNv, tpDpx);
+    float tpDet = dot(tpDpx, tpR1);
+    float3 tpGrad = sign(tpDet) * (tpDhx * tpR1 + tpDhy * tpR2);
+    float3 tpNew = abs(tpDet) * tpNv - tpBump * tpGrad;
+    if (length(tpNew) > 1e-6) { _surface.normal = normalize(tpNew); }
+    """
+
+    /// liefert (Farbe, Höhe, Rauheit, Metall)
     private static func textures(seed: String, base: UIColor, stripe: UIColor?, marking: String?) -> (UIImage, UIImage, UIImage, UIImage) {
         var rng = SeededRNG(seed)
         let s: CGFloat = 512
@@ -30,7 +80,7 @@ enum WornPaint {
         // Positionen für Abplatzer, bevorzugt an den Kanten
         struct Chip { let path: UIBezierPath; let deep: Bool }
         var chips: [Chip] = []
-        for _ in 0..<170 {
+        for _ in 0..<70 {
             var x = rng.c(0...s), y = rng.c(0...s)
             if rng.chance(0.7) {
                 switch Int(rng.d(0...3.99)) {
@@ -40,7 +90,7 @@ enum WornPaint {
                 default: y = s - rng.c(0...26)
                 }
             }
-            let r = rng.c(2...11)
+            let r = rng.c(1.5...7)
             let p = UIBezierPath()
             let n = 6
             for k in 0..<n {
@@ -50,7 +100,7 @@ enum WornPaint {
                 if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
             }
             p.close()
-            chips.append(Chip(path: p, deep: rng.chance(0.6)))
+            chips.append(Chip(path: p, deep: rng.chance(0.35)))
         }
         // Paneelnähte
         var seams: [(CGPoint, CGPoint)] = []
@@ -175,12 +225,16 @@ enum WornPaint {
                 g.addLine(to: CGPoint(x: x + rng.c(-40...40), y: y + rng.c(-12...12)))
             }
             g.strokePath()
-            // Schmutz unten
-            let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                  colors: [UIColor(red: 0.2, green: 0.15, blue: 0.1, alpha: 0).cgColor,
-                                           UIColor(red: 0.2, green: 0.15, blue: 0.1, alpha: 0.35).cgColor] as CFArray,
-                                  locations: [0, 1])!
-            g.drawLinearGradient(grad, start: CGPoint(x: 0, y: s * 0.6), end: CGPoint(x: 0, y: s), options: [])
+            // weiche Schmutzflecken (kachelbar, ohne Verlauf über die ganze Fläche)
+            for _ in 0..<14 {
+                let r = rng.c(30...90)
+                let c = CGPoint(x: rng.c(0...s), y: rng.c(0...s))
+                let grime = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                       colors: [UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: rng.c(0.08...0.18)).cgColor,
+                                                UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: 0).cgColor] as CFArray,
+                                       locations: [0, 1])!
+                g.drawRadialGradient(grime, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
+            }
         }
 
         func gray(_ draw: (CGContext) -> Void, fill: CGFloat) -> UIImage {
@@ -216,33 +270,7 @@ enum WornPaint {
                 c.path.fill()
             }
         }, fill: 0.08)
-        return (albedo, normalMap(height, size: 256), rough, metal)
-    }
-
-    private static func normalMap(_ img: UIImage, size: Int) -> UIImage {
-        guard let cg = img.cgImage else { return img }
-        var gray = [UInt8](repeating: 0, count: size * size)
-        let ctx = CGContext(data: &gray, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size,
-                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: size, height: size))
-        var out = [UInt8](repeating: 255, count: size * size * 4)
-        func h(_ x: Int, _ y: Int) -> Double { Double(gray[min(size - 1, max(0, y)) * size + min(size - 1, max(0, x))]) / 255 }
-        for y in 0..<size {
-            for x in 0..<size {
-                let dx = (h(x + 1, y) - h(x - 1, y)) * 2.5
-                let dy = (h(x, y + 1) - h(x, y - 1)) * 2.5
-                let len = (dx * dx + dy * dy + 1).squareRoot()
-                let i = (y * size + x) * 4
-                out[i] = UInt8(max(0, min(255, (-dx / len * 0.5 + 0.5) * 255)))
-                out[i + 1] = UInt8(max(0, min(255, (dy / len * 0.5 + 0.5) * 255)))
-                out[i + 2] = UInt8(max(0, min(255, (1 / len * 0.5 + 0.5) * 255)))
-            }
-        }
-        let provider = CGDataProvider(data: Data(out) as CFData)!
-        let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: image)
+        return (albedo, height, rough, metal)
     }
 }
 
