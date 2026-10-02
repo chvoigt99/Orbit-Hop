@@ -10,9 +10,13 @@ import Foundation
 final class SoundFX {
     static let shared = SoundFX()
 
+    /// Sound ist vorerst abgeschaltet (Klangrichtung noch offen). Auf `true` setzen, um ihn wieder zu aktivieren;
+    /// dann erscheinen auch die Ton-Schalter wieder.
+    static let available = false
+
     static let enabledKey = "orbitHopSound"
     static var enabled: Bool {
-        get { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
+        get { available && (UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true) }
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
     }
 
@@ -37,7 +41,7 @@ final class SoundFX {
 
     /// Einmal beim App-Start aufrufen. Die Klänge werden im Hintergrund erzeugt.
     func prepare() {
-        guard !started else { return }
+        guard Self.available, !started else { return }
         started = true
         let session = AVAudioSession.sharedInstance()
         // .ambient: mischt sich mit Musik anderer Apps und folgt dem Stummschalter

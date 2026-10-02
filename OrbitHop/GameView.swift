@@ -274,8 +274,10 @@ struct GameView: View {
                 menuButton("WEITER", "play.fill", signal) { game.paused = false }
                 menuButton("NEUSTART", "arrow.counterclockwise", gold) { game.restart() }
                 menuButton("ABBRECHEN", "xmark", warn) { game.abort() }
-                menuButton(soundOn ? "TON AN" : "TON AUS", soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill", dim) {
-                    soundOn.toggle()
+                if SoundFX.available {
+                    menuButton(soundOn ? "TON AN" : "TON AUS", soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill", dim) {
+                        soundOn.toggle()
+                    }
                 }
             }
             .padding(.horizontal, 28)
@@ -442,7 +444,7 @@ struct GameView: View {
                 .allowsHitTesting(false)
             HStack(spacing: 10) {
                 shipsButton
-                soundButton
+                if SoundFX.available { soundButton }
             }
         }
         .padding(.horizontal, 16)
