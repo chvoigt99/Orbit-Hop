@@ -544,7 +544,7 @@ final class Game {
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
-    static let stationTest = true
+    static let stationTest = false
 
     // MARK: Raumstation
     /// Index des nächsten Planeten, der eine Raumstation wird
