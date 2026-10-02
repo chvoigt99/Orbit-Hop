@@ -23,7 +23,14 @@ struct SmoothSpring {
         let change = value - target
         let temp = (velocity + omega * change) * dt
         velocity = (velocity - omega * temp) * decay
+        let previous = value
         value = target + (change + temp) * decay
+        // Mit Restschwung aus der vorigen Bewegung würde die Feder übers Ziel hinausschießen
+        // und zurückfedern. Stattdessen am Ziel anhalten.
+        if (target - previous > 0) == (value > target) {
+            value = target
+            velocity = 0
+        }
         return value
     }
 

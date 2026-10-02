@@ -1090,7 +1090,11 @@ final class World3D {
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
         let k = chase * chase * (3 - 2 * chase)
-        let ka = arrival * arrival * (3 - 2 * arrival)
+        // Übergang aus der Anflug-Einstellung: das Wegfahren passiert vorn im Übergang und läuft
+        // ruhig aus, statt kurz vor Schluss noch einmal sichtbar nach hinten zu ziehen
+        let ap = 1 - arrival
+        let ae = 1 - (1 - ap) * (1 - ap)
+        let ka = 1 - ae * ae * (3 - 2 * ae)
 
         // Bildschirm-konstante Größe (Welt-Einheiten pro Punkt)
         let fovRad = CGFloat(50) * .pi / 180
