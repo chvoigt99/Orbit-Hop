@@ -1775,7 +1775,13 @@ final class World3D {
             let d = Float(topDist) * 0.92
             let svPos = SCNVector3(center.x + d * cos(el) * cos(az), d * sin(el), center.z + d * cos(el) * sin(az))
             pos = SCNVector3(pos.x + (svPos.x - pos.x) * sv, pos.y + (svPos.y - pos.y) * sv, pos.z + (svPos.z - pos.z) * sv)
-            lookA = SCNVector3(lookA.x + (center.x - lookA.x) * sv, lookA.y + (center.y - lookA.y) * sv, lookA.z + (center.z - lookA.z) * sv)
+            // Blickpunkt vor die Station ziehen, damit sie im oberen Drittel über dem Menü sitzt:
+            // die Kamera schaut um tilt steiler nach unten als zur Stationsmitte
+            let tilt: Float = 0.26
+            let h = d * sin(el), dh = d * cos(el)
+            let pull = dh - h / tan(el + tilt)
+            let svLook = SCNVector3(center.x + pull * cos(az), 0, center.z + pull * sin(az))
+            lookA = SCNVector3(lookA.x + (svLook.x - lookA.x) * sv, lookA.y + (svLook.y - lookA.y) * sv, lookA.z + (svLook.z - lookA.z) * sv)
         }
         cameraNode.position = pos
         // Rollen: Hochrichtung leicht zur Seite kippen (Seite = Blickrichtung × oben)
@@ -1783,8 +1789,6 @@ final class World3D {
         let len = max(0.001, (dx * dx + dz * dz).squareRoot())
         let up = SCNVector3(-dz / len * roll, 1, dx / len * roll)
         cameraNode.look(at: lookA, up: up, localFront: SCNVector3(0, 0, -1))
-        // Station ins obere Bilddrittel: Kamera etwas nach unten neigen, das Menü liegt darunter
-        if sv > 0 { cameraNode.simdLocalRotate(by: simd_quatf(angle: -0.2 * sv, axis: SIMD3<Float>(1, 0, 0))) }
         lastLook = lookA
         let normalFov = 50 + 12 * k
         var fov = normalFov + (parkedFov - normalFov) * ka
