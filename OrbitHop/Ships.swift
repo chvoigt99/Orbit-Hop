@@ -70,9 +70,9 @@ enum Grade: Int {
     var cost: Int {
         switch self {
         case .start: return 0
-        case .normal: return 2
-        case .good: return 4
-        case .superior: return 7
+        case .normal: return 15
+        case .good: return 35
+        case .superior: return 75
         }
     }
 
@@ -383,6 +383,7 @@ struct ShipShopView: View {
     let onClose: () -> Void
 
     @State private var page = 0
+    @State private var showStore = false
 
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
     private let gold = Color(red: 1, green: 0.85, blue: 0.42)
@@ -416,6 +417,10 @@ struct ShipShopView: View {
         )
         .onAppear { page = ShipModel.all.firstIndex { $0.id == profile.selectedID } ?? 0 }
         .statusBarHidden(true)
+        .sheet(isPresented: $showStore) {
+            ShipPartStoreView(profile: profile) { showStore = false }
+                .presentationDetents([.medium, .large])
+        }
     }
 
     private var header: some View {
@@ -429,15 +434,19 @@ struct ShipShopView: View {
                     .shadow(color: signal.opacity(0.6), radius: 10)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                label("SCHIFFSTEILE").foregroundStyle(dim)
-                HStack(spacing: 5) {
-                    Image(systemName: "puzzlepiece.fill").font(.system(size: 14))
-                    Text("\(profile.shipParts)")
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+            // Tippen öffnet den Kauf von Schiffsteilen
+            Button { showStore = true } label: {
+                VStack(alignment: .trailing, spacing: 2) {
+                    label("SCHIFFSTEILE +").foregroundStyle(dim)
+                    HStack(spacing: 5) {
+                        Image(systemName: "puzzlepiece.fill").font(.system(size: 14))
+                        Text("\(profile.shipParts)")
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                    }
+                    .foregroundStyle(shipPartColor)
                 }
-                .foregroundStyle(shipPartColor)
             }
+            .buttonStyle(.plain)
             VStack(alignment: .trailing, spacing: 2) {
                 label("TECH-TEILE").foregroundStyle(dim)
                 HStack(spacing: 5) {
@@ -607,13 +616,13 @@ struct ShipShopView: View {
             Button { profile.select(m) } label: { buttonLabel("AUSWÄHLEN", signal, filled: false) }
                 .buttonStyle(.plain)
         } else {
+            // zu wenig Schiffsteile: der Knopf führt zum Kauf
             let can = profile.shipParts >= m.grade.cost
-            Button { profile.unlock(m) } label: {
-                buttonLabel(can ? "FREISCHALTEN · \(m.grade.cost) SCHIFFSTEILE" : "BENÖTIGT \(m.grade.cost) SCHIFFSTEILE",
-                            can ? shipPartColor : dim, filled: false)
+            Button { if can { profile.unlock(m) } else { showStore = true } } label: {
+                buttonLabel(can ? "FREISCHALTEN · \(m.grade.cost) SCHIFFSTEILE" : "\(m.grade.cost) SCHIFFSTEILE · KAUFEN",
+                            shipPartColor.opacity(can ? 1 : 0.7), filled: false)
             }
             .buttonStyle(.plain)
-            .disabled(!can)
         }
     }
 

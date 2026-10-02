@@ -78,6 +78,10 @@ struct GameView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
             }
         }
+        .task {
+            // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
+            Store.shared.onCredit = { game.profile.addShipParts($0) }
+        }
         .fullScreenCover(isPresented: $showShop) {
             ShipShopView(profile: game.profile) {
                 game.equip()

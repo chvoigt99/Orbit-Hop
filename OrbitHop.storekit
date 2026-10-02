@@ -1,0 +1,64 @@
+{
+  "identifier": "3994F05E",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "1.99",
+      "familyShareable": false,
+      "internalID": "B33606E80",
+      "localizations": [
+        {
+          "description": "10 Schiffsteile zum Freischalten neuer Schiffe",
+          "displayName": "10 Schiffsteile",
+          "locale": "de"
+        }
+      ],
+      "productID": "com.chv.OrbitHop.shipparts.10",
+      "referenceName": "Schiffsteile 10",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "4.99",
+      "familyShareable": false,
+      "internalID": "B58197470",
+      "localizations": [
+        {
+          "description": "30 Schiffsteile zum Freischalten neuer Schiffe",
+          "displayName": "30 Schiffsteile",
+          "locale": "de"
+        }
+      ],
+      "productID": "com.chv.OrbitHop.shipparts.30",
+      "referenceName": "Schiffsteile 30",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "9.99",
+      "familyShareable": false,
+      "internalID": "C874CE8C0",
+      "localizations": [
+        {
+          "description": "80 Schiffsteile zum Freischalten neuer Schiffe",
+          "displayName": "80 Schiffsteile",
+          "locale": "de"
+        }
+      ],
+      "productID": "com.chv.OrbitHop.shipparts.80",
+      "referenceName": "Schiffsteile 80",
+      "type": "Consumable"
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "",
+    "_developerTeamID": "B2FZN6VFRZ",
+    "_failTransactionsEnabled": false,
+    "_locale": "de_DE",
+    "_storefront": "DEU",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
+}
