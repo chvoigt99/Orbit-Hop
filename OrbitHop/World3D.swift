@@ -1781,7 +1781,7 @@ final class World3D {
             pos = SCNVector3(pos.x + (svPos.x - pos.x) * sv, pos.y + (svPos.y - pos.y) * sv, pos.z + (svPos.z - pos.z) * sv)
             // Blickpunkt vor die Station ziehen, damit sie im oberen Drittel über dem Menü sitzt:
             // die Kamera schaut um tilt steiler nach unten als zur Stationsmitte
-            let tilt: Float = 0.26
+            let tilt: Float = 0.12
             let h = d * sin(el), dh = d * cos(el)
             let pull = dh - h / tan(el + tilt)
             let svLook = SCNVector3(center.x + pull * cos(az), 0, center.z + pull * sin(az))
