@@ -722,9 +722,9 @@ final class World3D {
             if i % 3 == 0 {
                 let len = R * 0.6
                 let spoke = SCNCylinder(radius: CGFloat(R * 0.04), height: CGFloat(len))
-                holder.addChildNode(node(spoke, dark, SCNVector3(R * 0.24 + len / 2, 0, 0), rot: SCNVector3(0, 0, .pi / 2)))
+                holder.addChildNode(node(spoke, dark, SCNVector3(R * 0.24 + len / 2, 0, 0), rot: SCNVector3(0, 0, Float.pi / 2)))
                 let joint = SCNCylinder(radius: CGFloat(R * 0.06), height: CGFloat(R * 0.05))
-                holder.addChildNode(node(joint, hull, SCNVector3(R * 0.55, 0, 0), rot: SCNVector3(0, 0, .pi / 2)))
+                holder.addChildNode(node(joint, hull, SCNVector3(R * 0.55, 0, 0), rot: SCNVector3(0, 0, Float.pi / 2)))
             }
         }
 
@@ -758,7 +758,7 @@ final class World3D {
             root.addChildNode(g)
         }
         // Positionslichter oben auf dem Rad (rot/grün wie bei Schiffen)
-        for (a, c) in [(Float(0), UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)), (.pi, UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 1))] {
+        for (a, c) in [(Float(0), UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)), (Float.pi, UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 1))] {
             let l = SCNSphere(radius: CGFloat(R * 0.025))
             let ln = node(l, glow(c), SCNVector3(cos(a) * R * 1.02, R * 0.1, sin(a) * R * 1.02))
             blink(ln, Double(a) * 0.2)
