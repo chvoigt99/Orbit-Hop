@@ -423,6 +423,10 @@ final class Game {
 
     var cam = CGPoint.zero
     var camScale: CGFloat = 0.4
+    // Federn hinter cam und camScale (Zoom läuft logarithmisch, damit Rein- und Rauszoomen gleich wirken)
+    private var camSpringX = SmoothSpring(0)
+    private var camSpringY = SmoothSpring(0)
+    private var camSpringZoom = SmoothSpring(log(0.4))
 
     // Bonus-Items
     var items: [Item] = []
@@ -545,6 +549,9 @@ final class Game {
         hintShown = true
         cam = planets[0].center
         camScale = 0.4
+        camSpringX.snap(to: cam.x)
+        camSpringY.snap(to: cam.y)
+        camSpringZoom.snap(to: log(camScale))
         techFocus = 0
         techZoom = 0
         overflow = 0
@@ -1424,16 +1431,18 @@ final class Game {
         // Tech-Teil gefunden: weich aufs Schiff zoomen
         techFocus = max(0, techFocus - dt)
         // rein zügig, raus langsam
-        techZoom += ((techFocus > 0 ? 1 : 0) - techZoom) * min(1, dt * (techFocus > 0 ? 1.6 : 0.6))
+        techZoom = smoothApproach(techZoom, techFocus > 0 ? 1 : 0, rate: techFocus > 0 ? 1.6 : 0.6, dt: dt)
         let f = techZoom * techZoom * (3 - 2 * techZoom)
         targetCenter = CGPoint(x: targetCenter.x + (pos.x - targetCenter.x) * f, y: targetCenter.y + (pos.y - targetCenter.y) * f)
         targetScale += (max(targetScale * 2.2, 0.6) - targetScale) * f
 
+        // Federn statt fester Lerp-Rate: bei jedem Zielwechsel (neuer Planet, Start) läuft die Kamera
+        // weich an, statt mit voller Geschwindigkeit loszuspringen.
         // gesperrt: zügig ansteuern, das passiert unsichtbar hinter der Anflug-Einstellung
-        let k = 1 - exp(-dt * (cameraLock != nil ? 2.5 : 0.8))
-        cam.x += (targetCenter.x - cam.x) * k
-        cam.y += (targetCenter.y - cam.y) * k
-        camScale += (targetScale - camScale) * k
+        let smoothTime: CGFloat = cameraLock != nil ? 0.45 : 1.2
+        cam.x = camSpringX.update(to: targetCenter.x, smoothTime: smoothTime, dt: dt)
+        cam.y = camSpringY.update(to: targetCenter.y, smoothTime: smoothTime, dt: dt)
+        camScale = exp(camSpringZoom.update(to: log(targetScale), smoothTime: smoothTime, dt: dt))
     }
 }
 

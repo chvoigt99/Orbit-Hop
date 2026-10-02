@@ -293,6 +293,8 @@ final class World3D {
     private var chaseOn = false
     private var releasing = false
     private var chasedThisFlight = false
+    /// geglätteter Kurs für die Verfolgerkamera, damit Lenkkorrekturen nicht als Ruckler ankommen
+    private var chaseHeading = SmoothAngle(0)
     private var lastPhase: Game.Phase = .orbiting
 
     private var generation = -1
@@ -1079,7 +1081,13 @@ final class World3D {
         let want: CGFloat = danger ? 1 : 0
         // rein zügig, raus langsam und weich
         releasing = !danger && chase > 0.001
-        chase += (want - chase) * min(1, dt * (danger ? 1.4 : 0.45))
+        chase = smoothApproach(chase, want, rate: danger ? 1.4 : 0.45, dt: dt)
+        // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
+        if chase < 0.001 {
+            chaseHeading.snap(to: game.heading)
+        } else {
+            chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
+        }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
         let k = chase * chase * (3 - 2 * chase)
         let ka = arrival * arrival * (3 - 2 * arrival)
@@ -1367,7 +1375,7 @@ final class World3D {
             arrivalHold = game.time
         }
         let want: CGFloat = arrivalActive && game.time < arrivalHold ? 1 : 0
-        arrival += (want - arrival) * min(1, dt * 0.75)
+        arrival = smoothApproach(arrival, want, rate: 0.75, dt: dt)
         if want == 0 && arrival < 0.01 {
             arrival = 0
             arrivalActive = false
@@ -1382,7 +1390,7 @@ final class World3D {
         let topPos = SCNVector3(target.x, Float(topDist * cos(tilt)), target.z + Float(topDist * sin(tilt)))
 
         // hinter und über dem Schiff
-        let hd = game.heading
+        let hd = chaseHeading.value
         let ship = game.pos
         let chasePos = SCNVector3(Float(ship.x - cos(hd) * 190), 95, Float(ship.y - sin(hd) * 190))
         let chaseLook = SCNVector3(Float(ship.x + cos(hd) * 260), 0, Float(ship.y + sin(hd) * 260))
