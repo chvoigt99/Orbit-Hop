@@ -79,7 +79,7 @@ struct HullTextures {
         let accent = UIColor(hsl(m.weapon.hue, 0.85, 0.58))
 
         // Albedo
-        let albedo = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+        let albedo = textureRenderer(CGSize(width: size, height: size)).image { ctx in
             let g = ctx.cgContext
             for p in panels {
                 let col: UIColor
@@ -189,7 +189,7 @@ struct HullTextures {
         // Höhenkarte → Normal-Map
         let hs = 512
         let scale = CGFloat(hs) / size
-        let heightImg = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let heightImg = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.scaleBy(x: scale, y: scale)
             for p in panels {
@@ -222,7 +222,7 @@ struct HullTextures {
         }
         let normal = normalMap(from: heightImg, size: hs, strength: 3.0)
 
-        let roughness = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let roughness = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.scaleBy(x: scale, y: scale)
             for p in panels {
@@ -231,7 +231,7 @@ struct HullTextures {
             }
         }
 
-        let emission = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let emission = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.setFillColor(UIColor.black.cgColor)
             g.fill(CGRect(x: 0, y: 0, width: hs, height: hs))
@@ -298,7 +298,13 @@ enum Ship3D {
     /// Ausschnitt des Sprites in Modell-Einheiten (Breite = Höhe)
     static let spriteSpan: CGFloat = 9
 
+    private static var sceneOrder: [String] = []
+
+    /// Showcase-Szenen sind speicherhungrig (Schatten, HDR, Texturen); nur die zuletzt gezeigten bleiben im Cache.
     static func scene(for m: ShipModel) -> SCNScene {
+        sceneOrder.removeAll { $0 == m.id }
+        sceneOrder.append(m.id)
+        while sceneOrder.count > 4 { sceneCache[sceneOrder.removeFirst()] = nil }
         if let s = sceneCache[m.id] { return s }
         let s = build(m, showcase: true)
         sceneCache[m.id] = s
@@ -315,6 +321,28 @@ enum Ship3D {
         let img = r.snapshot(atTime: 0, with: CGSize(width: 384, height: 384), antialiasingMode: .multisampling4X)
         spriteCache[m.id] = img
         return img
+    }
+
+    /// Nur für die Entwicklung (Startargument `-renderShips`): rendert jedes Schiff der Auswahl aus zwei
+    /// Blickwinkeln als PNG in den Dokumente-Ordner der App, damit man die Modelle ohne Tippen vergleichen kann.
+    static func renderGallery() {
+        guard let r = renderer,
+              let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        for m in ShipModel.all {
+            let scene = build(m, showcase: true)
+            scene.background.contents = UIColor(white: 0.13, alpha: 1)
+            guard let pivot = scene.rootNode.childNode(withName: "pivot", recursively: false),
+                  let cam = scene.rootNode.childNode(withName: "camera", recursively: false) else { continue }
+            pivot.removeAllActions()
+            r.scene = scene
+            r.pointOfView = cam
+            for (i, angle) in [0.7, Double.pi - 0.7].enumerated() {
+                pivot.eulerAngles.y = Float(angle)
+                let img = r.snapshot(atTime: 0, with: CGSize(width: 1024, height: 768), antialiasingMode: .multisampling4X)
+                try? img.pngData()?.write(to: dir.appendingPathComponent("ship-\(m.id)-\(i).png"))
+            }
+        }
+        print("OHRENDER done \(dir.path)")
     }
 
     private static func textures(for m: ShipModel) -> HullTextures {
@@ -367,7 +395,7 @@ enum Ship3D {
     }
 
     private static func dotImage() -> UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).image { ctx in
+        textureRenderer(CGSize(width: 32, height: 32)).image { ctx in
             let colors = [UIColor.white.cgColor, UIColor.white.withAlphaComponent(0).cgColor] as CFArray
             let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
             ctx.cgContext.drawRadialGradient(grad, startCenter: CGPoint(x: 16, y: 16), startRadius: 0,
@@ -375,19 +403,24 @@ enum Ship3D {
         }
     }
 
-    /// Einfache Umgebung für Spiegelungen auf Metall
-    private static let environment: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
+    /// Studio-Umgebung für Spiegelungen: dunkler Raum mit großen Softboxen, die Kanten auf Metall
+    /// und Lack aufblitzen lassen (äquirektangulär, oben = Himmel)
+    private static let environment: UIImage = textureRenderer(CGSize(width: 1024, height: 512)).image { ctx in
         let g = ctx.cgContext
-        let colors = [UIColor(red: 0.35, green: 0.45, blue: 0.65, alpha: 1).cgColor,
-                      UIColor(red: 0.06, green: 0.08, blue: 0.16, alpha: 1).cgColor,
-                      UIColor(red: 0.01, green: 0.01, blue: 0.03, alpha: 1).cgColor] as CFArray
-        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.5, 1])!
-        g.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: 256), options: [])
-        g.setFillColor(UIColor(white: 1, alpha: 0.9).cgColor)
-        g.fill(CGRect(x: 120, y: 30, width: 90, height: 18))
-        g.fill(CGRect(x: 330, y: 50, width: 40, height: 40))
-        g.setFillColor(UIColor(red: 0.3, green: 0.9, blue: 0.8, alpha: 0.6).cgColor)
-        g.fill(CGRect(x: 0, y: 118, width: 512, height: 6))
+        let colors = [UIColor(red: 0.15, green: 0.145, blue: 0.14, alpha: 1).cgColor,
+                      UIColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1).cgColor,
+                      UIColor(red: 0.02, green: 0.02, blue: 0.02, alpha: 1).cgColor] as CFArray
+        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.55, 1])!
+        g.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: 512), options: [])
+        // Softboxen: breite Streifen oben und seitlich
+        func box(_ r: CGRect, _ c: UIColor) {
+            g.setFillColor(c.cgColor)
+            g.fill(r)
+        }
+        box(CGRect(x: 180, y: 40, width: 260, height: 70), UIColor(white: 1, alpha: 1))
+        box(CGRect(x: 640, y: 120, width: 60, height: 200), UIColor(red: 0.92, green: 0.92, blue: 0.9, alpha: 1))
+        box(CGRect(x: 900, y: 150, width: 90, height: 120), UIColor(red: 1, green: 0.85, blue: 0.7, alpha: 0.8))
+        box(CGRect(x: 0, y: 236, width: 1024, height: 4), UIColor(white: 0.5, alpha: 1))
     }
 
     private static func scaledPath(_ hull: HullClass, sx: CGFloat, sy: CGFloat, dx: CGFloat) -> CGPath {
@@ -406,6 +439,16 @@ enum Ship3D {
         return n
     }
 
+    /// Fürs Spiel: alle Bauteile zu wenigen Zeichenaufrufen (einer je Material) verschmelzen,
+    /// die Düsen-Marker bleiben als eigene Knoten erhalten.
+    static func simplified(_ ship: SCNNode) -> SCNNode {
+        let markers = outlets(of: ship).map { $0.0 }
+        markers.forEach { $0.removeFromParentNode() }
+        let flat = ship.flattenedClone()
+        markers.forEach { flat.addChildNode($0) }
+        return flat
+    }
+
     /// Düsen-Austritte eines Modells mit Radius
     static func outlets(of node: SCNNode) -> [(SCNNode, CGFloat)] {
         node.childNodes.compactMap { n in
@@ -416,7 +459,7 @@ enum Ship3D {
 
     /// Das Schiffsmodell ohne Licht und Kamera, Nase zeigt nach +x.
     static func shipNode(for m: ShipModel, showcase: Bool) -> SCNNode {
-        let n = ShipDesigns.build(m)
+        let n = showcase ? ShipDesigns.build(m) : simplified(ShipDesigns.build(m))
         for (o, r) in outlets(of: n) {
             // Glut hinter der Düse
             let halo = SCNNode(geometry: SCNPlane(width: r * 2.4, height: r * 2.4))
@@ -437,32 +480,45 @@ enum Ship3D {
         let scene = SCNScene()
         scene.background.contents = UIColor.clear
         scene.lightingEnvironment.contents = environment
-        scene.lightingEnvironment.intensity = 1.6
+        scene.lightingEnvironment.intensity = showcase ? 0.9 : 1.6
 
         let accent = ui(m.weapon.hue, 0.85, 0.6)
         let pivot = shipNode(for: m, showcase: showcase)
+        pivot.name = "pivot"
         scene.rootNode.addChildNode(pivot)
 
         // Licht
         let key = SCNNode()
         key.light = SCNLight()
         key.light?.type = .directional
-        key.light?.intensity = 1100
+        key.light?.intensity = showcase ? 1500 : 1100
         key.light?.color = UIColor(red: 1, green: 0.95, blue: 0.88, alpha: 1)
+        if showcase {
+            // weiche Schatten geben den Bauteilen Tiefe
+            key.light?.castsShadow = true
+            key.light?.shadowMode = .deferred
+            key.light?.shadowMapSize = CGSize(width: 1024, height: 1024)
+            key.light?.shadowSampleCount = 16
+            key.light?.shadowRadius = 2.5
+            key.light?.shadowColor = UIColor(white: 0, alpha: 0.75)
+            key.light?.orthographicScale = 6
+            key.light?.zNear = 1
+            key.light?.zFar = 40
+        }
         key.eulerAngles = showcase ? SCNVector3(-Float.pi / 3, Float.pi / 5, 0) : SCNVector3(-Float.pi / 2.4, Float.pi / 6, 0)
         scene.rootNode.addChildNode(key)
         let rim = SCNNode()
         rim.light = SCNLight()
         rim.light?.type = .directional
-        rim.light?.intensity = 600
-        rim.light?.color = UIColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)
+        rim.light?.intensity = showcase ? 1000 : 600
+        rim.light?.color = showcase ? UIColor(red: 0.9, green: 0.92, blue: 1, alpha: 1) : UIColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)
         rim.eulerAngles = SCNVector3(-Float.pi / 6, Float.pi, 0)
         scene.rootNode.addChildNode(rim)
         let amb = SCNNode()
         amb.light = SCNLight()
         amb.light?.type = .ambient
-        amb.light?.intensity = 250
-        amb.light?.color = UIColor(red: 0.6, green: 0.7, blue: 0.9, alpha: 1)
+        amb.light?.intensity = showcase ? 70 : 250
+        amb.light?.color = showcase ? UIColor(red: 0.85, green: 0.83, blue: 0.8, alpha: 1) : UIColor(red: 0.6, green: 0.7, blue: 0.9, alpha: 1)
         scene.rootNode.addChildNode(amb)
 
         let cam = SCNNode()
@@ -470,13 +526,27 @@ enum Ship3D {
         cam.name = "camera"
         if showcase {
             // Holo-Plattform
-            let platform = UIColor(red: 0.31, green: 0.89, blue: 0.76, alpha: 1)
+            let platform = UIColor(red: 0.31, green: 0.89, blue: 0.76, alpha: 0.45)
             scene.rootNode.addChildNode(node(SCNTorus(ringRadius: 3.8, pipeRadius: 0.025), glow(platform), SCNVector3(0, -1.1, 0)))
             scene.rootNode.addChildNode(node(SCNTorus(ringRadius: 3.2, pipeRadius: 0.012), glow(platform.withAlphaComponent(0.5)), SCNVector3(0, -1.1, 0)))
             let discMat = glow(UIColor(red: 0.02, green: 0.12, blue: 0.11, alpha: 1))
             discMat.blendMode = .add
             let disc = node(SCNCylinder(radius: 3.8, height: 0.01), discMat, SCNVector3(0, -1.12, 0))
             scene.rootNode.addChildNode(disc)
+            // unsichtbarer Boden, der nur den Schatten des Schiffs zeigt
+            let catcher = SCNMaterial()
+            catcher.lightingModel = .shadowOnly
+            let floor = node(SCNPlane(width: 14, height: 14), catcher, SCNVector3(0, -1.1, 0))
+            floor.eulerAngles.x = -.pi / 2
+            scene.rootNode.addChildNode(floor)
+            // schwaches Gegenlicht von unten, damit die Unterseite nicht absäuft
+            let fill = SCNNode()
+            fill.light = SCNLight()
+            fill.light?.type = .directional
+            fill.light?.intensity = 300
+            fill.light?.color = UIColor(red: 1, green: 0.7, blue: 0.45, alpha: 1)
+            fill.eulerAngles = SCNVector3(Float.pi / 5, -Float.pi / 1.5, 0)
+            scene.rootNode.addChildNode(fill)
 
             pivot.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 12)))
             let up = SCNAction.moveBy(x: 0, y: 0.15, z: 0, duration: 1.6)
@@ -490,7 +560,13 @@ enum Ship3D {
             cam.camera?.bloomIntensity = 0.6
             cam.camera?.bloomThreshold = 0.95
             cam.camera?.bloomBlurRadius = 8
-            cam.camera?.screenSpaceAmbientOcclusionIntensity = 0.8
+            cam.camera?.screenSpaceAmbientOcclusionIntensity = 1.6
+            cam.camera?.screenSpaceAmbientOcclusionRadius = 0.35
+            cam.camera?.screenSpaceAmbientOcclusionBias = 0.02
+            cam.camera?.vignettingIntensity = 0.7
+            cam.camera?.vignettingPower = 1.2
+            cam.camera?.saturation = 1.1
+            cam.camera?.contrast = 0.15
             cam.position = SCNVector3(0, 5.4, 9.8)
             cam.look(at: SCNVector3(0, -0.1, 0))
         } else {
@@ -511,7 +587,7 @@ struct ShipModelView: UIViewRepresentable {
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
         v.backgroundColor = .clear
-        v.antialiasingMode = .multisampling4X
+        v.antialiasingMode = .multisampling2X
         v.isPlaying = true
         v.rendersContinuously = true
         configure(v)

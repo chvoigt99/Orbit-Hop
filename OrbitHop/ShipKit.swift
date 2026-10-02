@@ -1,57 +1,131 @@
 import SwiftUI
 import SceneKit
 import UIKit
+import simd
+
+/// Bildrenderer für Texturen: ein Pixel pro Punkt. Ohne festes Format nimmt UIKit die Bildschirm-Skalierung
+/// (3× auf aktuellen iPhones) und jede Textur bräuchte neunmal so viel Speicher.
+func textureRenderer(_ size: CGSize) -> UIGraphicsImageRenderer {
+    let f = UIGraphicsImageRendererFormat()
+    f.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: f)
+}
 
 // MARK: - Abgenutzter Lack
 
 /// Prozedurale Lacktexturen im Stil „gebrauchtes Kriegsgerät“: Paneelnähte, abgeplatzte Farbe, Kratzer, Schmutz.
 enum WornPaint {
     private static var cache: [String: SCNMaterial] = [:]
+    private static var order: [String] = []
+    /// Obergrenze für zwischengespeicherte Lacke (je Schiff etwa fünf), damit der Speicher nicht mit jedem Schiff wächst
+    private static let cacheLimit = 24
 
     static func material(_ key: String, base: UIColor, stripe: UIColor? = nil, marking: String? = nil) -> SCNMaterial {
         let id = "\(key)-\(marking ?? "")"
+        order.removeAll { $0 == id }
+        order.append(id)
+        while order.count > cacheLimit { cache[order.removeFirst()] = nil }
         if let m = cache[id] { return m }
-        let (albedo, normal, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: marking)
+        // Kennungen würden sich beim Kacheln überall wiederholen, deshalb ohne Beschriftung
+        let (albedo, height, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: nil)
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
+        // Fallback, falls der Shader nicht greift
         m.diffuse.contents = albedo
-        m.normal.contents = normal
-        m.normal.intensity = 0.8
-        m.roughness.contents = rough
-        m.metalness.contents = metal
+        m.roughness.contents = 0.7
+        m.metalness.contents = 0.1
+        // Texturen werden dreiachsig im Modellraum projiziert: gleiche Detaildichte auf jedem Bauteil,
+        // egal wie groß oder klein es ist. Nähte und Kanten kommen als Relief über die Höhenkarte.
+        m.shaderModifiers = [.surface: triplanar]
+        m.setValue(SCNMaterialProperty(contents: albedo), forKey: "tpAlbedo")
+        // Rauheit, Metall und Höhe teilen sich eine Textur (R, G, B)
+        m.setValue(SCNMaterialProperty(contents: pack(rough, metal, height)), forKey: "tpMask")
+        m.setValue(NSNumber(value: 1.0 / 2.0), forKey: "tpScale")
+        m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
         return m
     }
 
+    /// Dreiachsige Projektion (Triplanar) im Modellraum plus Relief aus der Höhenkarte über Bildschirm-Ableitungen.
+    static let triplanar = """
+    #pragma arguments
+    texture2d<float> tpAlbedo;
+    texture2d<float> tpMask;
+    float tpScale;
+    float tpBump;
+
+    #pragma body
+    constexpr sampler tpS(filter::linear, mip_filter::linear, address::repeat);
+    float3 tpPos = (scn_node.inverseModelViewTransform * float4(_surface.position, 1.0)).xyz * tpScale;
+    float3 tpN = normalize((scn_node.inverseModelViewTransform * float4(_surface.normal, 0.0)).xyz);
+    float3 tpW = pow(abs(tpN), float3(6.0));
+    tpW = tpW / (tpW.x + tpW.y + tpW.z);
+    float2 tpUX = tpPos.zy;
+    float2 tpUY = tpPos.xz;
+    float2 tpUZ = tpPos.xy;
+    float4 tpA = tpAlbedo.sample(tpS, tpUX) * tpW.x + tpAlbedo.sample(tpS, tpUY) * tpW.y + tpAlbedo.sample(tpS, tpUZ) * tpW.z;
+    float3 tpK = tpMask.sample(tpS, tpUX).rgb * tpW.x + tpMask.sample(tpS, tpUY).rgb * tpW.y + tpMask.sample(tpS, tpUZ).rgb * tpW.z;
+    float tpR = tpK.r;
+    float tpM = tpK.g;
+    float tpH = tpK.b;
+    _surface.diffuse = float4(tpA.rgb, 1.0);
+    _surface.roughness = tpR;
+    _surface.metalness = tpM;
+    // Kantenabrieb: wo die Normale sich schnell dreht (Fasen, Rundungen), Lack aufhellen
+    // und stellenweise bis aufs blanke Metall abplatzen lassen
+    float tpEdge = saturate((length(fwidth(tpN)) - 0.03) * 5.0);
+    float2 tpUW = (tpUX * tpW.x + tpUY * tpW.y + tpUZ * tpW.z) * 2.7;
+    float tpChip = smoothstep(0.4, 0.7, tpMask.sample(tpS, tpUW).g + tpMask.sample(tpS, tpUW * 0.37 + 0.5).g);
+    _surface.diffuse.rgb = mix(_surface.diffuse.rgb, _surface.diffuse.rgb * 1.18 + 0.03, tpEdge * 0.6);
+    float tpBare = tpEdge * tpChip;
+    _surface.diffuse.rgb = mix(_surface.diffuse.rgb, float3(0.42, 0.41, 0.39), tpBare);
+    _surface.metalness = mix(_surface.metalness, 0.85, tpBare);
+    _surface.roughness = mix(_surface.roughness, 0.38, tpBare);
+    // Relief: Normale anhand der Höhenänderung pro Bildpunkt kippen
+    float3 tpDpx = dfdx(_surface.position);
+    float3 tpDpy = dfdy(_surface.position);
+    float tpDhx = dfdx(tpH);
+    float tpDhy = dfdy(tpH);
+    float3 tpNv = _surface.normal;
+    float3 tpR1 = cross(tpDpy, tpNv);
+    float3 tpR2 = cross(tpNv, tpDpx);
+    float tpDet = dot(tpDpx, tpR1);
+    float3 tpGrad = sign(tpDet) * (tpDhx * tpR1 + tpDhy * tpR2);
+    float3 tpNew = abs(tpDet) * tpNv - tpBump * tpGrad;
+    if (length(tpNew) > 1e-6) { _surface.normal = normalize(tpNew); }
+    """
+
+    /// Drei Graustufenbilder in die Kanäle R, G, B eines Bildes legen
+    private static func pack(_ r: UIImage, _ g: UIImage, _ b: UIImage) -> UIImage {
+        let n = 512
+        func gray(_ img: UIImage) -> [UInt8] {
+            var px = [UInt8](repeating: 0, count: n * n)
+            if let cg = img.cgImage,
+               let ctx = CGContext(data: &px, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n,
+                                   space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
+            }
+            return px
+        }
+        let cr = gray(r), cg = gray(g), cb = gray(b)
+        var out = [UInt8](repeating: 255, count: n * n * 4)
+        for i in 0..<(n * n) {
+            out[i * 4] = cr[i]
+            out[i * 4 + 1] = cg[i]
+            out[i * 4 + 2] = cb[i]
+        }
+        let provider = CGDataProvider(data: Data(out) as CFData)!
+        let image = CGImage(width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        return UIImage(cgImage: image)
+    }
+
+    /// liefert (Farbe, Höhe, Rauheit, Metall)
     private static func textures(seed: String, base: UIColor, stripe: UIColor?, marking: String?) -> (UIImage, UIImage, UIImage, UIImage) {
         var rng = SeededRNG(seed)
         let s: CGFloat = 512
 
-        // Positionen für Abplatzer, bevorzugt an den Kanten
-        struct Chip { let path: UIBezierPath; let deep: Bool }
-        var chips: [Chip] = []
-        for _ in 0..<170 {
-            var x = rng.c(0...s), y = rng.c(0...s)
-            if rng.chance(0.7) {
-                switch Int(rng.d(0...3.99)) {
-                case 0: x = rng.c(0...26)
-                case 1: x = s - rng.c(0...26)
-                case 2: y = rng.c(0...26)
-                default: y = s - rng.c(0...26)
-                }
-            }
-            let r = rng.c(2...11)
-            let p = UIBezierPath()
-            let n = 6
-            for k in 0..<n {
-                let a = CGFloat(k) / CGFloat(n) * .pi * 2
-                let rr = r * rng.c(0.4...1.3)
-                let pt = CGPoint(x: x + cos(a) * rr * rng.c(0.8...1.8), y: y + sin(a) * rr)
-                if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-            }
-            p.close()
-            chips.append(Chip(path: p, deep: rng.chance(0.6)))
-        }
         // Paneelnähte
         var seams: [(CGPoint, CGPoint)] = []
         for _ in 0..<Int(rng.d(6...10)) {
@@ -69,27 +143,76 @@ enum WornPaint {
         for _ in 0..<Int(rng.d(5...9)) {
             hatches.append(CGRect(x: rng.c(30...(s - 120)), y: rng.c(30...(s - 90)), width: rng.c(40...110), height: rng.c(26...70)))
         }
+        // Abplatzer in kleinen Gruppen entlang von Paneelkanten und Lukenrändern, wo Lack wirklich abgeht
+        struct Chip { let path: UIBezierPath; let deep: Bool }
+        var chips: [Chip] = []
+        var anchors: [CGPoint] = []
+        for (p, q) in seams {
+            for _ in 0..<4 {
+                let t = rng.c(0...1)
+                anchors.append(CGPoint(x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t))
+            }
+        }
+        for h in hatches {
+            anchors.append(CGPoint(x: rng.chance(0.5) ? h.minX : h.maxX, y: rng.c(h.minY...h.maxY)))
+            anchors.append(CGPoint(x: rng.c(h.minX...h.maxX), y: rng.chance(0.5) ? h.minY : h.maxY))
+        }
+        for _ in 0..<6 {
+            anchors.append(rng.chance(0.5) ? CGPoint(x: rng.chance(0.5) ? 10 : s - 10, y: rng.c(0...s))
+                                           : CGPoint(x: rng.c(0...s), y: rng.chance(0.5) ? 10 : s - 10))
+        }
+        for a in anchors {
+            for _ in 0..<Int(rng.d(2...6)) {
+                let x = a.x + rng.c(-14...14), y = a.y + rng.c(-8...8)
+                let r = rng.c(1.5...7)
+                let p = UIBezierPath()
+                let n = 7
+                for k in 0..<n {
+                    let ang = CGFloat(k) / CGFloat(n) * .pi * 2
+                    let rr = r * rng.c(0.35...1.3)
+                    let pt = CGPoint(x: x + cos(ang) * rr * rng.c(0.8...1.9), y: y + sin(ang) * rr)
+                    if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+                }
+                p.close()
+                chips.append(Chip(path: p, deep: rng.chance(0.45)))
+            }
+        }
         let stencils = ["NO STEP", "A-17", "▲ 04", "VENT", "07", "HX-2", "⚠", "PWR"]
 
-        let albedo = UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+        let albedo = textureRenderer(CGSize(width: s, height: s)).image { ctx in
             let g = ctx.cgContext
             base.setFill()
             g.fill(CGRect(x: 0, y: 0, width: s, height: s))
-            // Farbrauschen
-            for _ in 0..<1600 {
-                let r = rng.c(1...5)
-                UIColor(white: rng.chance(0.5) ? 1 : 0, alpha: rng.c(0.015...0.05)).setFill()
-                g.fillEllipse(in: CGRect(x: rng.c(0...s), y: rng.c(0...s), width: r, height: r))
+            // ungleichmäßig ausgeblichener Lack: große, weiche Flecken statt Rauschen
+            for _ in 0..<26 {
+                let r = rng.c(40...120)
+                let c = CGPoint(x: rng.c(0...s), y: rng.c(0...s))
+                let tone = rng.chance(0.5) ? UIColor.white : UIColor.black
+                let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: [tone.withAlphaComponent(rng.c(0.04...0.08)).cgColor, tone.withAlphaComponent(0).cgColor] as CFArray,
+                                      locations: [0, 1])!
+                g.drawRadialGradient(fade, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
             }
             if let stripe {
                 stripe.setFill()
-                let p = UIBezierPath()
-                p.move(to: CGPoint(x: s * 0.22, y: 0))
-                p.addLine(to: CGPoint(x: s * 0.5, y: 0))
-                p.addLine(to: CGPoint(x: s * 0.7, y: s))
-                p.addLine(to: CGPoint(x: s * 0.42, y: s))
-                p.close()
-                p.fill()
+                // senkrechtes Band, damit es beim Kacheln nahtlos weiterläuft
+                g.fill(CGRect(x: s * 0.3, y: 0, width: s * 0.3, height: s))
+            }
+            // Schmutz sammelt sich in den Fugen und läuft unter Luken in Schlieren ab
+            g.setStrokeColor(UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0.18).cgColor)
+            g.setLineWidth(12)
+            for (a, b) in seams { g.move(to: a); g.addLine(to: b) }
+            g.strokePath()
+            for h in hatches where rng.chance(0.7) {
+                let len = rng.c(30...110)
+                let streak = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                        colors: [UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0.22).cgColor,
+                                                 UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0).cgColor] as CFArray,
+                                        locations: [0, 1])!
+                g.saveGState()
+                g.clip(to: CGRect(x: h.minX + 4, y: h.maxY, width: h.width - 8, height: len))
+                g.drawLinearGradient(streak, start: CGPoint(x: 0, y: h.maxY), end: CGPoint(x: 0, y: h.maxY + len), options: [])
+                g.restoreGState()
             }
             // Rand-Nähte und Nähte
             g.setStrokeColor(UIColor(white: 0, alpha: 0.45).cgColor)
@@ -166,25 +289,29 @@ enum WornPaint {
                 c.path.lineWidth = 1
                 c.path.stroke()
             }
-            // Kratzer
-            g.setStrokeColor(UIColor(white: 0.25, alpha: 0.25).cgColor)
-            g.setLineWidth(1)
-            for _ in 0..<40 {
-                let x = rng.c(0...s), y = rng.c(0...s)
+            // Kratzer: lange, meist waagerechte Riefen, hell wie blankes Metall
+            g.setLineWidth(0.8)
+            for _ in 0..<55 {
+                let x = rng.c(0...s), y = rng.c(0...s), l = rng.c(20...120)
+                g.setStrokeColor(UIColor(white: 0.85, alpha: rng.c(0.12...0.3)).cgColor)
                 g.move(to: CGPoint(x: x, y: y))
-                g.addLine(to: CGPoint(x: x + rng.c(-40...40), y: y + rng.c(-12...12)))
+                g.addLine(to: CGPoint(x: x + l, y: y + rng.c(-6...6)))
+                g.strokePath()
             }
-            g.strokePath()
-            // Schmutz unten
-            let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                  colors: [UIColor(red: 0.2, green: 0.15, blue: 0.1, alpha: 0).cgColor,
-                                           UIColor(red: 0.2, green: 0.15, blue: 0.1, alpha: 0.35).cgColor] as CFArray,
-                                  locations: [0, 1])!
-            g.drawLinearGradient(grad, start: CGPoint(x: 0, y: s * 0.6), end: CGPoint(x: 0, y: s), options: [])
+            // weiche Schmutzflecken (kachelbar, ohne Verlauf über die ganze Fläche)
+            for _ in 0..<22 {
+                let r = rng.c(30...100)
+                let c = CGPoint(x: rng.c(0...s), y: rng.c(0...s))
+                let grime = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                       colors: [UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: rng.c(0.12...0.28)).cgColor,
+                                                UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: 0).cgColor] as CFArray,
+                                       locations: [0, 1])!
+                g.drawRadialGradient(grime, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
+            }
         }
 
         func gray(_ draw: (CGContext) -> Void, fill: CGFloat) -> UIImage {
-            UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+            textureRenderer(CGSize(width: s, height: s)).image { ctx in
                 UIColor(white: fill, alpha: 1).setFill()
                 ctx.fill(CGRect(x: 0, y: 0, width: s, height: s))
                 draw(ctx.cgContext)
@@ -209,40 +336,14 @@ enum WornPaint {
                 UIColor(white: c.deep ? 0.32 : 0.45, alpha: 1).setFill()
                 c.path.fill()
             }
-        }, fill: 0.62)
+        }, fill: 0.72)
         let metal = gray({ _ in
             for c in chips where c.deep {
                 UIColor(white: 0.9, alpha: 1).setFill()
                 c.path.fill()
             }
         }, fill: 0.08)
-        return (albedo, normalMap(height, size: 256), rough, metal)
-    }
-
-    private static func normalMap(_ img: UIImage, size: Int) -> UIImage {
-        guard let cg = img.cgImage else { return img }
-        var gray = [UInt8](repeating: 0, count: size * size)
-        let ctx = CGContext(data: &gray, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size,
-                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: size, height: size))
-        var out = [UInt8](repeating: 255, count: size * size * 4)
-        func h(_ x: Int, _ y: Int) -> Double { Double(gray[min(size - 1, max(0, y)) * size + min(size - 1, max(0, x))]) / 255 }
-        for y in 0..<size {
-            for x in 0..<size {
-                let dx = (h(x + 1, y) - h(x - 1, y)) * 2.5
-                let dy = (h(x, y + 1) - h(x, y - 1)) * 2.5
-                let len = (dx * dx + dy * dy + 1).squareRoot()
-                let i = (y * size + x) * 4
-                out[i] = UInt8(max(0, min(255, (-dx / len * 0.5 + 0.5) * 255)))
-                out[i + 1] = UInt8(max(0, min(255, (dy / len * 0.5 + 0.5) * 255)))
-                out[i + 2] = UInt8(max(0, min(255, (1 / len * 0.5 + 0.5) * 255)))
-            }
-        }
-        let provider = CGDataProvider(data: Data(out) as CFData)!
-        let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: image)
+        return (albedo, height, rough, metal)
     }
 }
 
@@ -272,9 +373,9 @@ final class ShipKit {
         dark = WornPaint.material("dark", base: UIColor(red: 0.2, green: 0.2, blue: 0.21, alpha: 1))
         metal = SCNMaterial()
         metal.lightingModel = .physicallyBased
-        metal.diffuse.contents = UIColor(white: 0.28, alpha: 1)
-        metal.metalness.contents = 0.95
-        metal.roughness.contents = 0.35
+        metal.diffuse.contents = UIColor(red: 0.3, green: 0.29, blue: 0.27, alpha: 1)
+        metal.metalness.contents = 0.85
+        metal.roughness.contents = 0.55
         glass = SCNMaterial()
         glass.lightingModel = .physicallyBased
         glass.diffuse.contents = UIColor(white: 0.03, alpha: 1)
@@ -292,6 +393,10 @@ final class ShipKit {
         m.diffuse.contents = c
         m.emission.contents = c
         return m
+    }
+
+    func addNode(_ g: SCNGeometry, _ m: SCNMaterial, _ p: SCNVector3, rot: SCNVector3 = SCNVector3(0, 0, 0)) {
+        add(g, m, p, rot: rot, mirror: false)
     }
 
     @discardableResult
@@ -361,6 +466,60 @@ final class ShipKit {
         }
     }
 
+    /// Querschnitt eines facettierten Rumpfs: Position x, Mittelhöhe y, halbe Breite w, halbe Höhe h
+    struct Sec {
+        let x: Float, y: Float, w: Float, h: Float
+        init(_ x: Float, _ y: Float, _ w: Float, _ h: Float) { self.x = x; self.y = y; self.w = w; self.h = h }
+    }
+
+    /// Facettierter Rumpf: achteckige Querschnitte entlang x, flach schattiert wie gekantetes Blech.
+    /// top/bottom = Breite der Ober-/Unterseite relativ zu w, shoulder = Höhe der Seitenkante relativ zu h.
+    func hull(_ secs: [Sec], z: Float = 0, top: Float = 0.55, bottom: Float = 0.7, shoulder: Float = 0.25,
+              _ m: SCNMaterial? = nil, mirror: Bool = true) {
+        func ring(_ c: Sec) -> [SIMD3<Float>] {
+            let o: [(Float, Float)] = [(top, 1), (1, shoulder), (1, -shoulder), (bottom, -1),
+                                       (-bottom, -1), (-1, -shoulder), (-1, shoulder), (-top, 1)]
+            return o.map { SIMD3(c.x, c.y + $0.1 * c.h, $0.0 * c.w) }
+        }
+        var pos: [SCNVector3] = [], nor: [SCNVector3] = []
+        func face(_ pts: [SIMD3<Float>], outward: SIMD3<Float>) {
+            guard pts.count >= 3 else { return }
+            var n = SIMD3<Float>(0, 0, 0)
+            for i in 1..<(pts.count - 1) { n += cross(pts[i] - pts[0], pts[i + 1] - pts[0]) }
+            guard simd_length(n) > 1e-7 else { return }
+            let flip = dot(n, outward) < 0
+            let nn = simd_normalize(flip ? -n : n)
+            for i in 1..<(pts.count - 1) {
+                let tri = flip ? [pts[0], pts[i + 1], pts[i]] : [pts[0], pts[i], pts[i + 1]]
+                for v in tri {
+                    pos.append(SCNVector3(v.x, v.y, v.z))
+                    nor.append(SCNVector3(nn.x, nn.y, nn.z))
+                }
+            }
+        }
+        let rings = secs.map(ring)
+        for i in 0..<(rings.count - 1) {
+            let a = rings[i], b = rings[i + 1]
+            let axis = SIMD3<Float>((secs[i].x + secs[i + 1].x) / 2, (secs[i].y + secs[i + 1].y) / 2, 0)
+            for k in 0..<a.count {
+                let k1 = (k + 1) % a.count
+                let quad = [a[k], a[k1], b[k1], b[k]]
+                let mid = quad.reduce(SIMD3<Float>(0, 0, 0), +) / 4
+                face(quad, outward: mid - axis)
+            }
+        }
+        let dir = SIMD3<Float>(secs.last!.x > secs[0].x ? 1 : -1, 0, 0)
+        face(rings[0], outward: -dir)
+        face(rings[rings.count - 1], outward: dir)
+        let idx = (0..<Int32(pos.count)).map { $0 }
+        // Texturkoordinaten braucht die Render-Pipeline, auch wenn der Lack-Shader dreiachsig projiziert
+        let uv = pos.map { CGPoint(x: CGFloat($0.x) / 2, y: CGFloat($0.y + $0.z) / 2) }
+        let g = SCNGeometry(sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nor),
+                                      SCNGeometrySource(textureCoordinates: uv)],
+                            elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
+        add(g, m ?? paint, SCNVector3(0, 0, z), mirror: mirror)
+    }
+
     /// Triebwerksgondel mit glühender Düse; gibt die Heck-Position zurück
     @discardableResult
     func engine(_ x: Float, _ y: Float, _ z: Float, r: CGFloat, len: CGFloat, _ m: SCNMaterial? = nil, mirror: Bool = true) -> Float {
@@ -386,11 +545,16 @@ final class ShipKit {
         for k in 0..<3 {
             box(x - 0.1 + Float(k) * 0.22, y, z + outer * Float(r * 1.0), 0.12, 0.04, 0.04, lamp, chamfer: 0.01, mirror: mirror)
         }
-        // Düse mit Glutring
-        tube(x - half - 0.12, y, z, r: r * 0.92, len: 0.26, metal, mirror: mirror)
-        tube(x - half - 0.26, y, z, r: r * 0.72, len: 0.03, fire, mirror: mirror)
-        let ring = SCNTorus(ringRadius: r * 0.8, pipeRadius: 0.025)
-        add(ring, lamp, SCNVector3(x - half - 0.24, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
+        // offene Düse: Glut sitzt vertieft im Rohr, davor ein dunkler Innenring
+        let nozzle = SCNTube(innerRadius: r * 0.74, outerRadius: r * 0.92, height: 0.3)
+        nozzle.radialSegmentCount = 24
+        add(nozzle, metal, SCNVector3(x - half - 0.12, y, z), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: mirror)
+        let liner = SCNTube(innerRadius: r * 0.6, outerRadius: r * 0.74, height: 0.22)
+        liner.radialSegmentCount = 24
+        add(liner, dark, SCNVector3(x - half - 0.08, y, z), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: mirror)
+        tube(x - half - 0.02, y, z, r: r * 0.62, len: 0.02, fire, mirror: mirror)
+        let ring = SCNTorus(ringRadius: r * 0.66, pipeRadius: 0.02)
+        add(ring, lamp, SCNVector3(x - half - 0.18, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
         let tail = x - half - 0.28
         for side in mirror && abs(z) > 0.001 ? [z, -z] : [z] {
             let outlet = SCNNode()
@@ -411,19 +575,31 @@ final class ShipKit {
         let shape = SCNShape(path: p, extrusionDepth: 0.09)
         shape.chamferRadius = 0.03
         shape.chamferMode = .both
-        add(shape, m ?? stripe, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
+        add(shape, m ?? paint, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
+        // breiter Farbbalken quer über das Leitwerk
+        let lead = { (f: CGFloat) in -len * 0.45 * f }, trail = { (f: CGFloat) in -len + len * 0.15 * f }
+        let b = UIBezierPath()
+        b.move(to: CGPoint(x: lead(0.5) - 0.01, y: height * 0.5))
+        b.addLine(to: CGPoint(x: lead(0.78) - 0.01, y: height * 0.78))
+        b.addLine(to: CGPoint(x: trail(0.78) + 0.01, y: height * 0.78))
+        b.addLine(to: CGPoint(x: trail(0.5) + 0.01, y: height * 0.5))
+        b.close()
+        let band = SCNShape(path: b, extrusionDepth: 0.1)
+        band.chamferRadius = 0.02
+        band.chamferMode = .both
+        add(band, m == nil ? accent : paint, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
     }
 
     /// Glaskanzel mit Rahmen
-    func canopy(_ x: Float, _ y: Float, len: CGFloat, height: CGFloat, width: CGFloat) {
+    func canopy(_ x: Float, _ y: Float, z: Float = 0, len: CGFloat, height: CGFloat, width: CGFloat) {
         let l = len, h = height
         profile([(l * 0.55, 0), (l * 0.1, h), (-l * 0.35, h * 0.85), (-l * 0.5, 0)].map { ($0.0 + CGFloat(x), $0.1 + CGFloat(y)) },
-                z: 0, thick: width, glass, chamfer: width * 0.4, mirror: false)
+                z: z, thick: width, glass, chamfer: width * 0.4, mirror: false)
         for t in [-0.3, -0.05, 0.2] as [CGFloat] {
-            box(x + Float(l * t), y + Float(h * (0.82 - abs(t) * 0.6)), 0, 0.05, 0.07, width * 1.03, metal, mirror: false)
+            box(x + Float(l * t), y + Float(h * (0.82 - abs(t) * 0.6)), z, 0.05, 0.07, width * 1.03, metal, mirror: false)
         }
-        box(x - Float(l * 0.05), y + Float(h * 0.9), 0, l * 0.75, 0.05, 0.05, metal, mirror: false)
-        box(x - Float(l * 0.05), y + 0.02, 0, l * 1.05, 0.08, width * 1.12, dark, chamfer: 0.03, mirror: false)
+        box(x - Float(l * 0.05), y + Float(h * 0.9), z, l * 0.75, 0.05, 0.05, metal, mirror: false)
+        box(x - Float(l * 0.05), y + 0.02, z, l * 1.05, 0.08, width * 1.12, dark, chamfer: 0.03, mirror: false)
     }
 
     /// Kanone mit Gehäuse, Mündungsbremse und Glühspitze
@@ -603,8 +779,8 @@ enum ShipDesigns {
     static let red = c(356, 0.68, 0.33)
     static let olive = c(75, 0.22, 0.4)
     static let orange = c(32, 0.75, 0.5)
-    static let gunmetal = c(215, 0.08, 0.26)
-    static let navy = c(212, 0.25, 0.42)
+    static let gunmetal = c(30, 0.05, 0.3)
+    static let navy = c(205, 0.12, 0.4)
     static let gold = c(44, 0.6, 0.55)
     static let night = c(262, 0.12, 0.17)
 
@@ -727,25 +903,50 @@ enum ShipDesigns {
         k.weapon(m.weapon, hardpoints: [(0.2, 1.0, 0.18), (1.9, -0.3, 1.35)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
     }
 
-    // Kreuzer: langer Rumpf, Brücke, Seitengondeln an Streben
+    // Kreuzer: facettierter Nadelrumpf in einem großen Ring, drei Triebwerke
     private static func orion(_ k: ShipKit, _ m: ShipModel) {
-        k.profile([(3.9, 0.0), (2.8, 0.35), (-2.4, 0.4), (-2.7, 0.15), (-2.7, -0.3), (3.0, -0.25)], z: 0, thick: 0.9, mirror: false)
-        k.box(-0.6, 0.62, 0, 1.4, 0.5, 0.6, k.stripe, chamfer: 0.08, mirror: false)
-        k.canopy(-0.1, 0.85, len: 0.8, height: 0.26, width: 0.5)
-        k.box(-1.0, 0.0, 1.0, 0.8, 0.14, 1.2, k.dark, chamfer: 0.03)
-        k.engine(-1.1, 0.0, 1.7, r: 0.38, len: 3.0, k.accent)
-        k.engine(-2.6, 0.05, 0, r: 0.4, len: 0.8, mirror: false)
-        k.fin(-1.7, 0.4, 0.2, height: 0.9, len: 1.0, tilt: -0.15)
-        k.greeble(x0: 0.4, x1: 2.6, y: 0.38, zMax: 0.3, count: 10)
-        k.lamp(0.4, 0.0, 2.1)
-        k.lamp(3.0, 0.1, 0.4)
-        k.plates(x0: 0.2, x1: 2.8, y: 0.38, width: 0.7, count: 5)
-        k.belly(x0: -2.2, x1: 2.6, y: -0.38, width: 0.6)
-        k.pipes(x0: -2.4, x1: 2.4, y: 0.1, z: 0.48)
-        k.sidePanels(x0: -2.2, x1: 2.4, y: 0.1, z: 0.47, count: 6)
-        k.sensorNose(3.9, 0.0)
-        k.antenna(-0.6, 0.87, 0.2, h: 0.6)
-        k.weapon(m.weapon, hardpoints: [(1.5, 0.0, 1.7)], spine: (-0.4, 4.0, 0.62), belly: (0.5, -0.55))
+        // Nadelrumpf, mittschiffs von einem großen Ring umschlossen
+        k.hull([.init(4.0, 0.05, 0.04, 0.04), .init(3.0, 0.1, 0.28, 0.22), .init(1.2, 0.15, 0.42, 0.34),
+                .init(-0.9, 0.15, 0.5, 0.4), .init(-2.1, 0.15, 0.44, 0.34), .init(-2.4, 0.15, 0.34, 0.26)], mirror: false)
+        k.hull([.init(2.0, 0.4, 0.05, 0.03), .init(1.6, 0.46, 0.3, 0.14), .init(0.5, 0.48, 0.34, 0.16), .init(0.1, 0.44, 0.24, 0.1)],
+               k.second, mirror: false)
+        let ring = SCNTube(innerRadius: 0.95, outerRadius: 1.12, height: 0.5)
+        ring.radialSegmentCount = 12
+        k.addNode(ring, k.stripe, SCNVector3(-0.6, 0.15, 0), rot: SCNVector3(0, 0, -Float.pi / 2))
+        let rim = SCNTube(innerRadius: 1.12, outerRadius: 1.17, height: 0.12)
+        rim.radialSegmentCount = 12
+        for dx in [-0.22, 0.22] as [Float] {
+            k.addNode(rim, k.dark, SCNVector3(-0.6 + dx, 0.15, 0), rot: SCNVector3(0, 0, -Float.pi / 2))
+        }
+        // Speichen vom Rumpf zum Ring, mit Lampen am Ring
+        for i in 0..<4 {
+            let a = Float(i) * .pi / 2 + .pi / 4
+            let r: Float = 0.72
+            k.box(-0.6, 0.15 + sin(a) * r, cos(a) * r, 0.34, 0.12, 0.55, k.dark, chamfer: 0.03,
+                  rot: SCNVector3(-a, 0, 0), mirror: false)
+            k.lamp(-0.6, 0.15 + sin(a) * 1.19, cos(a) * 1.19, size: 0.1)
+        }
+        // Drei Triebwerke im Dreieck
+        k.engine(-2.5, 0.42, 0, r: 0.3, len: 1.1, mirror: false)
+        k.engine(-2.4, -0.1, 0.36, r: 0.26, len: 1.0)
+        k.fin(-1.7, 0.5, 0.0, height: 0.8, len: 0.9, tilt: 0, k.accent)
+        k.box(-2.0, -0.35, 0, 0.7, 0.3, 0.06, k.accent, chamfer: 0.02, mirror: false)
+        // Cockpit seitlich in eigener Kapsel, damit die Railgun frei über den Rumpf laufen kann
+        k.hull([.init(2.4, 0.25, 0.05, 0.05), .init(1.95, 0.28, 0.29, 0.23), .init(0.6, 0.29, 0.34, 0.26), .init(0.0, 0.27, 0.24, 0.18)],
+               z: 0.86, k.stripe, mirror: false)
+        k.box(1.0, 0.24, 0.5, 0.8, 0.16, 0.45, k.dark, chamfer: 0.03, mirror: false)
+        k.box(0.35, 0.24, 0.5, 0.2, 0.12, 0.45, k.metal, chamfer: 0.02, mirror: false)
+        k.canopy(1.55, 0.47, z: 0.86, len: 1.15, height: 0.3, width: 0.44)
+        k.lamp(0.2, 0.52, 0.86, size: 0.09)
+        k.plates(x0: -2.0, x1: 1.0, y: 0.5, width: 0.55, count: 5)
+        k.belly(x0: -1.8, x1: 2.4, y: -0.25, width: 0.5)
+        k.sidePanels(x0: 0.2, x1: 2.6, y: 0.12, z: 0.4, count: 4)
+        k.pipes(x0: -2.0, x1: -1.0, y: 0.15, z: 0.48)
+        k.greeble(x0: 1.9, x1: 2.6, y: 0.3, zMax: 0.15, count: 3)
+        k.sensorNose(4.0, 0.05)
+        k.lamp(3.0, 0.1, 0.3)
+        k.antenna(-1.2, 0.55, 0.22, h: 0.5)
+        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (0.4, 4.0, 0.74), belly: (0.5, -0.5))
     }
 
     // Abfangjäger: vorwärts gepfeilte Flügel, zwei enge Triebwerke
@@ -801,21 +1002,36 @@ enum ShipDesigns {
         k.weapon(m.weapon, hardpoints: [(1.8, -0.2, 1.6)], spine: (-2.2, 3.0, 1.35), belly: (-0.2, -1.0))
     }
 
-    // Tarnschiff: flacher Deltaflügel, rote Leuchtlinien
+    // Tarnschiff: Nurflügler mit gezackter Hinterkante, versenkten Düsen und roten Leuchtlinien
     private static func phantom(_ k: ShipKit, _ m: ShipModel) {
-        k.plate([(3.4, 0.0), (-2.2, 2.9), (-1.5, 1.0), (-2.4, 0.0)], y: 0, thick: 0.34, k.paint, chamfer: 0.1, mirror: true)
-        k.profile([(3.0, 0.0), (1.6, 0.3), (-1.8, 0.35), (-2.2, 0.0)], z: 0, thick: 0.9, chamfer: 0.1, mirror: false)
-        k.canopy(1.2, 0.25, len: 1.5, height: 0.3, width: 0.5)
+        // Nurflügler: breite, flache Pfeilform mit gezackter Hinterkante, Rumpf eingebettet
+        let wing: [(CGFloat, CGFloat)] = [(2.9, 0.0), (-0.9, 3.0), (-1.6, 3.0), (-1.2, 2.0), (-2.0, 1.3), (-1.6, 0.0)]
+        k.plate(wing, y: 0.0, thick: 0.2, k.paint, chamfer: 0.06)
+        k.hull([.init(3.5, 0.08, 0.04, 0.03), .init(2.5, 0.14, 0.5, 0.2), .init(0.8, 0.2, 0.85, 0.32),
+                .init(-0.9, 0.18, 0.8, 0.3), .init(-1.9, 0.12, 0.55, 0.2)], top: 0.45, bottom: 0.8, shoulder: 0.05, mirror: false)
+        // flacher Rückenkamm mit Kanzel
+        k.hull([.init(2.0, 0.5, 0.05, 0.02), .init(1.2, 0.56, 0.3, 0.12), .init(-0.6, 0.54, 0.34, 0.12), .init(-1.3, 0.46, 0.2, 0.06)],
+               top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
+        // Cockpit seitlich in eigener Kapsel auf dem Flügel
+        k.hull([.init(1.5, 0.22, 0.05, 0.05), .init(1.1, 0.26, 0.26, 0.18), .init(-0.2, 0.27, 0.31, 0.2), .init(-0.7, 0.23, 0.2, 0.12)],
+               z: 1.15, k.second, mirror: false)
+        k.canopy(0.75, 0.42, z: 1.15, len: 1.1, height: 0.28, width: 0.38)
+        // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
+        k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
-        k.plate([(2.6, 0.32), (-1.9, 2.6), (-2.0, 2.52), (2.4, 0.3)], y: 0.18, thick: 0.03, red, chamfer: 0)
-        k.engine(-2.0, 0.05, 0.7, r: 0.3, len: 1.2, k.dark)
-        k.fin(-1.5, 0.3, 1.6, height: 0.6, len: 0.8, tilt: -0.9, k.accent)
-        k.greeble(x0: -1.6, x1: 0.2, y: 0.35, zMax: 0.3, count: 6)
-        k.plates(x0: -1.6, x1: 1.0, y: 0.35, width: 0.6, count: 4)
-        k.belly(x0: -1.6, x1: 1.6, y: -0.3, width: 0.5)
-        k.wingDetail([(3.4, 0.0), (-2.2, 2.9), (-1.5, 1.0), (-2.4, 0.0)], y: 0, thick: 0.34)
-        k.sensorNose(3.0, 0.0)
-        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.0)], spine: (-1.2, 3.4, 0.5), belly: (-0.4, -0.45))
+        k.plate([(2.7, 0.18), (-0.75, 2.92), (-0.85, 2.88), (2.55, 0.16)], y: 0.11, thick: 0.02, red, chamfer: 0)
+        k.plate([(-1.25, 1.95), (-1.9, 1.36), (-1.95, 1.42), (-1.32, 2.0)], y: 0.11, thick: 0.02, red, chamfer: 0)
+        // flache, in den Flügel versenkte Düsen
+        k.engine(-1.7, 0.08, 0.62, r: 0.22, len: 1.0, k.dark)
+        k.box(-1.0, 0.18, 0.62, 1.0, 0.12, 0.6, k.second, chamfer: 0.04)
+        // nach innen geneigte Doppelflossen und Winglets
+        k.fin(-1.2, 0.3, 0.85, height: 0.55, len: 0.8, tilt: 0.45, k.accent)
+        k.fin(-1.0, 0.08, 2.75, height: 0.4, len: 0.6, tilt: -0.9, k.accent)
+        k.greeble(x0: -1.4, x1: 0.4, y: 0.4, zMax: 0.55, count: 6)
+        k.belly(x0: -1.2, x1: 1.6, y: -0.12, width: 0.7)
+        k.sensorNose(3.5, 0.08)
+        k.lamp(-0.9, 0.08, 2.95, size: 0.1)
+        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-0.6, 3.4, 0.8), belly: (-0.2, -0.4))
     }
 
     // Flaggschiff: elegant, Flügelspitzen-Triebwerke, goldene Akzente

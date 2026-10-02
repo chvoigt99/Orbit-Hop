@@ -25,6 +25,12 @@ enum Haptics {
         #endif
     }
 
+    static func bonus() {
+        #if canImport(UIKit)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        #endif
+    }
+
     static func gameOver() {
         #if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -71,6 +77,7 @@ struct Planet {
     let energyScale: CGFloat   // spätere Planeten geben weniger Energie
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
+    var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
 
     var mass: CGFloat { radius * radius }
     var orbitRadius: CGFloat { radius + 90 }
@@ -171,7 +178,7 @@ struct Burst {
 // MARK: - Bonus-Items
 
 enum ItemKind: CaseIterable {
-    case energy, wideCone, superBomb, rescue, tech
+    case energy, wideCone, superBomb, rescue, tech, shipPart
 
     var hue: Double {
         switch self {
@@ -180,6 +187,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return 275
         case .rescue: return 22
         case .tech: return 48
+        case .shipPart: return 330
         }
     }
 
@@ -190,6 +198,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return "SUPERBOMBE"
         case .rescue: return "NACHBRENNER"
         case .tech: return "+1 TECH-TEIL"
+        case .shipPart: return "+1 SCHIFFSTEIL"
         }
     }
 
@@ -201,6 +210,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return Double.random(in: 255...295)
         case .rescue: return Double.random(in: 5...30)
         case .tech: return 48
+        case .shipPart: return 330
         }
     }
 
@@ -362,6 +372,7 @@ final class Game {
     var weapon: WeaponKind { ship.weapon }
     var weaponCost: CGFloat { (weapon.cost * ship.weaponCostFactor).rounded() }
     var runParts = 0                      // in diesem Flug gesammelte Tech-Teile
+    var runShipParts = 0                  // in diesem Flug gefundene Schiffsteile
 
     /// Schwierigkeit 0...1, erreicht nach 40 Planeten das Maximum.
     var level: CGFloat { min(1, CGFloat(score) / 40) }
@@ -447,6 +458,8 @@ final class Game {
     var missFlash: CGFloat = 0
 
     var time: CGFloat = 0
+    /// läuft auch in Pause und Stationsmenü weiter (für Kamerafahrten im Menü)
+    var uiTime: CGFloat = 0
     var lastTime: TimeInterval?
     var overAt: CGFloat = 0
     var lastAccuracy: CGFloat = 0
@@ -476,6 +489,12 @@ final class Game {
     var bonusTaken: Set<Int> = []         // Planeten, die ihr Item schon abgegeben haben
 
     /// Ladefortschritt 0...1 am aktuellen Planeten, nil wenn es dort nichts gibt.
+    /// Lädt gerade ein Bonus-Item auf (kein Energieverbrauch)
+    var isCharging: Bool { phase == .orbiting && chargeFraction != nil }
+
+    /// Farbe des Items, das gerade geladen wird
+    var chargingKind: ItemKind? { isCharging ? planets[currentIndex].bonus : nil }
+
     var chargeFraction: CGFloat? {
         guard planets[currentIndex].bonus != nil, !bonusTaken.contains(currentIndex) else { return nil }
         return min(1, orbitCharge / chargeNeeded)
@@ -518,8 +537,52 @@ final class Game {
     }
 
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
+    /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
+    static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
+    /// Nur für Tests: Flug startet mit 20 % Panzerung, um Rauch und Funken zu sehen
+    static let hullTest = ProcessInfo.processInfo.arguments.contains("-hullTest")
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
+    /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
+    static let stationTest = false
+
+    // MARK: Raumstation
+    /// Index des nächsten Planeten, der eine Raumstation wird
+    private var nextStation = 0
+    /// Menü der Raumstation ist offen, die Simulation ruht
+    var stationOpen = false
+    /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
+    private var stationMenuAt: CGFloat?
+    var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
+
+    /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
+    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8) }
+
+    /// Panzerung: Kollisionen zehren daran, bei null explodiert das Schiff. Nur an Stationen reparierbar.
+    static let maxHull: CGFloat = 100
+    var hull: CGFloat = Game.maxHull
+    /// Flug endete durch zerstörte Panzerung statt leerer Energie
+    private(set) var destroyed = false
+
+    /// Tech-Teile für eine volle Reparatur: etwa 1 je 10 % Panzerung und 1 je 25 Energie, mindestens 1
+    var repairCost: Int {
+        let missing = (Game.maxHull - hull) / 10 + (maxEnergy - energy) / 25
+        return missing < 0.05 ? 0 : max(1, Int(missing.rounded()))
+    }
+    var needsRepair: Bool { repairCost > 0 }
+
+    func repair() {
+        let cost = repairCost
+        guard cost > 0, profile.spendParts(cost) else { return }
+        energy = maxEnergy
+        hull = Game.maxHull
+        overflow = 0
+        Haptics.bonus()
+    }
+
+    func leaveStation() {
+        stationOpen = false
+    }
     var botThreshold: CGFloat = -1
     var botSkip = false
     var botWaitBonus = false
@@ -541,7 +604,7 @@ final class Game {
     /// Im Shop gewähltes Schiff übernehmen.
     func equip() {
         ship = profile.selected
-        if !started { energy = maxEnergy }
+        if !started { energy = maxEnergy } else { energy = min(energy, maxEnergy) }
     }
 
     // MARK: Start / Level
@@ -552,6 +615,9 @@ final class Game {
         bursts = []
         ship = profile.selected
         runParts = 0
+        runShipParts = 0
+        hull = Game.hullTest ? 20 : Game.maxHull
+        destroyed = false
         items = []
         projectiles = []
         beams = []
@@ -565,6 +631,10 @@ final class Game {
         superBombs = 0
         rescueCharges = 0
         boostTime = 0
+        stationOpen = false
+        stationMenuAt = nil
+        // ZUM TESTEN: erste Station schon als zweites Ziel; im fertigen Spiel Int.random(in: 30...36)
+        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36)
         planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
@@ -615,24 +685,28 @@ final class Game {
         let prev = planets[planets.count - 1]
         // je weiter hinten, desto kleiner, schneller umkreist und weiter entfernt
         let lvl = min(1, CGFloat(planets.count) / 40)
-        let r = CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
+        let station = planets.count == nextStation
+        if station { nextStation += stationGap(lvl) }
+        // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
+        let r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl))
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = planets.count >= 5 && Double.random(in: 0...1) < Double(0.07 + 0.08 * lvl)
-        let hasField = !hasComet && planets.count >= 2 && Double.random(in: 0...1) < Double(0.45 + 0.4 * lvl)
+        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1) < Double(0.07 + 0.08 * lvl)
+        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1) < Double(0.45 + 0.4 * lvl)
         let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl))
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
         let spin = 150 / r * CGFloat.random(in: 0.9...1.2) * (1.1 + 0.5 * lvl)
         // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches
-        let bonus: ItemKind? = Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
-        let hue = bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
+        let bonus: ItemKind? = !station && Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
+        let hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
         planets.append(Planet.make(center: c, radius: r, spin: spin,
-                                   hue: hue, allowRing: true,
-                                   energyScale: (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
+                                   hue: hue, allowRing: !station,
+                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
         planets[planets.count - 1].hardRoute = hasField || hasComet
+        planets[planets.count - 1].isStation = station
 
         guard planets.count >= 3 else { return }
         let gapIndex = planets.count - 1
@@ -815,7 +889,7 @@ final class Game {
     }
 
     func tap() {
-        guard !paused else { return }
+        guard !paused && !stationOpen else { return }
         if !started {
             started = true
             startedAt = time
@@ -913,8 +987,11 @@ final class Game {
         let now = date.timeIntervalSinceReferenceDate
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
-        guard !paused else {
+        uiTime += dt
+        guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
+            // im Stationsmenü fährt die Kamera noch auf die Station über dem Menü
+            if stationOpen { updateCamera(dt, size) }
             return
         }
         time += dt
@@ -926,9 +1003,20 @@ final class Game {
         // Nur für Tests im Simulator: Start mit Argument -autopilot
         if Game.bot { botStep() } else if Game.autopilot {
             if !started || (phase == .over && time - overAt > 2) { tap() }
+            // an der Station auf das Menü warten, statt sofort weiterzufliegen
+            else if atStation && stationMenuAt != nil {}
             else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
         }
+        if Game.popupTest, phase == .orbiting, !atStation, Int((time - dt) / 3) != Int(time / 3) {
+            for (t, h) in [("+1 TECH-TEIL", ItemKind.tech.hue), ("KOMET ZERSTÖRT", 200.0), ("+24", 140.0)] {
+                popups.append(Popup(pos: pos, text: t, color: hsl(h, 0.85, 0.65), age: 0))
+            }
+        }
         if phase != .over { simulate(simDt) }
+        if let t = stationMenuAt, time >= t {
+            stationMenuAt = nil
+            if atStation { stationOpen = true }
+        }
         updateFx(simDt)
         updateCamera(dt, size)
         updateSound()
@@ -1010,7 +1098,7 @@ final class Game {
     private func simulate(_ dt: CGFloat) {
         let before = pos
         // Beim Aufladen eines Bonus-Items kein Verbrauch
-        let charging = phase == .orbiting && chargeFraction != nil
+        let charging = isCharging
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
@@ -1021,7 +1109,8 @@ final class Game {
             fireRescue()
         }
 
-        if energy <= 0 {
+        if energy <= 0 || hull <= 0 {
+            destroyed = hull <= 0
             blog("over score=\(score) t=\(Int(missionTime)) phase=\(phase) idx=\(currentIndex) flight=\(String(format: "%.1f", flightTime)) parts=\(runParts)")
             energy = 0
             phase = .over
@@ -1107,14 +1196,18 @@ final class Game {
         case .tech:
             runParts += 1
             profile.addParts(1)
+        case .shipPart:
+            runShipParts += 1
+            profile.addShipParts(1)
+            Haptics.bonus()
         }
-        if kind == .tech {
+        if kind == .tech || kind == .shipPart {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
         popups.append(Popup(pos: p, text: kind.title, color: hsl(kind.hue, 0.85, 0.65), age: 0))
         Haptics.capture()
-        SoundFX.shared.play(kind == .tech ? .tech : .item)
+        SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
 
     // MARK: Waffen
@@ -1292,6 +1385,9 @@ final class Game {
         case .comet: techChance = 1
         }
         if Double.random(in: 0...1) < techChance { spawnTech(from: a.center) }
+        // Schiffsteile sind selten: nur aus Wracks und Kometen
+        let shipPartChance: Double = a.kind == .wreck ? 0.2 : (a.kind == .comet ? 0.25 : 0)
+        if Double.random(in: 0...1) < shipPartChance { spawnTech(from: a.center, kind: .shipPart) }
         if a.kind == .comet {
             burst(at: a.center, count: 70, hue: 195, speed: 380, life: 1.4)
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
@@ -1322,13 +1418,14 @@ final class Game {
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
-        let damage = (baseDamage * (1 - ship.armor)).rounded()
+        // Treffer gehen auf die Panzerung; gepanzerte Schiffe stecken mehr weg (Panzerungswert 0,6 → etwa 40 % weniger)
+        let damage = (baseDamage * 8 * (1 - 0.7 * ship.armor)).rounded()
         vel = CGVector(dx: vel.dx * keep, dy: vel.dy * keep)
-        energy -= damage
+        hull = max(0, hull - damage)
         brakeFlash = 1.2
         burst(at: a.center, count: 30, hue: 30, speed: 260, life: 0.8)
         burst(at: a.center, count: 16, hue: 35, speed: 150, life: 1.1)
-        popups.append(Popup(pos: pos, text: damage > 0 ? "BREMSE -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
+        popups.append(Popup(pos: pos, text: damage > 0 ? "PANZERUNG -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
         shake = max(shake, 0.35)
         Haptics.miss()
         SoundFX.shared.play(.hit)
@@ -1350,9 +1447,9 @@ final class Game {
         }
     }
 
-    /// Tech-Teil fliegt von der Fundstelle direkt ins Schiff.
-    private func spawnTech(from p: CGPoint) {
-        items.append(Item(kind: .tech, from: p, p: p, gap: currentIndex + 1,
+    /// Tech-Teil (oder Schiffsteil) fliegt von der Fundstelle direkt ins Schiff.
+    private func spawnTech(from p: CGPoint, kind: ItemKind = .tech) {
+        items.append(Item(kind: kind, from: p, p: p, gap: currentIndex + 1,
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
     }
 
@@ -1365,7 +1462,7 @@ final class Game {
         items.append(Item(kind: kind, from: from, p: from, gap: currentIndex,
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
         shake = max(shake, 0.15)
-        Haptics.capture()
+        Haptics.bonus()
         SoundFX.shared.play(.bonus)
     }
 
@@ -1520,9 +1617,14 @@ final class Game {
                 spawnTech(from: planets[index].center)
                 techFocus = .infinity    // bleibt nah dran bis zum nächsten Start
             }
-            addEnergy(pl.energyGain, from: pl.center)
-            popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
-                                color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
+            // Stationen geben keine Energie ab, dort repariert man
+            if pl.energyGain > 0 {
+                addEnergy(pl.energyGain, from: pl.center)
+                popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
+                                    color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
+            }
+            // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
+            if pl.isStation { stationMenuAt = time + 2.0 }
         }
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }
@@ -1587,6 +1689,10 @@ final class Game {
             let r = flightFrame.map { $0.union(ship) } ?? ship
             targetCenter = CGPoint(x: r.midX, y: r.midY)
             targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
+        }
+        // Stationsmenü: Maßstab für die Station über dem Menü (Blickwinkel und Lage setzt World3D)
+        if stationOpen {
+            targetScale = min(size.width, size.height * 0.4) / ((fp.orbitRadius + 60) * 2)
         }
         targetScale = min(max(targetScale, 0.04), 0.8)
 

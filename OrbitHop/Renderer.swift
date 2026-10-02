@@ -12,10 +12,10 @@ extension Game {
     func draw(_ context: GraphicsContext, size: CGSize) {
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
-        drawIndicator(context, size)
-        drawPopups(context, size)
+        if !stationOpen { drawIndicator(context, size) }
+        if !stationOpen { drawPopups(context, size) }
         drawScreenFrame(context, size)
-        drawRadar(context, size)
+        if !stationOpen { drawRadar(context, size) }
         drawOverlays(context, size)
     }
 
@@ -581,6 +581,14 @@ extension Game {
             c.stroke(gear, with: .color(col), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
             c.stroke(circlePath(.zero, 5), with: .color(col), lineWidth: 2)
             c.fill(circlePath(.zero, 2), with: .color(col))
+        case .shipPart:
+            // kleiner Pfeilrumpf mit Flügeln
+            p.move(to: CGPoint(x: 8, y: 0))
+            p.addLine(to: CGPoint(x: -6, y: -7))
+            p.addLine(to: CGPoint(x: -3, y: 0))
+            p.addLine(to: CGPoint(x: -6, y: 7))
+            p.closeSubpath()
+            c.fill(p, with: .color(col))
         case .rescue:
             p.move(to: CGPoint(x: -5, y: 0))
             p.addLine(to: CGPoint(x: 0, y: -5))
@@ -693,7 +701,7 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        let title = c.resolve(Text("ZIEL \(String(format: "%02d", currentIndex + 1))")
+        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(amber))
         let info = c.resolve(Text("\(Int(targetDistance)) km · +\(Int(t.energyGain.rounded())) E")
@@ -870,7 +878,10 @@ extension Game {
         let t = planets[currentIndex + 1]
         let sp = toScreen(t.center, size)
         let margin: CGFloat = 34
-        let top: CGFloat = insets.top + 150
+        // solange oben die Startbewertung steht, rückt der Pfeil darunter (gleitet danach zurück)
+        let sinceLaunch = time - lastLaunchTime
+        let badge: CGFloat = dockLaunch || sinceLaunch < 0 ? 0 : min(1, max(0, (1.7 - sinceLaunch) / 0.3))
+        let top: CGFloat = insets.top + 150 + 46 * badge
         let bottom: CGFloat = size.height - insets.bottom - 130
         if sp.x > margin && sp.x < size.width - margin && sp.y > top && sp.y < bottom { return }
 
@@ -915,6 +926,8 @@ extension Game {
     }
 
     private func drawPopups(_ c: GraphicsContext, _ size: CGSize) {
+        // Ältere Meldungen bleiben stehen, neuere weichen nach oben aus, damit sich keine Schilder überdecken
+        var placed: [CGRect] = []
         for pp in popups {
             let sp = screenPoint(pp.pos, size)
             // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
@@ -925,10 +938,21 @@ extension Game {
                 .font(.system(size: 17, weight: .bold, design: .monospaced))
                 .foregroundColor(pp.color.opacity(alpha)))
             let ts = text.measure(in: size)
-            let rect = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
-                              width: ts.width, height: ts.height)
-            drawPlate(c, rect.insetBy(dx: -9, dy: -4), accent: pp.color, alpha: alpha, cut: 6)
-            c.draw(text, at: CGPoint(x: sp.x, y: sy))
+            var plate = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
+                               width: ts.width, height: ts.height).insetBy(dx: -9, dy: -4)
+            // nicht über den Bildrand hinaus
+            plate.origin.x = min(max(plate.minX, 8), size.width - 8 - plate.width)
+            var moved = true
+            while moved {
+                moved = false
+                for r in placed where r.insetBy(dx: -2, dy: -3).intersects(plate) {
+                    plate.origin.y = r.minY - 4 - plate.height
+                    moved = true
+                }
+            }
+            placed.append(plate)
+            drawPlate(c, plate, accent: pp.color, alpha: alpha, cut: 6)
+            c.draw(text, at: CGPoint(x: plate.midX, y: plate.midY))
         }
     }
 

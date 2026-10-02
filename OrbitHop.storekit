@@ -1,0 +1,49 @@
+{
+  "identifier": "3994F05E",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "0.29",
+      "familyShareable": false,
+      "internalID": "50A2E1817",
+      "localizations": [
+        {
+          "description": "1 Schiffsteil(e) zum Freischalten neuer Schiffe",
+          "displayName": "1 Schiffsteil",
+          "locale": "de"
+        }
+      ],
+      "productID": "com.chv.OrbitHop.shipparts.1",
+      "referenceName": "Schiffsteil 1",
+      "type": "Consumable"
+    },
+    {
+      "displayPrice": "1.99",
+      "familyShareable": false,
+      "internalID": "4C16CE5AC",
+      "localizations": [
+        {
+          "description": "10 Schiffsteil(e) zum Freischalten neuer Schiffe",
+          "displayName": "10 Schiffsteile",
+          "locale": "de"
+        }
+      ],
+      "productID": "com.chv.OrbitHop.shipparts.10",
+      "referenceName": "Schiffsteile 10",
+      "type": "Consumable"
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "",
+    "_developerTeamID": "B2FZN6VFRZ",
+    "_failTransactionsEnabled": false,
+    "_locale": "de_DE",
+    "_storefront": "DEU",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
+}

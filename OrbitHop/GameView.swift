@@ -49,11 +49,14 @@ struct GameView: View {
                     if !game.started {
                         titleView
                     }
-                    if game.started && game.phase != .over && !game.paused {
+                    if game.started && game.phase != .over && !game.paused && !game.stationOpen {
                         pauseButton
                     }
                     if game.paused {
                         pauseMenu
+                    }
+                    if game.stationOpen {
+                        stationMenu
                     }
                     if game.phase == .over {
                         gameOverView
@@ -67,10 +70,17 @@ struct GameView: View {
         .background(Color.black.ignoresSafeArea())
         .onAppear {
             SoundFX.shared.prepare()
+            if ProcessInfo.processInfo.arguments.contains("-renderShips") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
+            }
             // Welt erst nach dem ersten Bild aufbauen, damit der Ladebildschirm sichtbar ist
             if world == nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
             }
+        }
+        .task {
+            // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
+            Store.shared.onCredit = { game.profile.addShipParts($0) }
         }
         .fullScreenCover(isPresented: $showShop) {
             ShipShopView(profile: game.profile) {
@@ -104,6 +114,10 @@ struct GameView: View {
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
+        if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
+        if let kind = game.chargingKind, let f = game.chargeFraction {
+            return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
+        }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
         if game.phase == .flying { return ("TRANSIT · SCHUB AKTIV", gold) }
@@ -132,7 +146,8 @@ struct GameView: View {
             precisionBadge
             Spacer()
             hint
-            bottomBar
+            // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
+            bottomBar.opacity(game.stationOpen ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -142,9 +157,12 @@ struct GameView: View {
     private var topBar: some View {
         let fraction = max(0, min(1, game.energy / game.maxEnergy))
         let lit = Int(ceil(fraction * 20))
-        let barColor = hsl(Double(fraction) * 160, 0.8, 0.58)
-        let low = game.energy < 25 && game.started && game.phase != .over
+        let chargeColor = game.chargingKind.map { hsl($0.hue, 0.85, 0.62) }
+        let barColor = chargeColor ?? hsl(Double(fraction) * 160, 0.8, 0.58)
+        let low = game.energy < 25 && game.started && game.phase != .over && chargeColor == nil
         let blink = low && Int(game.time * 4) % 2 == 0
+        // beim Laden pulsiert die Leiste sanft in der Bonusfarbe
+        let chargePulse = chargeColor == nil ? 1 : 0.75 + 0.25 * sin(Double(game.time) * 5)
 
         return HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
@@ -173,15 +191,37 @@ struct GameView: View {
 
                 HStack(spacing: 3) {
                     ForEach(0..<20, id: \.self) { i in
-                        Slant().fill(i < lit ? barColor : Color.white.opacity(0.08))
+                        Slant().fill(i < lit ? barColor.opacity(chargePulse) : Color.white.opacity(0.08))
                     }
                 }
                 .frame(height: 14)
                 .shadow(color: barColor.opacity(0.5), radius: 6)
 
+                // Panzerung: schmale Leiste, wird bei wenig Panzerung rot und pulsiert, blinkt bei Treffern
+                let hullLow = game.hull <= 25
+                let hullPulse = hullLow ? 0.55 + 0.45 * abs(sin(Double(game.time) * 5)) : 1
+                let hitBlink = game.brakeFlash > 0 && Int(game.brakeFlash * 10) % 2 == 0
+                HStack(spacing: 6) {
+                    label("PANZ").foregroundStyle(dim)
+                    HStack(spacing: 2) {
+                        ForEach(0..<10, id: \.self) { i in
+                            Rectangle().fill(CGFloat(i) < (game.hull / 10).rounded(.up)
+                                             ? (hullLow || hitBlink ? warn : gold) : Color.white.opacity(0.08))
+                        }
+                    }
+                    .frame(height: 5)
+                    .opacity(hullPulse)
+                    .shadow(color: warn.opacity(hullLow ? 0.6 : 0), radius: 4)
+                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(hullLow || hitBlink ? warn : dim)
+                }
+
                 HStack(alignment: .bottom, spacing: 6) {
-                    label(low ? "RESERVE · WARNUNG" : "ZELLE A · NOMINAL")
-                        .foregroundStyle(low ? warn : signal.opacity(0.75))
+                    if let chargeColor {
+                        label("LADEN · KEIN VERBRAUCH").foregroundStyle(chargeColor)
+                    } else {
+                        label(low ? "RESERVE · WARNUNG" : "ZELLE A · NOMINAL")
+                            .foregroundStyle(low ? warn : signal.opacity(0.75))
+                    }
                     Spacer()
                     HStack(alignment: .bottom, spacing: 2) {
                         ForEach(0..<8, id: \.self) { i in
@@ -293,7 +333,7 @@ struct GameView: View {
             Color(red: 0.01, green: 0.015, blue: 0.04).ignoresSafeArea()
             VStack(spacing: 14) {
                 label("NAV-SYSTEM // ORBITALTRANSFER").foregroundStyle(signal.opacity(0.8))
-                Text("ORBIT HOP")
+                Text("OrbiX")
                     .font(.system(size: 46, weight: .heavy, design: .monospaced))
                     .tracking(4)
                     .foregroundStyle(.white)
@@ -380,6 +420,7 @@ struct GameView: View {
                 readout("KURS", String(format: "%03d", game.headingDegrees), "GRD")
                 readout("WAFFE", game.weapon.title, "\(Int(game.weaponCost))E")
                 readout("TECH", "+\(game.runParts)", "⚙")
+                if game.runShipParts > 0 { readout("SCHIFF", "+\(game.runShipParts)", "TEIL") }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -388,6 +429,48 @@ struct GameView: View {
             // Platz für das Radar, das im Canvas gezeichnet wird
             Color.clear.frame(width: 104, height: 100)
         }
+    }
+
+    // MARK: Raumstation
+
+    private var stationMenu: some View {
+        let cost = game.repairCost
+        let canRepair = cost > 0 && game.profile.parts >= cost
+        return VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 12) {
+                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
+                Text("RAUMSTATION")
+                    .font(.system(size: 30, weight: .heavy, design: .monospaced))
+                    .tracking(5)
+                    .foregroundStyle(.white)
+                    .shadow(color: signal.opacity(0.6), radius: 12)
+                label("PANZERUNG \(Int(ceil(game.hull))) % · ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy))")
+                    .foregroundStyle(gold)
+                label("⚙ \(game.profile.parts) TECH-TEILE · \(game.profile.shipParts) SCHIFFSTEILE")
+                    .foregroundStyle(dim)
+                    .padding(.bottom, 8)
+                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "REPARIEREN · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
+                           "wrench.and.screwdriver.fill", canRepair ? signal : dim) {
+                    game.repair()
+                }
+                .disabled(!canRepair)
+                menuButton("WERFT", "airplane", gold) { showShop = true }
+                menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
+            .background(Chamfer(cut: 14).fill(panel.opacity(0.92)))
+            .overlay(Chamfer(cut: 14).stroke(signal.opacity(0.45), lineWidth: 1))
+            .overlay(Brackets(len: 14).stroke(signal, lineWidth: 2).padding(-6))
+            .padding(.bottom, 36)
+        }
+        // nur unten abdunkeln, damit die Station oben frei bleibt
+        .background(
+            LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .center, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        )
     }
 
     // MARK: Titel und Game Over
@@ -471,7 +554,7 @@ struct GameView: View {
         VStack(spacing: 12) {
             label("NAV-SYSTEM // ORBITALTRANSFER")
                 .foregroundStyle(signal.opacity(0.8))
-            Text("ORBIT HOP")
+            Text("OrbiX")
                 .font(.system(size: 50, weight: .heavy, design: .monospaced))
                 .tracking(4)
                 .lineLimit(1)
@@ -502,7 +585,7 @@ struct GameView: View {
     private var gameOverPanel: some View {
         VStack(spacing: 14) {
             label("SYSTEM OFFLINE · T+\(missionClock)").foregroundStyle(warn.opacity(0.8))
-            Text("ENERGIE LEER")
+            Text(game.destroyed ? "SCHIFF ZERSTÖRT" : "ENERGIE LEER")
                 .font(.system(size: 28, weight: .heavy, design: .monospaced))
                 .tracking(2)
                 .foregroundStyle(warn)
@@ -524,6 +607,10 @@ struct GameView: View {
             .foregroundStyle(.white)
             label("+\(game.runParts) TECH-TEILE · GESAMT ⚙ \(game.profile.parts)")
                 .foregroundStyle(gold)
+            if game.runShipParts > 0 {
+                label("+\(game.runShipParts) SCHIFFSTEILE · GESAMT \(game.profile.shipParts)")
+                    .foregroundStyle(hsl(ItemKind.shipPart.hue, 0.8, 0.68))
+            }
             Text("TIPPEN FÜR NEUSTART")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .tracking(2.5)
