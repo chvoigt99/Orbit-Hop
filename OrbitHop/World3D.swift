@@ -1412,12 +1412,22 @@ final class World3D {
             return SCNVector3(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.z + (b.z - a.z) * f)
         }
         var pos = mix(topPos, chasePos)
-        let look = mix(target, chaseLook)
+        var look = mix(target, chaseLook)
         // Beim Herauszoomen gleitet die Kamera zugleich nach vorn, statt nach hinten wegzufahren
         if releasing {
             let bump = Float(sin(k * .pi) * topDist * 0.15)
             pos.x += Float(cos(hd)) * bump
             pos.z += Float(sin(hd)) * bump
+        }
+        // Start-Kick: kurzer Ruck in Flugrichtung, Kamera und Blickpunkt gemeinsam
+        let kick = launchKick(game)
+        if kick > 0 {
+            let push = Float(kick) * pos.y * 0.05
+            let fx = Float(cos(game.heading)) * push, fz = Float(sin(game.heading)) * push
+            pos.x += fx
+            pos.z += fz
+            look.x += fx
+            look.z += fz
         }
         if game.shake > 0 {
             let amp = Float(game.shake) * pos.y * 0.012
@@ -1435,8 +1445,19 @@ final class World3D {
         cameraNode.position = pos
         cameraNode.look(at: lookA, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
         lastLook = lookA
-        let normalFov = 50 + 12 * k
+        let normalFov = 50 + 12 * k + 9 * kick
         cameraNode.camera?.fieldOfView = normalFov + (parkedFov - normalFov) * ka
+    }
+
+    /// Hüllkurve des Start-Kicks: steigt in 0,09 s auf das Maximum und klingt dann ab.
+    /// Ein knapper Start ist kaum zu spüren, ein perfekter deutlich.
+    private func launchKick(_ game: Game) -> CGFloat {
+        let t = game.time - game.lastLaunchTime
+        guard t >= 0, t < 0.8, game.phase != .over else { return 0 }
+        let tau: CGFloat = 0.09
+        let envelope = (t / tau) * exp(1 - t / tau)
+        let a = game.lastAccuracy
+        return envelope * (0.15 + 0.85 * a * a)
     }
 
     // MARK: Projektion für das HUD

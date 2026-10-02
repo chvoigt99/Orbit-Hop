@@ -814,7 +814,9 @@ final class Game {
         time += dt
 
         boostTime = max(0, boostTime - dt)
-        let simDt = dt
+        // kurze Zeitlupe nach einem perfekten Start, läuft in 0,2 s wieder auf Normaltempo
+        let sinceLaunch = time - lastLaunchTime
+        let simDt = lastAccuracy >= 0.9 && sinceLaunch < 0.2 ? dt * (0.35 + 0.65 * sinceLaunch / 0.2) : dt
         // Nur für Tests im Simulator: Start mit Argument -autopilot
         if Game.bot { botStep() } else if Game.autopilot {
             if !started || (phase == .over && time - overAt > 2) { tap() }
