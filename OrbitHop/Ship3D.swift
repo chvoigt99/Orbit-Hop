@@ -317,6 +317,28 @@ enum Ship3D {
         return img
     }
 
+    /// Nur für die Entwicklung (Startargument `-renderShips`): rendert jedes Schiff der Auswahl aus zwei
+    /// Blickwinkeln als PNG in den Dokumente-Ordner der App, damit man die Modelle ohne Tippen vergleichen kann.
+    static func renderGallery() {
+        guard let r = renderer,
+              let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        for m in ShipModel.all {
+            let scene = build(m, showcase: true)
+            scene.background.contents = UIColor(white: 0.13, alpha: 1)
+            guard let pivot = scene.rootNode.childNode(withName: "pivot", recursively: false),
+                  let cam = scene.rootNode.childNode(withName: "camera", recursively: false) else { continue }
+            pivot.removeAllActions()
+            r.scene = scene
+            r.pointOfView = cam
+            for (i, angle) in [0.7, Double.pi - 0.7].enumerated() {
+                pivot.eulerAngles.y = Float(angle)
+                let img = r.snapshot(atTime: 0, with: CGSize(width: 1024, height: 768), antialiasingMode: .multisampling4X)
+                try? img.pngData()?.write(to: dir.appendingPathComponent("ship-\(m.id)-\(i).png"))
+            }
+        }
+        print("OHRENDER done \(dir.path)")
+    }
+
     private static func textures(for m: ShipModel) -> HullTextures {
         if let t = textureCache[m.id] { return t }
         let t = HullTextures.make(for: m, paint: m.hull.paint)
@@ -441,6 +463,7 @@ enum Ship3D {
 
         let accent = ui(m.weapon.hue, 0.85, 0.6)
         let pivot = shipNode(for: m, showcase: showcase)
+        pivot.name = "pivot"
         scene.rootNode.addChildNode(pivot)
 
         // Licht

@@ -67,6 +67,9 @@ struct GameView: View {
         .background(Color.black.ignoresSafeArea())
         .onAppear {
             SoundFX.shared.prepare()
+            if ProcessInfo.processInfo.arguments.contains("-renderShips") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
+            }
             // Welt erst nach dem ersten Bild aufbauen, damit der Ladebildschirm sichtbar ist
             if world == nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
