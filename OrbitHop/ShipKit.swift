@@ -26,7 +26,7 @@ enum WornPaint {
         m.setValue(SCNMaterialProperty(contents: rough), forKey: "tpRough")
         m.setValue(SCNMaterialProperty(contents: metal), forKey: "tpMetal")
         m.setValue(SCNMaterialProperty(contents: height), forKey: "tpHeight")
-        m.setValue(NSNumber(value: 1.0 / 2.4), forKey: "tpScale")
+        m.setValue(NSNumber(value: 1.0 / 2.0), forKey: "tpScale")
         m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
         return m
@@ -80,7 +80,7 @@ enum WornPaint {
         // Positionen für Abplatzer, bevorzugt an den Kanten
         struct Chip { let path: UIBezierPath; let deep: Bool }
         var chips: [Chip] = []
-        for _ in 0..<70 {
+        for _ in 0..<130 {
             var x = rng.c(0...s), y = rng.c(0...s)
             if rng.chance(0.7) {
                 switch Int(rng.d(0...3.99)) {
@@ -90,7 +90,7 @@ enum WornPaint {
                 default: y = s - rng.c(0...26)
                 }
             }
-            let r = rng.c(1.5...7)
+            let r = rng.c(2...9)
             let p = UIBezierPath()
             let n = 6
             for k in 0..<n {
@@ -100,7 +100,7 @@ enum WornPaint {
                 if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
             }
             p.close()
-            chips.append(Chip(path: p, deep: rng.chance(0.35)))
+            chips.append(Chip(path: p, deep: rng.chance(0.45)))
         }
         // Paneelnähte
         var seams: [(CGPoint, CGPoint)] = []
@@ -212,20 +212,20 @@ enum WornPaint {
                 c.path.stroke()
             }
             // Kratzer
-            g.setStrokeColor(UIColor(white: 0.25, alpha: 0.25).cgColor)
+            g.setStrokeColor(UIColor(white: 0.2, alpha: 0.4).cgColor)
             g.setLineWidth(1)
-            for _ in 0..<40 {
+            for _ in 0..<90 {
                 let x = rng.c(0...s), y = rng.c(0...s)
                 g.move(to: CGPoint(x: x, y: y))
                 g.addLine(to: CGPoint(x: x + rng.c(-40...40), y: y + rng.c(-12...12)))
             }
             g.strokePath()
             // weiche Schmutzflecken (kachelbar, ohne Verlauf über die ganze Fläche)
-            for _ in 0..<14 {
-                let r = rng.c(30...90)
+            for _ in 0..<22 {
+                let r = rng.c(30...100)
                 let c = CGPoint(x: rng.c(0...s), y: rng.c(0...s))
                 let grime = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                       colors: [UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: rng.c(0.08...0.18)).cgColor,
+                                       colors: [UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: rng.c(0.12...0.28)).cgColor,
                                                 UIColor(red: 0.18, green: 0.14, blue: 0.1, alpha: 0).cgColor] as CFArray,
                                        locations: [0, 1])!
                 g.drawRadialGradient(grime, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
@@ -295,9 +295,9 @@ final class ShipKit {
         dark = WornPaint.material("dark", base: UIColor(red: 0.2, green: 0.2, blue: 0.21, alpha: 1))
         metal = SCNMaterial()
         metal.lightingModel = .physicallyBased
-        metal.diffuse.contents = UIColor(white: 0.28, alpha: 1)
-        metal.metalness.contents = 0.95
-        metal.roughness.contents = 0.35
+        metal.diffuse.contents = UIColor(red: 0.3, green: 0.29, blue: 0.27, alpha: 1)
+        metal.metalness.contents = 0.85
+        metal.roughness.contents = 0.55
         glass = SCNMaterial()
         glass.lightingModel = .physicallyBased
         glass.diffuse.contents = UIColor(white: 0.03, alpha: 1)
@@ -434,7 +434,19 @@ final class ShipKit {
         let shape = SCNShape(path: p, extrusionDepth: 0.09)
         shape.chamferRadius = 0.03
         shape.chamferMode = .both
-        add(shape, m ?? stripe, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
+        add(shape, m ?? paint, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
+        // breiter Farbbalken quer über das Leitwerk
+        let lead = { (f: CGFloat) in -len * 0.45 * f }, trail = { (f: CGFloat) in -len + len * 0.15 * f }
+        let b = UIBezierPath()
+        b.move(to: CGPoint(x: lead(0.5) - 0.01, y: height * 0.5))
+        b.addLine(to: CGPoint(x: lead(0.78) - 0.01, y: height * 0.78))
+        b.addLine(to: CGPoint(x: trail(0.78) + 0.01, y: height * 0.78))
+        b.addLine(to: CGPoint(x: trail(0.5) + 0.01, y: height * 0.5))
+        b.close()
+        let band = SCNShape(path: b, extrusionDepth: 0.1)
+        band.chamferRadius = 0.02
+        band.chamferMode = .both
+        add(band, m == nil ? accent : paint, SCNVector3(x, y, z), rot: SCNVector3(tilt, 0, 0), mirror: true)
     }
 
     /// Glaskanzel mit Rahmen
@@ -626,7 +638,7 @@ enum ShipDesigns {
     static let red = c(356, 0.68, 0.33)
     static let olive = c(75, 0.22, 0.4)
     static let orange = c(32, 0.75, 0.5)
-    static let gunmetal = c(215, 0.08, 0.26)
+    static let gunmetal = c(30, 0.05, 0.3)
     static let navy = c(212, 0.25, 0.42)
     static let gold = c(44, 0.6, 0.55)
     static let night = c(262, 0.12, 0.17)

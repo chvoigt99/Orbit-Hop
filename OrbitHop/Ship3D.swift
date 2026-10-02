@@ -401,8 +401,8 @@ enum Ship3D {
     /// und Lack aufblitzen lassen (äquirektangulär, oben = Himmel)
     private static let environment: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 512)).image { ctx in
         let g = ctx.cgContext
-        let colors = [UIColor(red: 0.16, green: 0.17, blue: 0.2, alpha: 1).cgColor,
-                      UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1).cgColor,
+        let colors = [UIColor(red: 0.15, green: 0.145, blue: 0.14, alpha: 1).cgColor,
+                      UIColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1).cgColor,
                       UIColor(red: 0.02, green: 0.02, blue: 0.02, alpha: 1).cgColor] as CFArray
         let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.55, 1])!
         g.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: 512), options: [])
@@ -412,7 +412,7 @@ enum Ship3D {
             g.fill(r)
         }
         box(CGRect(x: 180, y: 40, width: 260, height: 70), UIColor(white: 1, alpha: 1))
-        box(CGRect(x: 640, y: 120, width: 60, height: 200), UIColor(red: 0.75, green: 0.85, blue: 1, alpha: 1))
+        box(CGRect(x: 640, y: 120, width: 60, height: 200), UIColor(red: 0.92, green: 0.92, blue: 0.9, alpha: 1))
         box(CGRect(x: 900, y: 150, width: 90, height: 120), UIColor(red: 1, green: 0.85, blue: 0.7, alpha: 0.8))
         box(CGRect(x: 0, y: 236, width: 1024, height: 4), UIColor(white: 0.5, alpha: 1))
     }
