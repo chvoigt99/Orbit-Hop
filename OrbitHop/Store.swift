@@ -3,27 +3,22 @@ import StoreKit
 
 // MARK: - In-App-Käufe: Schiffsteile
 
-/// Verbrauchbare Pakete mit Schiffsteilen. Die Produkt-IDs müssen in App Store Connect
-/// (und in OrbitHop.storekit für Tests) genau so angelegt sein.
+/// Schiffsteile werden genau in der fehlenden Menge gekauft: als Zehnerpakete plus Einzelteile,
+/// jeweils mit Stückzahl (StoreKit erlaubt bis 10 Stück pro Kauf). Die Produkt-IDs müssen in
+/// App Store Connect (und in OrbitHop.storekit für Tests) genau so angelegt sein.
 enum ShipPartPack: String, CaseIterable {
-    case small = "com.chv.OrbitHop.shipparts.10"
-    case medium = "com.chv.OrbitHop.shipparts.30"
-    case large = "com.chv.OrbitHop.shipparts.80"
+    case single = "com.chv.OrbitHop.shipparts.1"
+    case ten = "com.chv.OrbitHop.shipparts.10"
 
-    var amount: Int {
-        switch self {
-        case .small: return 10
-        case .medium: return 30
-        case .large: return 80
-        }
-    }
+    var amount: Int { self == .ten ? 10 : 1 }
 
-    var title: String {
-        switch self {
-        case .small: return "KLEINES PAKET"
-        case .medium: return "FRACHTKISTE"
-        case .large: return "WERFT-CONTAINER"
-        }
+    /// Aufteilung einer Menge in Käufe (Paket, Stückzahl), höchstens 10 Stück je Kauf
+    static func split(_ n: Int) -> [(ShipPartPack, Int)] {
+        var out: [(ShipPartPack, Int)] = []
+        var tens = n / 10
+        while tens > 0 { out.append((.ten, min(10, tens))); tens -= min(10, tens) }
+        if n % 10 > 0 { out.append((.single, n % 10)) }
+        return out
     }
 }
 
@@ -62,24 +57,44 @@ final class Store {
         }
     }
 
-    func purchase(_ pack: ShipPartPack) async {
-        guard let product = products[pack.rawValue], !busy else { return }
+    /// Preis für genau n Schiffsteile, nil solange die Produkte nicht geladen sind
+    func price(for n: Int) -> String? {
+        guard n > 0 else { return nil }
+        var total: Decimal = 0
+        var style: Decimal.FormatStyle.Currency?
+        for (pack, qty) in ShipPartPack.split(n) {
+            guard let p = products[pack.rawValue] else { return nil }
+            total += p.price * Decimal(qty)
+            style = p.priceFormatStyle
+        }
+        return style.map { total.formatted($0) }
+    }
+
+    /// Kauft genau n Schiffsteile; true, wenn alles bezahlt wurde
+    func buy(_ n: Int) async -> Bool {
+        guard n > 0, !busy else { return false }
         busy = true
         defer { busy = false }
-        do {
-            switch try await product.purchase() {
-            case .success(let result):
-                await handle(result)
-            case .pending:
-                message = "KAUF WARTET AUF FREIGABE"
-            case .userCancelled:
-                break
-            @unknown default:
-                break
+        for (pack, qty) in ShipPartPack.split(n) {
+            guard let product = products[pack.rawValue] else { message = "SHOP NICHT ERREICHBAR"; return false }
+            do {
+                switch try await product.purchase(options: [.quantity(qty)]) {
+                case .success(let result):
+                    await handle(result)
+                case .pending:
+                    message = "KAUF WARTET AUF FREIGABE"
+                    return false
+                case .userCancelled:
+                    return false
+                @unknown default:
+                    return false
+                }
+            } catch {
+                message = "KAUF FEHLGESCHLAGEN"
+                return false
             }
-        } catch {
-            message = "KAUF FEHLGESCHLAGEN"
         }
+        return true
     }
 
     private func handle(_ result: VerificationResult<StoreKit.Transaction>) async {
@@ -97,8 +112,10 @@ final class Store {
 
 // MARK: - Kaufansicht
 
+/// Kauf der fehlenden Schiffsteile für ein bestimmtes Schiff; schaltet es nach dem Kauf frei
 struct ShipPartStoreView: View {
     let profile: Profile
+    let model: ShipModel
     let onClose: () -> Void
 
     @State private var store = Store.shared
@@ -107,6 +124,8 @@ struct ShipPartStoreView: View {
     private let dim = Color(red: 0.55, green: 0.6, blue: 0.72)
     private let partColor = hsl(ItemKind.shipPart.hue, 0.8, 0.68)
     private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
+
+    private var missing: Int { max(0, model.grade.cost - profile.shipParts) }
 
     private func label(_ text: String) -> Text {
         Text(text)
@@ -119,18 +138,12 @@ struct ShipPartStoreView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     label("WERFT // NACHSCHUB").foregroundStyle(signal.opacity(0.8))
-                    Text("SCHIFFSTEILE")
+                    Text(model.name.uppercased())
                         .font(.system(size: 26, weight: .heavy, design: .monospaced))
                         .tracking(3)
                         .foregroundStyle(.white)
                 }
                 Spacer()
-                HStack(spacing: 5) {
-                    Image(systemName: "puzzlepiece.fill").font(.system(size: 14))
-                    Text("\(profile.shipParts)")
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
-                }
-                .foregroundStyle(partColor)
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .bold))
@@ -140,16 +153,45 @@ struct ShipPartStoreView: View {
                         .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.6), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .padding(.leading, 8)
             }
 
-            label("SCHIFFSTEILE SCHALTEN NEUE SCHIFFE FREI").foregroundStyle(dim)
-
-            ForEach(ShipPartPack.allCases, id: \.self) { pack in
-                offer(pack)
+            HStack {
+                label("BENÖTIGT \(model.grade.cost) · VORHANDEN \(profile.shipParts)").foregroundStyle(dim)
+                Spacer()
             }
 
-            if store.loading {
+            Button {
+                Task {
+                    if await store.buy(missing) {
+                        profile.unlock(model)
+                        onClose()
+                    }
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "puzzlepiece.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(partColor)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(missing) SCHIFFSTEILE")
+                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                        label("KAUFEN UND SCHIFF FREISCHALTEN").foregroundStyle(dim)
+                    }
+                    Spacer()
+                    Text(store.price(for: missing) ?? "–")
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                        .foregroundStyle(partColor)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .background(Chamfer(cut: 8).fill(partColor.opacity(0.08)))
+                .overlay(Chamfer(cut: 8).stroke(partColor.opacity(0.7), lineWidth: 1.2))
+            }
+            .buttonStyle(.plain)
+            .disabled(missing == 0 || store.price(for: missing) == nil || store.busy)
+
+            if store.loading || store.busy {
                 ProgressView().tint(signal)
             } else if store.products.isEmpty {
                 label("KEINE ANGEBOTE VERFÜGBAR").foregroundStyle(dim)
@@ -169,35 +211,5 @@ struct ShipPartStoreView: View {
             store.message = nil
             await store.load()
         }
-    }
-
-    private func offer(_ pack: ShipPartPack) -> some View {
-        let product = store.products[pack.rawValue]
-        return Button {
-            Task { await store.purchase(pack) }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "puzzlepiece.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(partColor)
-                    .frame(width: 34)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(pack.amount) SCHIFFSTEILE")
-                        .font(.system(size: 16, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.white)
-                    label(pack.title).foregroundStyle(dim)
-                }
-                Spacer()
-                Text(product?.displayPrice ?? "–")
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    .foregroundStyle(product == nil ? dim : partColor)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Chamfer(cut: 8).fill(partColor.opacity(0.08)))
-            .overlay(Chamfer(cut: 8).stroke(partColor.opacity(product == nil ? 0.25 : 0.7), lineWidth: 1.2))
-        }
-        .buttonStyle(.plain)
-        .disabled(product == nil || store.busy)
     }
 }
