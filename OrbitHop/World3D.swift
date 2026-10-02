@@ -53,20 +53,16 @@ enum WorldTextures {
     static let dot: UIImage = radial(size: 64, stops: [(1, 1), (0.35, 0.4), (0, 0)])
     static let soft: UIImage = radial(size: 128, stops: [(0.9, 0), (0.5, 0.45), (0, 1)])
 
-    /// Lichter einer Stadt auf der Nachtseite eines bewohnten Planeten: Ballungen aus warmen Punkten
-    static let cityLights: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
-        UIColor.black.setFill()
-        ctx.fill(CGRect(x: 0, y: 0, width: 512, height: 256))
-        for _ in 0..<40 {
-            let cx = CGFloat.random(in: 0...512), cy = CGFloat.random(in: 40...216)
-            let spread = CGFloat.random(in: 6...26)
-            for _ in 0..<Int.random(in: 12...40) {
-                let x = cx + CGFloat.random(in: -spread...spread), y = cy + CGFloat.random(in: -spread...spread) * 0.6
-                let s = CGFloat.random(in: 0.8...2.2)
-                UIColor(red: 1, green: CGFloat.random(in: 0.7...0.9), blue: 0.45, alpha: CGFloat.random(in: 0.4...1)).setFill()
-                ctx.fill(CGRect(x: x, y: y, width: s, height: s))
-            }
-        }
+    /// Solarzellen: dunkelblaue Felder mit hellem Raster
+    static let solarCells: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 128, height: 64)).image { ctx in
+        UIColor(red: 0.06, green: 0.1, blue: 0.22, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 0, y: 0, width: 128, height: 64))
+        UIColor(red: 0.5, green: 0.6, blue: 0.75, alpha: 0.6).setStroke()
+        let g = ctx.cgContext
+        g.setLineWidth(1)
+        for x in stride(from: 0, through: 128, by: 16) { g.move(to: CGPoint(x: x, y: 0)); g.addLine(to: CGPoint(x: x, y: 64)) }
+        for y in stride(from: 0, through: 64, by: 16) { g.move(to: CGPoint(x: 0, y: y)); g.addLine(to: CGPoint(x: 128, y: y)) }
+        g.strokePath()
     }
 
     static func radial(size: Int, stops: [(CGFloat, CGFloat)]) -> UIImage {
@@ -543,6 +539,11 @@ final class World3D {
     private func makePlanet(_ p: Planet, index: Int) -> SCNNode {
         let root = SCNNode()
         root.position = v3(p.center)
+        // Raumstation statt Planet: eigenes Modell, kein Planetenkörper
+        if p.isStation {
+            root.addChildNode(makeStation(p))
+            return root
+        }
 
         let tilt = SCNNode()
         tilt.eulerAngles = SCNVector3(Float(p.tilt) * 0.6, 0, Float(p.tilt))
@@ -597,12 +598,6 @@ final class World3D {
             tilt.addChildNode(ring)
         }
 
-        if p.isStation {
-            m.emission.contents = WorldTextures.cityLights
-            m.emission.intensity = 0.9
-            root.addChildNode(makeStation(p))
-        }
-
         if p.hasMoon {
             let spin = SCNNode()
             spin.eulerAngles = SCNVector3(Float(p.tilt), Float(p.moonPhase), 0)
@@ -622,78 +617,153 @@ final class World3D {
         return root
     }
 
-    /// Raumstation: Wohnring um den bewohnten Planeten mit Speichen, Andockmodulen und Positionslichtern
+    /// Raumstation: zentrale Nabe mit Andockturm, rotierendes Wohnrad an Speichen, Solarflügel,
+    /// Andockbuchten und Positionslichter. Passt innerhalb der Umlaufbahn (Radius + 90).
     private func makeStation(_ p: Planet) -> SCNNode {
-        let hull = WornPaint.material("station", base: UIColor(white: 0.62, alpha: 1))
-        let dark = WornPaint.material("station-dark", base: UIColor(white: 0.22, alpha: 1))
-        let lampMat = SCNMaterial()
-        lampMat.lightingModel = .constant
-        lampMat.diffuse.contents = UIColor(red: 1, green: 0.7, blue: 0.3, alpha: 1)
-        let windowMat = SCNMaterial()
-        windowMat.lightingModel = .constant
-        windowMat.diffuse.contents = UIColor(red: 0.6, green: 0.95, blue: 1, alpha: 1)
+        // Lack wie bei den Schiffen, aber auf Stationsgröße skaliert (sonst kachelt er hundertfach)
+        func paint(_ key: String, _ c: UIColor) -> SCNMaterial {
+            let m = WornPaint.material(key, base: c).copy() as! SCNMaterial
+            m.setValue(NSNumber(value: 1.0 / 70.0), forKey: "tpScale")
+            m.setValue(NSNumber(value: 0.01), forKey: "tpBump")
+            return m
+        }
+        let hull = paint("station", UIColor(white: 0.66, alpha: 1))
+        let dark = paint("station-dark", UIColor(white: 0.22, alpha: 1))
+        let accent = paint("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))
+        func glow(_ c: UIColor) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.lightingModel = .constant
+            m.diffuse.contents = c
+            return m
+        }
+        let lampMat = glow(UIColor(red: 1, green: 0.7, blue: 0.3, alpha: 1))
+        let windowMat = glow(UIColor(red: 1, green: 0.86, blue: 0.6, alpha: 1))
+        let dockMat = glow(UIColor(red: 0.45, green: 0.95, blue: 1, alpha: 1))
+        let solar = SCNMaterial()
+        solar.lightingModel = .physicallyBased
+        solar.diffuse.contents = WorldTextures.solarCells
+        solar.metalness.contents = 0.6
+        solar.roughness.contents = 0.3
 
-        // flach gekippt unterhalb der Umlaufbahn, damit der Ring nicht durch die Flugbahn läuft
-        let tilt = SCNNode()
-        tilt.eulerAngles = SCNVector3(0.14, 0, 0.08)
-        tilt.position = SCNVector3(0, -20, 0)
-        let spin = SCNNode()
-        spin.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 90)))
-        tilt.addChildNode(spin)
+        func node(_ g: SCNGeometry, _ m: SCNMaterial, _ pos: SCNVector3, rot: SCNVector3 = SCNVector3(0, 0, 0)) -> SCNNode {
+            g.materials = [m]
+            let n = SCNNode(geometry: g)
+            n.position = pos
+            n.eulerAngles = rot
+            return n
+        }
+        func blink(_ n: SCNNode, _ delay: Double) {
+            n.runAction(.repeatForever(.sequence([.wait(duration: delay), .fadeOut(duration: 0.12),
+                                                  .wait(duration: 0.9), .fadeIn(duration: 0.12)])))
+        }
 
-        // dicht über der Oberfläche, klar innerhalb der Umlaufbahn (Radius + 90)
-        let R = p.radius * 1.2
-        let ring = SCNTube(innerRadius: R - 14, outerRadius: R, height: 22)
-        ring.radialSegmentCount = 96
-        ring.materials = [hull]
-        spin.addChildNode(SCNNode(geometry: ring))
-        // Fensterband rundum
-        let band = SCNTube(innerRadius: R - 0.5, outerRadius: R + 0.8, height: 4)
-        band.radialSegmentCount = 96
-        band.materials = [windowMat]
-        spin.addChildNode(SCNNode(geometry: band))
+        let R = Float(p.radius)          // Wohnrad-Außenradius
+        let root = SCNNode()
+        root.eulerAngles = SCNVector3(0.12, 0, 0.06)
 
-        let count = 12
-        for i in 0..<count {
-            let a = Float(i) / Float(count) * .pi * 2
-            let holder = SCNNode()
-            holder.eulerAngles.y = a
-            spin.addChildNode(holder)
-            // Module auf dem Ring
-            let module = SCNBox(width: 30, height: 30, length: 18, chamferRadius: 3)
-            module.materials = [i % 3 == 0 ? dark : hull]
-            let mn = SCNNode(geometry: module)
-            mn.position = SCNVector3(Float(R) - 7, 0, 0)
-            holder.addChildNode(mn)
-            // Positionslicht oben auf jedem Modul
-            let lamp = SCNBox(width: 5, height: 3, length: 5, chamferRadius: 1)
-            lamp.materials = [lampMat]
-            let ln = SCNNode(geometry: lamp)
-            ln.position = SCNVector3(Float(R) - 7, 16.5, 0)
-            holder.addChildNode(ln)
-            if i % 2 == 0 {
-                ln.runAction(.repeatForever(.sequence([.fadeOut(duration: 0.15), .wait(duration: 1.2), .fadeIn(duration: 0.15),
-                                                       .wait(duration: Double(i) * 0.1)])))
-            }
-            // Speichen zum Planeten bei jedem dritten Modul
-            if i % 3 == 0 {
-                let len = R - p.radius * 0.95
-                let spoke = SCNBox(width: len, height: 6, length: 6, chamferRadius: 1)
-                spoke.materials = [dark]
-                let sn = SCNNode(geometry: spoke)
-                sn.position = SCNVector3(Float(p.radius * 0.95 + len / 2), 0, 0)
-                holder.addChildNode(sn)
+        // Nabe: gestapelte Zylinder mit Ringwülsten, oben Andockturm, unten Antennenmast
+        let hub = SCNNode()
+        root.addChildNode(hub)
+        let core = SCNCylinder(radius: CGFloat(R * 0.24), height: CGFloat(R * 0.55))
+        core.radialSegmentCount = 32
+        hub.addChildNode(node(core, hull, SCNVector3(0, 0, 0)))
+        for y in [-0.22, 0, 0.22] as [Float] {
+            let collar = SCNCylinder(radius: CGFloat(R * 0.28), height: CGFloat(R * 0.06))
+            collar.radialSegmentCount = 32
+            hub.addChildNode(node(collar, y == 0 ? accent : dark, SCNVector3(0, y * R, 0)))
+        }
+        let tower = SCNCylinder(radius: CGFloat(R * 0.11), height: CGFloat(R * 0.45))
+        hub.addChildNode(node(tower, hull, SCNVector3(0, R * 0.48, 0)))
+        let dome = SCNSphere(radius: CGFloat(R * 0.13))
+        hub.addChildNode(node(dome, dark, SCNVector3(0, R * 0.7, 0)))
+        let mast = SCNCylinder(radius: CGFloat(R * 0.025), height: CGFloat(R * 0.6))
+        hub.addChildNode(node(mast, dark, SCNVector3(0, -R * 0.55, 0)))
+        let tip = SCNSphere(radius: CGFloat(R * 0.03))
+        let tipNode = node(tip, lampMat, SCNVector3(0, -R * 0.86, 0))
+        blink(tipNode, 0.3)
+        hub.addChildNode(tipNode)
+        // Fensterreihen rund um die Nabe
+        for k in 0..<16 {
+            let a = Float(k) / 16 * .pi * 2
+            for y in [-0.11, 0.11] as [Float] {
+                let w = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.05), length: CGFloat(R * 0.05), chamferRadius: 0)
+                hub.addChildNode(node(w, windowMat, SCNVector3(cos(a) * R * 0.242, y * R, sin(a) * R * 0.242), rot: SCNVector3(0, -a, 0)))
             }
         }
-        // Leuchtfeuer über einem Modul
-        let beacon = SCNSphere(radius: 5)
-        beacon.materials = [lampMat]
-        let bn = SCNNode(geometry: beacon)
-        bn.position = SCNVector3(Float(R) - 7, 26, 0)
-        bn.runAction(.repeatForever(.sequence([.fadeOut(duration: 0.4), .fadeIn(duration: 0.4)])))
-        spin.addChildNode(bn)
-        let root = SCNNode()
-        root.addChildNode(tilt)
+
+        // Wohnrad: dreht sich langsam um die Nabe
+        let wheel = SCNNode()
+        wheel.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 70)))
+        root.addChildNode(wheel)
+        let rim = SCNTube(innerRadius: CGFloat(R * 0.84), outerRadius: CGFloat(R), height: CGFloat(R * 0.16))
+        rim.radialSegmentCount = 96
+        wheel.addChildNode(node(rim, hull, SCNVector3(0, 0, 0)))
+        for y in [-0.085, 0.085] as [Float] {
+            let lip = SCNTube(innerRadius: CGFloat(R * 0.83), outerRadius: CGFloat(R * 1.015), height: CGFloat(R * 0.025))
+            lip.radialSegmentCount = 96
+            wheel.addChildNode(node(lip, dark, SCNVector3(0, y * R, 0)))
+        }
+        let windows = SCNTube(innerRadius: CGFloat(R * 1.0), outerRadius: CGFloat(R * 1.006), height: CGFloat(R * 0.03))
+        windows.radialSegmentCount = 96
+        wheel.addChildNode(node(windows, windowMat, SCNVector3(0, 0, 0)))
+        for i in 0..<12 {
+            let a = Float(i) / 12 * .pi * 2
+            let holder = SCNNode()
+            holder.eulerAngles.y = a
+            wheel.addChildNode(holder)
+            // Module auf dem Rad, abwechselnd hell und dunkel
+            let module = SCNBox(width: CGFloat(R * 0.2), height: CGFloat(R * 0.22), length: CGFloat(R * 0.16), chamferRadius: CGFloat(R * 0.02))
+            holder.addChildNode(node(module, i % 4 == 0 ? accent : (i % 2 == 0 ? dark : hull), SCNVector3(R * 0.92, 0, 0)))
+            let lamp = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.02), length: CGFloat(R * 0.03), chamferRadius: 0)
+            let ln = node(lamp, lampMat, SCNVector3(R * 0.92, R * 0.12, 0))
+            if i % 2 == 0 { blink(ln, Double(i) * 0.12) }
+            holder.addChildNode(ln)
+            // Speichen bei jedem dritten Modul: Röhre mit Gelenkring
+            if i % 3 == 0 {
+                let len = R * 0.6
+                let spoke = SCNCylinder(radius: CGFloat(R * 0.04), height: CGFloat(len))
+                holder.addChildNode(node(spoke, dark, SCNVector3(R * 0.24 + len / 2, 0, 0), rot: SCNVector3(0, 0, .pi / 2)))
+                let joint = SCNCylinder(radius: CGFloat(R * 0.06), height: CGFloat(R * 0.05))
+                holder.addChildNode(node(joint, hull, SCNVector3(R * 0.55, 0, 0), rot: SCNVector3(0, 0, .pi / 2)))
+            }
+        }
+
+        // Solarflügel über dem Rad, an Auslegern von der Nabe, gegenläufig zum Rad
+        let arrays = SCNNode()
+        arrays.position = SCNVector3(0, R * 0.36, 0)
+        arrays.runAction(.repeatForever(.rotateBy(x: 0, y: -.pi * 2, z: 0, duration: 140)))
+        root.addChildNode(arrays)
+        for i in 0..<4 {
+            let holder = SCNNode()
+            holder.eulerAngles.y = Float(i) * .pi / 2 + .pi / 4
+            arrays.addChildNode(holder)
+            let boom = SCNBox(width: CGFloat(R * 1.15), height: CGFloat(R * 0.025), length: CGFloat(R * 0.025), chamferRadius: 0)
+            holder.addChildNode(node(boom, dark, SCNVector3(R * 0.62, 0, 0)))
+            for k in 0..<2 {
+                let panel = SCNBox(width: CGFloat(R * 0.42), height: CGFloat(R * 0.008), length: CGFloat(R * 0.2), chamferRadius: 0)
+                let x = R * (0.5 + Float(k) * 0.5)
+                holder.addChildNode(node(panel, solar, SCNVector3(x, 0, R * 0.12)))
+                holder.addChildNode(node(panel.copy() as! SCNGeometry, solar, SCNVector3(x, 0, -R * 0.12)))
+            }
+        }
+
+        // Andockbucht mit Leitlichtern, an der Nabe nach außen ragend
+        let bay = SCNBox(width: CGFloat(R * 0.3), height: CGFloat(R * 0.14), length: CGFloat(R * 0.2), chamferRadius: CGFloat(R * 0.02))
+        root.addChildNode(node(bay, dark, SCNVector3(0, -R * 0.2, R * 0.38)))
+        for k in 0..<4 {
+            let guide = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.015), length: CGFloat(R * 0.03), chamferRadius: 0)
+            let g = node(guide, dockMat, SCNVector3(Float(k - 2) * R * 0.07 + R * 0.035, -R * 0.12, R * 0.48))
+            g.runAction(.repeatForever(.sequence([.wait(duration: Double(k) * 0.15), .fadeOut(duration: 0.1),
+                                                  .wait(duration: 0.5), .fadeIn(duration: 0.1), .wait(duration: Double(3 - k) * 0.15)])))
+            root.addChildNode(g)
+        }
+        // Positionslichter oben auf dem Rad (rot/grün wie bei Schiffen)
+        for (a, c) in [(Float(0), UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)), (.pi, UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 1))] {
+            let l = SCNSphere(radius: CGFloat(R * 0.025))
+            let ln = node(l, glow(c), SCNVector3(cos(a) * R * 1.02, R * 0.1, sin(a) * R * 1.02))
+            blink(ln, Double(a) * 0.2)
+            root.addChildNode(ln)
+        }
         return root
     }
 

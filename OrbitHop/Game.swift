@@ -537,8 +537,8 @@ final class Game {
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
-    /// Nur für Tests: erste Raumstation schon als dritten Planeten
-    static let stationEarly = ProcessInfo.processInfo.arguments.contains("-stationEarly")
+    /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
+    static let stationTest = true
 
     // MARK: Raumstation
     /// Index des nächsten Planeten, der eine Raumstation wird
@@ -609,7 +609,8 @@ final class Game {
         boostTime = 0
         stationOpen = false
         stationMenuAt = nil
-        nextStation = Game.stationEarly ? 2 : Int.random(in: 30...36)
+        // ZUM TESTEN: erste Station schon als zweites Ziel; im fertigen Spiel Int.random(in: 30...36)
+        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36)
         planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
