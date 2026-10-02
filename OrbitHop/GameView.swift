@@ -193,17 +193,22 @@ struct GameView: View {
                 .frame(height: 14)
                 .shadow(color: barColor.opacity(0.5), radius: 6)
 
-                // Panzerung: schmale Leiste, wird bei wenig Panzerung rot
+                // Panzerung: schmale Leiste, wird bei wenig Panzerung rot und pulsiert, blinkt bei Treffern
+                let hullLow = game.hull <= 25
+                let hullPulse = hullLow ? 0.55 + 0.45 * abs(sin(Double(game.time) * 5)) : 1
+                let hitBlink = game.brakeFlash > 0 && Int(game.brakeFlash * 10) % 2 == 0
                 HStack(spacing: 6) {
                     label("PANZ").foregroundStyle(dim)
                     HStack(spacing: 2) {
                         ForEach(0..<10, id: \.self) { i in
                             Rectangle().fill(CGFloat(i) < (game.hull / 10).rounded(.up)
-                                             ? (game.hull <= 30 ? warn : gold) : Color.white.opacity(0.08))
+                                             ? (hullLow || hitBlink ? warn : gold) : Color.white.opacity(0.08))
                         }
                     }
                     .frame(height: 5)
-                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(game.hull <= 30 ? warn : dim)
+                    .opacity(hullPulse)
+                    .shadow(color: warn.opacity(hullLow ? 0.6 : 0), radius: 4)
+                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(hullLow || hitBlink ? warn : dim)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {

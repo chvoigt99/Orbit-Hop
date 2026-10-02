@@ -342,6 +342,10 @@ final class World3D {
     private let exhaust = SCNParticleSystem()
     private var exhausts: [(SCNParticleSystem, CGFloat)] = []
     private let trail = SCNParticleSystem()
+    // Schadensbild: Rauch ab 50 % Panzerung, Funken ab 25 %, rotes Aufblitzen bei Treffern
+    private let damageSmoke = SCNParticleSystem()
+    private let damageSparks = SCNParticleSystem()
+    private let hitFlash = SCNNode()
 
     private let orbitGroup = SCNNode()
     private let orbitRing = SCNNode()
@@ -487,6 +491,52 @@ final class World3D {
     }
 
     private func buildShipFX() {
+        damageSmoke.birthRate = 0
+        damageSmoke.particleLifeSpan = 1.3
+        damageSmoke.particleLifeSpanVariation = 0.4
+        damageSmoke.particleVelocity = 0
+        damageSmoke.particleImage = WorldTextures.dot
+        damageSmoke.blendMode = .alpha
+        damageSmoke.isLightingEnabled = false
+        damageSmoke.isAffectedByGravity = false
+        damageSmoke.particleColor = UIColor(white: 0.55, alpha: 0.55)
+        damageSmoke.particleColorVariation = SCNVector4(0, 0, 0.15, 0)
+        let fade = CAKeyframeAnimation()
+        fade.values = [0.9, 0.5, 0]
+        let grow = CAKeyframeAnimation()
+        grow.values = [0.5, 1.4, 2.4]
+        damageSmoke.propertyControllers = [.opacity: SCNParticlePropertyController(animation: fade),
+                                           .size: SCNParticlePropertyController(animation: grow)]
+        shipHolder.addParticleSystem(damageSmoke)
+
+        damageSparks.birthRate = 0
+        damageSparks.particleLifeSpan = 0.35
+        damageSparks.particleLifeSpanVariation = 0.15
+        damageSparks.spreadingAngle = 180
+        damageSparks.particleImage = WorldTextures.dot
+        damageSparks.blendMode = .additive
+        damageSparks.isLightingEnabled = false
+        damageSparks.isAffectedByGravity = false
+        damageSparks.particleColor = UIColor(red: 1, green: 0.65, blue: 0.25, alpha: 1)
+        let sparkFade = CAKeyframeAnimation()
+        sparkFade.values = [1, 0]
+        damageSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: sparkFade)]
+        shipHolder.addParticleSystem(damageSparks)
+
+        let flash = SCNPlane(width: 9, height: 9)
+        let fm = SCNMaterial()
+        fm.lightingModel = .constant
+        fm.diffuse.contents = WorldTextures.dot
+        fm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 1)
+        fm.blendMode = .add
+        fm.writesToDepthBuffer = false
+        flash.materials = [fm]
+        hitFlash.geometry = flash
+        hitFlash.constraints = [SCNBillboardConstraint()]
+        hitFlash.opacity = 0
+        hitFlash.renderingOrder = 50
+        shipHolder.addChildNode(hitFlash)
+
         exhaust.birthRate = 0
         exhaust.isLocal = true
         exhaust.particleLifeSpan = 0.09
@@ -1523,6 +1573,18 @@ final class World3D {
         }
         trail.birthRate = flying ? 90 : (game.phase == .orbiting ? 40 : 0)
         trail.particleSize = CGFloat(s) * 0.22
+
+        // Schadensbild nach Panzerung
+        let alive = game.phase != .over && game.phase != .docked
+        let hull = game.hull
+        damageSmoke.birthRate = alive && hull < 50 ? 14 + 40 * (1 - hull / 50) : 0
+        damageSmoke.particleSize = CGFloat(s) * 0.45
+        // Funken flackern: in unregelmäßigen Stößen
+        let flicker = sin(game.time * 23) + sin(game.time * 37 + 1.3) > 0.4
+        damageSparks.birthRate = alive && hull < 25 && flicker ? 90 : 0
+        damageSparks.particleVelocity = CGFloat(s) * 7
+        damageSparks.particleSize = CGFloat(s) * 0.09
+        hitFlash.opacity = min(1, game.brakeFlash / 0.6) * (alive ? 1 : 0)
     }
 
     private func syncObjects(_ game: Game, px: CGFloat) {
