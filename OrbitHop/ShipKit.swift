@@ -1,6 +1,7 @@
 import SwiftUI
 import SceneKit
 import UIKit
+import simd
 
 // MARK: - Abgenutzter Lack
 
@@ -356,6 +357,10 @@ final class ShipKit {
         return m
     }
 
+    func addNode(_ g: SCNGeometry, _ m: SCNMaterial, _ p: SCNVector3, rot: SCNVector3 = SCNVector3(0, 0, 0)) {
+        add(g, m, p, rot: rot, mirror: false)
+    }
+
     @discardableResult
     private func add(_ g: SCNGeometry, _ m: SCNMaterial, _ p: SCNVector3, rot: SCNVector3 = SCNVector3(0, 0, 0), mirror: Bool) -> SCNNode {
         g.materials = [m]
@@ -421,6 +426,57 @@ final class ShipKit {
             c.position.y = y
             root.addChildNode(c)
         }
+    }
+
+    /// Querschnitt eines facettierten Rumpfs: Position x, Mittelhöhe y, halbe Breite w, halbe Höhe h
+    struct Sec {
+        let x: Float, y: Float, w: Float, h: Float
+        init(_ x: Float, _ y: Float, _ w: Float, _ h: Float) { self.x = x; self.y = y; self.w = w; self.h = h }
+    }
+
+    /// Facettierter Rumpf: achteckige Querschnitte entlang x, flach schattiert wie gekantetes Blech.
+    /// top/bottom = Breite der Ober-/Unterseite relativ zu w, shoulder = Höhe der Seitenkante relativ zu h.
+    func hull(_ secs: [Sec], z: Float = 0, top: Float = 0.55, bottom: Float = 0.7, shoulder: Float = 0.25,
+              _ m: SCNMaterial? = nil, mirror: Bool = true) {
+        func ring(_ c: Sec) -> [SIMD3<Float>] {
+            let o: [(Float, Float)] = [(top, 1), (1, shoulder), (1, -shoulder), (bottom, -1),
+                                       (-bottom, -1), (-1, -shoulder), (-1, shoulder), (-top, 1)]
+            return o.map { SIMD3(c.x, c.y + $0.1 * c.h, $0.0 * c.w) }
+        }
+        var pos: [SCNVector3] = [], nor: [SCNVector3] = []
+        func face(_ pts: [SIMD3<Float>], outward: SIMD3<Float>) {
+            guard pts.count >= 3 else { return }
+            var n = SIMD3<Float>(0, 0, 0)
+            for i in 1..<(pts.count - 1) { n += cross(pts[i] - pts[0], pts[i + 1] - pts[0]) }
+            guard simd_length(n) > 1e-7 else { return }
+            let flip = dot(n, outward) < 0
+            let nn = simd_normalize(flip ? -n : n)
+            for i in 1..<(pts.count - 1) {
+                let tri = flip ? [pts[0], pts[i + 1], pts[i]] : [pts[0], pts[i], pts[i + 1]]
+                for v in tri {
+                    pos.append(SCNVector3(v.x, v.y, v.z))
+                    nor.append(SCNVector3(nn.x, nn.y, nn.z))
+                }
+            }
+        }
+        let rings = secs.map(ring)
+        for i in 0..<(rings.count - 1) {
+            let a = rings[i], b = rings[i + 1]
+            let axis = SIMD3<Float>((secs[i].x + secs[i + 1].x) / 2, (secs[i].y + secs[i + 1].y) / 2, 0)
+            for k in 0..<a.count {
+                let k1 = (k + 1) % a.count
+                let quad = [a[k], a[k1], b[k1], b[k]]
+                let mid = quad.reduce(SIMD3<Float>(0, 0, 0), +) / 4
+                face(quad, outward: mid - axis)
+            }
+        }
+        let dir = SIMD3<Float>(secs.last!.x > secs[0].x ? 1 : -1, 0, 0)
+        face(rings[0], outward: -dir)
+        face(rings[rings.count - 1], outward: dir)
+        let idx = (0..<Int32(pos.count)).map { $0 }
+        let g = SCNGeometry(sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nor)],
+                            elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
+        add(g, m ?? paint, SCNVector3(0, 0, z), mirror: mirror)
     }
 
     /// Triebwerksgondel mit glühender Düse; gibt die Heck-Position zurück
@@ -806,25 +862,44 @@ enum ShipDesigns {
         k.weapon(m.weapon, hardpoints: [(0.2, 1.0, 0.18), (1.9, -0.3, 1.35)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
     }
 
-    // Kreuzer: langer Rumpf, Brücke, Seitengondeln an Streben
+    // Kreuzer: facettierter Nadelrumpf in einem großen Ring, drei Triebwerke
     private static func orion(_ k: ShipKit, _ m: ShipModel) {
-        k.profile([(3.9, 0.0), (2.8, 0.35), (-2.4, 0.4), (-2.7, 0.15), (-2.7, -0.3), (3.0, -0.25)], z: 0, thick: 0.9, mirror: false)
-        k.box(-0.6, 0.62, 0, 1.4, 0.5, 0.6, k.stripe, chamfer: 0.08, mirror: false)
-        k.canopy(-0.1, 0.85, len: 0.8, height: 0.26, width: 0.5)
-        k.box(-1.0, 0.0, 1.0, 0.8, 0.14, 1.2, k.dark, chamfer: 0.03)
-        k.engine(-1.1, 0.0, 1.7, r: 0.38, len: 3.0, k.accent)
-        k.engine(-2.6, 0.05, 0, r: 0.4, len: 0.8, mirror: false)
-        k.fin(-1.7, 0.4, 0.2, height: 0.9, len: 1.0, tilt: -0.15)
-        k.greeble(x0: 0.4, x1: 2.6, y: 0.38, zMax: 0.3, count: 10)
-        k.lamp(0.4, 0.0, 2.1)
-        k.lamp(3.0, 0.1, 0.4)
-        k.plates(x0: 0.2, x1: 2.8, y: 0.38, width: 0.7, count: 5)
-        k.belly(x0: -2.2, x1: 2.6, y: -0.38, width: 0.6)
-        k.pipes(x0: -2.4, x1: 2.4, y: 0.1, z: 0.48)
-        k.sidePanels(x0: -2.2, x1: 2.4, y: 0.1, z: 0.47, count: 6)
-        k.sensorNose(3.9, 0.0)
-        k.antenna(-0.6, 0.87, 0.2, h: 0.6)
-        k.weapon(m.weapon, hardpoints: [(1.5, 0.0, 1.7)], spine: (-0.4, 4.0, 0.62), belly: (0.5, -0.55))
+        // Nadelrumpf, mittschiffs von einem großen Ring umschlossen
+        k.hull([.init(4.0, 0.05, 0.04, 0.04), .init(3.0, 0.1, 0.28, 0.22), .init(1.2, 0.15, 0.42, 0.34),
+                .init(-0.9, 0.15, 0.5, 0.4), .init(-2.1, 0.15, 0.44, 0.34), .init(-2.4, 0.15, 0.34, 0.26)], mirror: false)
+        k.hull([.init(3.3, 0.36, 0.05, 0.03), .init(2.7, 0.4, 0.22, 0.1), .init(1.8, 0.42, 0.26, 0.12), .init(1.5, 0.4, 0.2, 0.08)],
+               k.second, mirror: false)
+        let ring = SCNTube(innerRadius: 0.95, outerRadius: 1.12, height: 0.5)
+        ring.radialSegmentCount = 12
+        k.addNode(ring, k.stripe, SCNVector3(-0.6, 0.15, 0), rot: SCNVector3(0, 0, -Float.pi / 2))
+        let rim = SCNTube(innerRadius: 1.12, outerRadius: 1.17, height: 0.12)
+        rim.radialSegmentCount = 12
+        for dx in [-0.22, 0.22] as [Float] {
+            k.addNode(rim, k.dark, SCNVector3(-0.6 + dx, 0.15, 0), rot: SCNVector3(0, 0, -Float.pi / 2))
+        }
+        // Speichen vom Rumpf zum Ring, mit Lampen am Ring
+        for i in 0..<4 {
+            let a = Float(i) * .pi / 2 + .pi / 4
+            let r: Float = 0.72
+            k.box(-0.6, 0.15 + sin(a) * r, cos(a) * r, 0.34, 0.12, 0.55, k.dark, chamfer: 0.03,
+                  rot: SCNVector3(-a, 0, 0), mirror: false)
+            k.lamp(-0.6, 0.15 + sin(a) * 1.19, cos(a) * 1.19, size: 0.1)
+        }
+        // Drei Triebwerke im Dreieck
+        k.engine(-2.5, 0.42, 0, r: 0.3, len: 1.1, mirror: false)
+        k.engine(-2.4, -0.1, 0.36, r: 0.26, len: 1.0)
+        k.fin(-1.7, 0.5, 0.0, height: 0.8, len: 0.9, tilt: 0, k.accent)
+        k.box(-2.0, -0.35, 0, 0.7, 0.3, 0.06, k.accent, chamfer: 0.02, mirror: false)
+        k.canopy(2.2, 0.42, len: 1.0, height: 0.24, width: 0.36)
+        k.plates(x0: -2.0, x1: 1.0, y: 0.5, width: 0.55, count: 5)
+        k.belly(x0: -1.8, x1: 2.4, y: -0.25, width: 0.5)
+        k.sidePanels(x0: 0.2, x1: 2.6, y: 0.12, z: 0.4, count: 4)
+        k.pipes(x0: -2.0, x1: -1.0, y: 0.15, z: 0.48)
+        k.greeble(x0: 0.4, x1: 1.4, y: 0.48, zMax: 0.2, count: 5)
+        k.sensorNose(4.0, 0.05)
+        k.lamp(3.0, 0.1, 0.3)
+        k.antenna(-1.2, 0.55, 0.22, h: 0.5)
+        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (0.4, 3.4, 0.62), belly: (0.5, -0.5))
     }
 
     // Abfangjäger: vorwärts gepfeilte Flügel, zwei enge Triebwerke
@@ -880,21 +955,33 @@ enum ShipDesigns {
         k.weapon(m.weapon, hardpoints: [(1.8, -0.2, 1.6)], spine: (-2.2, 3.0, 1.35), belly: (-0.2, -1.0))
     }
 
-    // Tarnschiff: flacher Deltaflügel, rote Leuchtlinien
+    // Tarnschiff: Nurflügler mit gezackter Hinterkante, versenkten Düsen und roten Leuchtlinien
     private static func phantom(_ k: ShipKit, _ m: ShipModel) {
-        k.plate([(3.4, 0.0), (-2.2, 2.9), (-1.5, 1.0), (-2.4, 0.0)], y: 0, thick: 0.34, k.paint, chamfer: 0.1, mirror: true)
-        k.profile([(3.0, 0.0), (1.6, 0.3), (-1.8, 0.35), (-2.2, 0.0)], z: 0, thick: 0.9, chamfer: 0.1, mirror: false)
-        k.canopy(1.2, 0.25, len: 1.5, height: 0.3, width: 0.5)
+        // Nurflügler: breite, flache Pfeilform mit gezackter Hinterkante, Rumpf eingebettet
+        let wing: [(CGFloat, CGFloat)] = [(2.9, 0.0), (-0.9, 3.0), (-1.6, 3.0), (-1.2, 2.0), (-2.0, 1.3), (-1.6, 0.0)]
+        k.plate(wing, y: 0.0, thick: 0.2, k.paint, chamfer: 0.06)
+        k.hull([.init(3.5, 0.08, 0.04, 0.03), .init(2.5, 0.12, 0.5, 0.17), .init(0.8, 0.16, 0.85, 0.26),
+                .init(-0.9, 0.14, 0.8, 0.24), .init(-1.9, 0.1, 0.55, 0.16)], top: 0.45, bottom: 0.8, shoulder: 0.05, mirror: false)
+        // flacher Rückenkamm mit Kanzel
+        k.hull([.init(2.0, 0.42, 0.05, 0.02), .init(1.2, 0.44, 0.3, 0.1), .init(-0.6, 0.42, 0.34, 0.1), .init(-1.3, 0.38, 0.2, 0.06)],
+               top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
+        k.canopy(1.5, 0.36, len: 1.0, height: 0.18, width: 0.42)
+        // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
+        k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
-        k.plate([(2.6, 0.32), (-1.9, 2.6), (-2.0, 2.52), (2.4, 0.3)], y: 0.18, thick: 0.03, red, chamfer: 0)
-        k.engine(-2.0, 0.05, 0.7, r: 0.3, len: 1.2, k.dark)
-        k.fin(-1.5, 0.3, 1.6, height: 0.6, len: 0.8, tilt: -0.9, k.accent)
-        k.greeble(x0: -1.6, x1: 0.2, y: 0.35, zMax: 0.3, count: 6)
-        k.plates(x0: -1.6, x1: 1.0, y: 0.35, width: 0.6, count: 4)
-        k.belly(x0: -1.6, x1: 1.6, y: -0.3, width: 0.5)
-        k.wingDetail([(3.4, 0.0), (-2.2, 2.9), (-1.5, 1.0), (-2.4, 0.0)], y: 0, thick: 0.34)
-        k.sensorNose(3.0, 0.0)
-        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.0)], spine: (-1.2, 3.4, 0.5), belly: (-0.4, -0.45))
+        k.plate([(2.7, 0.18), (-0.75, 2.92), (-0.85, 2.88), (2.55, 0.16)], y: 0.11, thick: 0.02, red, chamfer: 0)
+        k.plate([(-1.25, 1.95), (-1.9, 1.36), (-1.95, 1.42), (-1.32, 2.0)], y: 0.11, thick: 0.02, red, chamfer: 0)
+        // flache, in den Flügel versenkte Düsen
+        k.engine(-1.7, 0.08, 0.62, r: 0.22, len: 1.0, k.dark)
+        k.box(-1.0, 0.18, 0.62, 1.0, 0.12, 0.6, k.second, chamfer: 0.04)
+        // nach innen geneigte Doppelflossen und Winglets
+        k.fin(-1.2, 0.3, 0.85, height: 0.55, len: 0.8, tilt: 0.45, k.accent)
+        k.fin(-1.0, 0.08, 2.75, height: 0.4, len: 0.6, tilt: -0.9, k.accent)
+        k.greeble(x0: -1.4, x1: 0.4, y: 0.4, zMax: 0.55, count: 6)
+        k.belly(x0: -1.2, x1: 1.6, y: -0.12, width: 0.7)
+        k.sensorNose(3.5, 0.08)
+        k.lamp(-0.9, 0.08, 2.95, size: 0.1)
+        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-0.4, 3.3, 0.6), belly: (-0.2, -0.4))
     }
 
     // Flaggschiff: elegant, Flügelspitzen-Triebwerke, goldene Akzente
