@@ -299,6 +299,7 @@ final class World3D {
     private var hangar: CGFloat = 1
     private let hangarBlendTime: CGFloat = 1.8
     private let dockNode = SCNNode()
+    private var lastHangarFade: CGFloat = 0
     private var lastPhase: Game.Phase = .orbiting
 
     private var generation = -1
@@ -1179,9 +1180,19 @@ final class World3D {
         for (i, n) in planetNodes where i > game.currentIndex {
             n.opacity = 1 - kh
         }
+        for (i, r) in bonusRings where i > game.currentIndex {
+            r.node.opacity = 1 - kh
+        }
         syncOrbit(game, px: px)
         syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
+        // ebenso Hindernisse, Nebel und Items auf der Strecke (nur solange der Hangar-Übergang läuft)
+        if kh > 0 || lastHangarFade > 0 {
+            for n in [asteroidNodes, cloudNodes, itemNodes].flatMap({ $0.values }) {
+                n.opacity = 1 - kh
+            }
+        }
+        lastHangarFade = kh
         syncDock(game)
         syncCamera(game, k: k, topDist: topDist, ka: ka, kh: kh)
 
