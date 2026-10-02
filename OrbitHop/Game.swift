@@ -177,7 +177,7 @@ struct Burst {
 // MARK: - Bonus-Items
 
 enum ItemKind: CaseIterable {
-    case energy, wideCone, superBomb, rescue, tech
+    case energy, wideCone, superBomb, rescue, tech, shipPart
 
     var hue: Double {
         switch self {
@@ -186,6 +186,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return 275
         case .rescue: return 22
         case .tech: return 48
+        case .shipPart: return 330
         }
     }
 
@@ -196,6 +197,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return "SUPERBOMBE"
         case .rescue: return "NACHBRENNER"
         case .tech: return "+1 TECH-TEIL"
+        case .shipPart: return "+1 SCHIFFSTEIL"
         }
     }
 
@@ -207,6 +209,7 @@ enum ItemKind: CaseIterable {
         case .superBomb: return Double.random(in: 255...295)
         case .rescue: return Double.random(in: 5...30)
         case .tech: return 48
+        case .shipPart: return 330
         }
     }
 
@@ -368,6 +371,7 @@ final class Game {
     var weapon: WeaponKind { ship.weapon }
     var weaponCost: CGFloat { (weapon.cost * ship.weaponCostFactor).rounded() }
     var runParts = 0                      // in diesem Flug gesammelte Tech-Teile
+    var runShipParts = 0                  // in diesem Flug gefundene Schiffsteile
 
     /// Schwierigkeit 0...1, erreicht nach 40 Planeten das Maximum.
     var level: CGFloat { min(1, CGFloat(score) / 40) }
@@ -564,6 +568,7 @@ final class Game {
         bursts = []
         ship = profile.selected
         runParts = 0
+        runShipParts = 0
         items = []
         projectiles = []
         beams = []
@@ -1119,14 +1124,18 @@ final class Game {
         case .tech:
             runParts += 1
             profile.addParts(1)
+        case .shipPart:
+            runShipParts += 1
+            profile.addShipParts(1)
+            Haptics.bonus()
         }
-        if kind == .tech {
+        if kind == .tech || kind == .shipPart {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
         popups.append(Popup(pos: p, text: kind.title, color: hsl(kind.hue, 0.85, 0.65), age: 0))
         Haptics.capture()
-        SoundFX.shared.play(kind == .tech ? .tech : .item)
+        SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
 
     // MARK: Waffen
@@ -1304,6 +1313,9 @@ final class Game {
         case .comet: techChance = 1
         }
         if Double.random(in: 0...1) < techChance { spawnTech(from: a.center) }
+        // Schiffsteile sind selten: nur aus Wracks und Kometen
+        let shipPartChance: Double = a.kind == .wreck ? 0.2 : (a.kind == .comet ? 0.25 : 0)
+        if Double.random(in: 0...1) < shipPartChance { spawnTech(from: a.center, kind: .shipPart) }
         if a.kind == .comet {
             burst(at: a.center, count: 70, hue: 195, speed: 380, life: 1.4)
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
@@ -1362,9 +1374,9 @@ final class Game {
         }
     }
 
-    /// Tech-Teil fliegt von der Fundstelle direkt ins Schiff.
-    private func spawnTech(from p: CGPoint) {
-        items.append(Item(kind: .tech, from: p, p: p, gap: currentIndex + 1,
+    /// Tech-Teil (oder Schiffsteil) fliegt von der Fundstelle direkt ins Schiff.
+    private func spawnTech(from p: CGPoint, kind: ItemKind = .tech) {
+        items.append(Item(kind: kind, from: p, p: p, gap: currentIndex + 1,
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
     }
 

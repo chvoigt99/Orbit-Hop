@@ -393,6 +393,7 @@ struct GameView: View {
                 readout("KURS", String(format: "%03d", game.headingDegrees), "GRD")
                 readout("WAFFE", game.weapon.title, "\(Int(game.weaponCost))E")
                 readout("TECH", "+\(game.runParts)", "⚙")
+                if game.runShipParts > 0 { readout("SCHIFF", "+\(game.runShipParts)", "TEIL") }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -537,6 +538,10 @@ struct GameView: View {
             .foregroundStyle(.white)
             label("+\(game.runParts) TECH-TEILE · GESAMT ⚙ \(game.profile.parts)")
                 .foregroundStyle(gold)
+            if game.runShipParts > 0 {
+                label("+\(game.runShipParts) SCHIFFSTEILE · GESAMT \(game.profile.shipParts)")
+                    .foregroundStyle(hsl(ItemKind.shipPart.hue, 0.8, 0.68))
+            }
             Text("TIPPEN FÜR NEUSTART")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .tracking(2.5)

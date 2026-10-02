@@ -581,6 +581,14 @@ extension Game {
             c.stroke(gear, with: .color(col), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
             c.stroke(circlePath(.zero, 5), with: .color(col), lineWidth: 2)
             c.fill(circlePath(.zero, 2), with: .color(col))
+        case .shipPart:
+            // kleiner Pfeilrumpf mit Flügeln
+            p.move(to: CGPoint(x: 8, y: 0))
+            p.addLine(to: CGPoint(x: -6, y: -7))
+            p.addLine(to: CGPoint(x: -3, y: 0))
+            p.addLine(to: CGPoint(x: -6, y: 7))
+            p.closeSubpath()
+            c.fill(p, with: .color(col))
         case .rescue:
             p.move(to: CGPoint(x: -5, y: 0))
             p.addLine(to: CGPoint(x: 0, y: -5))

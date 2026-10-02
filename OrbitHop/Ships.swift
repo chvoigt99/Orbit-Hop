@@ -66,13 +66,13 @@ enum Grade: Int {
         }
     }
 
-    /// Tech-Teile zum Freischalten
+    /// Schiffsteile zum Freischalten (Tech-Teile sind nur für Upgrades)
     var cost: Int {
         switch self {
         case .start: return 0
-        case .normal: return 5
-        case .good: return 10
-        case .superior: return 20
+        case .normal: return 2
+        case .good: return 4
+        case .superior: return 7
         }
     }
 
@@ -154,6 +154,7 @@ struct Ship {
 @Observable
 final class Profile {
     var parts: Int
+    var shipParts: Int
     var owned: Set<String>
     var levels: [String: Int]
     var selectedID: String
@@ -162,6 +163,7 @@ final class Profile {
 
     init() {
         parts = defaults.integer(forKey: "orbitHopParts")
+        shipParts = defaults.integer(forKey: "orbitHopShipParts")
         owned = Set(defaults.stringArray(forKey: "orbitHopFleet") ?? [])
         levels = (defaults.dictionary(forKey: "orbitHopLevels") as? [String: Int]) ?? [:]
         selectedID = defaults.string(forKey: "orbitHopSelected") ?? Ship.starter.model.id
@@ -176,8 +178,8 @@ final class Profile {
     func isOwned(_ m: ShipModel) -> Bool { owned.contains(m.id) }
 
     func unlock(_ m: ShipModel) {
-        guard !isOwned(m), parts >= m.grade.cost else { return }
-        parts -= m.grade.cost
+        guard !isOwned(m), shipParts >= m.grade.cost else { return }
+        shipParts -= m.grade.cost
         owned.insert(m.id)
         selectedID = m.id
         save()
@@ -207,8 +209,14 @@ final class Profile {
         save()
     }
 
+    func addShipParts(_ n: Int) {
+        shipParts += n
+        save()
+    }
+
     func save() {
         defaults.set(parts, forKey: "orbitHopParts")
+        defaults.set(shipParts, forKey: "orbitHopShipParts")
         defaults.set(Array(owned), forKey: "orbitHopFleet")
         defaults.set(levels, forKey: "orbitHopLevels")
         defaults.set(selectedID, forKey: "orbitHopSelected")
@@ -361,6 +369,7 @@ struct ShipShopView: View {
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
     private let gold = Color(red: 1, green: 0.85, blue: 0.42)
     private let dim = Color(red: 0.55, green: 0.6, blue: 0.72)
+    private let shipPartColor = hsl(ItemKind.shipPart.hue, 0.8, 0.68)
     private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
 
     private func label(_ text: String) -> Text {
@@ -402,6 +411,15 @@ struct ShipShopView: View {
                     .shadow(color: signal.opacity(0.6), radius: 10)
             }
             Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                label("SCHIFFSTEILE").foregroundStyle(dim)
+                HStack(spacing: 5) {
+                    Image(systemName: "puzzlepiece.fill").font(.system(size: 14))
+                    Text("\(profile.shipParts)")
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                }
+                .foregroundStyle(shipPartColor)
+            }
             VStack(alignment: .trailing, spacing: 2) {
                 label("TECH-TEILE").foregroundStyle(dim)
                 HStack(spacing: 5) {
@@ -571,10 +589,10 @@ struct ShipShopView: View {
             Button { profile.select(m) } label: { buttonLabel("AUSWÄHLEN", signal, filled: false) }
                 .buttonStyle(.plain)
         } else {
-            let can = profile.parts >= m.grade.cost
+            let can = profile.shipParts >= m.grade.cost
             Button { profile.unlock(m) } label: {
-                buttonLabel(can ? "FREISCHALTEN · ⚙ \(m.grade.cost)" : "BENÖTIGT ⚙ \(m.grade.cost) TECH-TEILE",
-                            can ? gold : dim, filled: false)
+                buttonLabel(can ? "FREISCHALTEN · \(m.grade.cost) SCHIFFSTEILE" : "BENÖTIGT \(m.grade.cost) SCHIFFSTEILE",
+                            can ? shipPartColor : dim, filled: false)
             }
             .buttonStyle(.plain)
             .disabled(!can)
