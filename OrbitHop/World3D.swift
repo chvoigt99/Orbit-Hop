@@ -295,6 +295,10 @@ final class World3D {
     private var chasedThisFlight = false
     /// geglätteter Kurs für die Verfolgerkamera, damit Lenkkorrekturen nicht als Ruckler ankommen
     private var chaseHeading = SmoothAngle(0)
+    /// 1 = Hangar-Nahaufnahme, läuft nach dem Start in die normale Kamera aus
+    private var hangar: CGFloat = 1
+    private let hangarBlendTime: CGFloat = 1.8
+    private let dockNode = SCNNode()
     private var lastPhase: Game.Phase = .orbiting
 
     private var generation = -1
@@ -378,6 +382,62 @@ final class World3D {
         scene.rootNode.addChildNode(orbitGroup)
         scene.rootNode.addChildNode(lockGroup)
         buildOrbitParts()
+        buildDock()
+        scene.rootNode.addChildNode(dockNode)
+    }
+
+    // MARK: Hangar
+
+    /// Startplattform mit Leuchtkanten, zwei Pylonen und einer Brücke darüber.
+    /// Lokal zeigt +x in Flugrichtung, die Plattform liegt knapp unter dem Schiff.
+    private func buildDock() {
+        let metal = WornPaint.material("dock", base: UIColor(white: 0.34, alpha: 1))
+        let dark = WornPaint.material("dock-dark", base: UIColor(white: 0.2, alpha: 1))
+        let edge = glowMat(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
+        let lamp = glowMat(UIColor(red: 1, green: 0.78, blue: 0.4, alpha: 1))
+
+        func box(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, _ x: Float, _ y: Float, _ z: Float) {
+            let g = SCNBox(width: w, height: h, length: l, chamferRadius: min(w, h, l) * 0.08)
+            g.materials = [m]
+            let n = SCNNode(geometry: g)
+            n.position = SCNVector3(x, y, z)
+            dockNode.addChildNode(n)
+        }
+
+        // Plattform
+        box(48, 2, 40, metal, 0, -1.2, 0)
+        box(54, 1.2, 46, dark, -2, -2.8, 0)
+        // Leuchtkanten links und rechts, vorn eine Startlinie
+        box(46, 0.5, 0.8, edge, 0, 0.1, 19.6)
+        box(46, 0.5, 0.8, edge, 0, 0.1, -19.6)
+        for i in 0..<4 { box(1.2, 0.5, 6, edge, 23.5, 0.1, Float(i - 2) * 9 + 4.5) }
+        // Pylonen hinten mit Brücke und Lampen
+        for z: Float in [-23, 23] {
+            box(3.2, 24, 3.2, dark, -21, 10, z)
+            let s = SCNNode(geometry: SCNSphere(radius: 1.3))
+            s.geometry?.materials = [lamp]
+            s.position = SCNVector3(-21, 23, z)
+            dockNode.addChildNode(s)
+        }
+        box(3, 2.6, 49, metal, -21, 21, 0)
+
+        // eigenes Licht für die Nahaufnahme
+        let light = SCNNode()
+        light.light = SCNLight()
+        light.light?.type = .omni
+        light.light?.intensity = 700
+        light.light?.color = UIColor(red: 0.85, green: 0.92, blue: 1, alpha: 1)
+        light.light?.attenuationStartDistance = 20
+        light.light?.attenuationEndDistance = 140
+        light.position = SCNVector3(-8, 34, 0)
+        dockNode.addChildNode(light)
+    }
+
+    private func syncDock(_ game: Game) {
+        // knapp unter dem Schiff (Schiffsmitte auf Höhe 4); bleibt stehen, bis der erste Planet erreicht ist
+        dockNode.isHidden = game.score > 0 || game.phase == .over
+        dockNode.position = v3(game.dockPos, -1)
+        dockNode.eulerAngles.y = Float(-game.dockHeading)
     }
 
     // MARK: Aufbau
@@ -1093,6 +1153,9 @@ final class World3D {
             chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
+        // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
+        hangar = game.phase == .docked ? 1 : max(0, hangar - dt / hangarBlendTime)
+        let kh = hangar * hangar * (3 - 2 * hangar)
         let k = chase * chase * (3 - 2 * chase)
         // Übergang aus der Anflug-Einstellung: das Wegfahren passiert vorn im Übergang und läuft
         // ruhig aus, statt kurz vor Schluss noch einmal sichtbar nach hinten zu ziehen
@@ -1111,9 +1174,10 @@ final class World3D {
 
         syncPlanets(game, px: px)
         syncOrbit(game, px: px)
-        syncShip(game, px: normalPx, k: k, ka: ka)
+        syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
-        syncCamera(game, k: k, topDist: topDist, ka: ka)
+        syncDock(game)
+        syncCamera(game, k: k, topDist: topDist, ka: ka, kh: kh)
 
         // Staub folgt der Kamera kachelweise
         let cp = cameraNode.position
@@ -1175,7 +1239,7 @@ final class World3D {
     }
 
     private func syncOrbit(_ game: Game, px: CGFloat) {
-        orbitGroup.isHidden = game.phase == .flying || game.phase == .over
+        orbitGroup.isHidden = game.phase != .orbiting
         guard !orbitGroup.isHidden else { return }
         let p = game.planets[game.currentIndex]
         if orbitIndex != game.currentIndex {
@@ -1199,7 +1263,7 @@ final class World3D {
         coneMats.forEach { $0.multiply.contents = tint }
     }
 
-    private func syncShip(_ game: Game, px: CGFloat, k: CGFloat, ka: CGFloat) {
+    private func syncShip(_ game: Game, px: CGFloat, k: CGFloat, ka: CGFloat, kh: CGFloat) {
         if shipID != game.ship.model.id {
             shipID = game.ship.model.id
             shipModelNode?.removeFromParentNode()
@@ -1218,6 +1282,7 @@ final class World3D {
         let topScale = min(8.4 * px, 14)
         var sc = topScale + (5.0 - topScale) * k
         sc += (parkedScale - sc) * ka
+        sc += (5.0 - sc) * kh
         lastShipScale = sc
         let s = Float(sc)
         shipHolder.scale = SCNVector3(s, s, s)
@@ -1225,7 +1290,7 @@ final class World3D {
         let flying = game.phase == .flying
         let boost = game.boostTime > 0
         for (ps, r) in exhausts {
-            ps.birthRate = game.phase == .over ? 0 : (flying ? (boost ? 260 : 120) : 35)
+            ps.birthRate = game.phase == .over || game.phase == .docked ? 0 : (flying ? (boost ? 260 : 120) : 35)
             ps.particleVelocity = CGFloat(s) * (flying ? (boost ? 6 : 3) : 1.5)
             ps.particleSize = CGFloat(s) * r * (boost ? 1.7 : 1.25)
         }
@@ -1395,7 +1460,7 @@ final class World3D {
         }
     }
 
-    private func syncCamera(_ game: Game, k: CGFloat, topDist: CGFloat, ka: CGFloat) {
+    private func syncCamera(_ game: Game, k: CGFloat, topDist: CGFloat, ka: CGFloat, kh: CGFloat) {
         // Draufsicht, leicht gekippt
         let tilt: CGFloat = 0.42
         let target = v3(game.cam)
@@ -1441,12 +1506,27 @@ final class World3D {
         // die Position fährt danach noch zu Ende. So ist früh der Planet im Fokus, nicht das Schiff.
         let al = min(1, max(0, (arrival - 0.45) / 0.55))
         let fl = Float(al * al * (3 - 2 * al))
-        let lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fl, look.y + (parkedLook.y - look.y) * fl, look.z + (parkedLook.z - look.z) * fl)
+        var lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fl, look.y + (parkedLook.y - look.y) * fl, look.z + (parkedLook.z - look.z) * fl)
+        // Hangar-Nahaufnahme von hinten links, fest am Liegeplatz: das Schiff fliegt beim Start aus dem Bild,
+        // dann zieht die Kamera hoch in die Übersicht
+        if kh > 0 {
+            let dh = game.dockHeading, dp = game.dockPos
+            let fx = cos(dh), fz = sin(dh)
+            // links aus Sicht hinter dem Schiff
+            let lx = fz, lz = -fx
+            let hangarPos = SCNVector3(Float(dp.x - fx * 72 + lx * 42), 24, Float(dp.y - fz * 72 + lz * 42))
+            let hangarLook = SCNVector3(Float(dp.x + fx * 55), 6, Float(dp.y + fz * 55))
+            let f = Float(kh)
+            pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
+            lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)
+        }
         cameraNode.position = pos
         cameraNode.look(at: lookA, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
         lastLook = lookA
-        let normalFov = 50 + 12 * k + 9 * kick
-        cameraNode.camera?.fieldOfView = normalFov + (parkedFov - normalFov) * ka
+        let normalFov = 50 + 12 * k
+        var fov = normalFov + (parkedFov - normalFov) * ka
+        fov += (55 - fov) * kh
+        cameraNode.camera?.fieldOfView = fov + 9 * kick
     }
 
     /// Hüllkurve des Start-Kicks: steigt in 0,09 s auf das Maximum und klingt dann ab.

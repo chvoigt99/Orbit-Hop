@@ -100,6 +100,7 @@ struct GameView: View {
     private var status: (String, Color) {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
+        if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
         if game.phase == .flying { return ("TRANSIT · SCHUB AKTIV", gold) }
@@ -327,7 +328,7 @@ struct GameView: View {
     }
 
     private var precisionBadge: some View {
-        let show = game.time - game.lastLaunchTime < 1.4 && game.phase != .over
+        let show = game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch
         let tier = precisionTier(game.lastAccuracy)
         return Text("\(tier.0) · \(Int(game.lastAccuracy * 100)) %")
             .font(.system(size: 18, weight: .bold, design: .monospaced))
@@ -348,7 +349,7 @@ struct GameView: View {
             .foregroundStyle(dim)
             .padding(10)
             .background(panelBackground(cut: 8, edge: dim))
-            .opacity(game.hintShown && game.started ? 1 : 0)
+            .opacity(game.hintShown && game.started && game.phase != .docked ? 1 : 0)
     }
 
     private func readout(_ key: String, _ value: String, _ unit: String) -> some View {

@@ -341,7 +341,7 @@ struct Beam {
 // MARK: - Spiel
 
 final class Game {
-    enum Phase { case orbiting, flying, over }
+    enum Phase { case docked, orbiting, flying, over }
 
     // MARK: Tuning
     let gravityConstant: CGFloat = 230    // ausgeglichen für die großen Planeten
@@ -385,7 +385,12 @@ final class Game {
 
     // MARK: Zustand
     var planets: [Planet] = []
-    var phase: Phase = .orbiting
+    var phase: Phase = .docked
+    /// Liegeplatz im Hangar am Startplaneten (für die 3D-Welt)
+    private(set) var dockPos = CGPoint.zero
+    private(set) var dockHeading: CGFloat = 0
+    /// letzter Start kam aus dem Hangar (keine Genauigkeitsanzeige)
+    private(set) var dockLaunch = false
     var started = false
     var hintShown = true
     var currentIndex = 0
@@ -459,7 +464,13 @@ final class Game {
 
     // MARK: Anzeige-Werte (nur Optik)
 
-    var speed: CGFloat { phase == .flying ? hypot(vel.dx, vel.dy) : abs(orbitOmega) * orbitDist }
+    var speed: CGFloat {
+        switch phase {
+        case .flying: return hypot(vel.dx, vel.dy)
+        case .docked: return 0
+        default: return abs(orbitOmega) * orbitDist
+        }
+    }
 
     var targetDistance: CGFloat {
         let t = planets[min(currentIndex + 1, planets.count - 1)]
@@ -538,6 +549,15 @@ final class Game {
         orbitPace = planets[0].spin
         pos = point(from: planets[0].center, angle: orbitAngle, distance: orbitDist)
         heading = orbitAngle + orbitDir * CGFloat.pi / 2
+        // Start aus dem Hangar: das Schiff ruht an der Kegelspitze, die Nase zeigt auf den ersten Zielplaneten
+        orbitAngle = coneApexAngle
+        orbitOmega = 0
+        pos = point(from: planets[0].center, angle: orbitAngle, distance: orbitDist)
+        heading = orbitAngle + orbitDir * CGFloat.pi / 2
+        dockPos = pos
+        dockHeading = heading
+        dockLaunch = false
+        phase = .docked
         vel = .zero
         trail = []
         particles = []
@@ -766,9 +786,13 @@ final class Game {
         if !started {
             started = true
             startedAt = time
+            // der Tipp auf dem Titel startet direkt aus dem Hangar
+            if phase == .docked { launchFromDock() }
             return
         }
         switch phase {
+        case .docked:
+            launchFromDock()
         case .over:
             if time - overAt > 0.6 { reset() }
         case .flying:
@@ -780,28 +804,41 @@ final class Game {
                 fire()
                 return
             }
-            let accuracy = 1 - diff / coneHalfAngle
-            let p = planets[currentIndex]
-            let speed = (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed
-            let hd = orbitAngle + orbitDir * CGFloat.pi / 2
-            vel = CGVector(dx: cos(hd) * speed, dy: sin(hd) * speed)
-            originIndex = currentIndex
-            flightTime = 0
-            lastAccuracy = accuracy
-            lastLaunchTime = time
-            if wideConeLaunches > 0 { wideConeLaunches -= 1 }
-            techFocus = 0
-            cameraLock = nil
-            hintShown = false
-            phase = .flying
-            // Partikel nur beim allerersten Start
-            if score == 0 && originIndex == 0 {
-                burst(at: pos, count: 26, hue: 175, speed: 120 + accuracy * 260, life: 0.7)
-            }
-            shake = max(shake, 0.1 + accuracy * 0.15)
-            Haptics.launch(accuracy)
-            blog("launch idx=\(currentIndex) acc=\(Int(accuracy * 100)) speed=\(Int(speed)) energy=\(Int(energy)) orbit=\(String(format: "%.1f", time - captureTime))s field=\(asteroids.contains { $0.gap == currentIndex + 1 })")
+            launch(accuracy: 1 - diff / coneHalfAngle)
         }
+    }
+
+    /// Katapult aus dem Orbit (oder aus dem Hangar) in Richtung der Bahntangente.
+    private func launch(accuracy: CGFloat) {
+        let p = planets[currentIndex]
+        let speed = (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed
+        let hd = orbitAngle + orbitDir * CGFloat.pi / 2
+        vel = CGVector(dx: cos(hd) * speed, dy: sin(hd) * speed)
+        originIndex = currentIndex
+        flightTime = 0
+        lastAccuracy = accuracy
+        lastLaunchTime = time
+        dockLaunch = false
+        if wideConeLaunches > 0 { wideConeLaunches -= 1 }
+        techFocus = 0
+        cameraLock = nil
+        hintShown = false
+        phase = .flying
+        // Partikel nur beim allerersten Start
+        if score == 0 && originIndex == 0 {
+            burst(at: pos, count: 26, hue: 175, speed: 120 + accuracy * 260, life: 0.7)
+        }
+        shake = max(shake, 0.1 + accuracy * 0.15)
+        Haptics.launch(accuracy)
+        blog("launch idx=\(currentIndex) acc=\(Int(accuracy * 100)) speed=\(Int(speed)) energy=\(Int(energy)) orbit=\(String(format: "%.1f", time - captureTime))s field=\(asteroids.contains { $0.gap == currentIndex + 1 })")
+    }
+
+    /// Start aus dem Hangar: fester, kräftiger Start ohne Genauigkeitswertung.
+    /// Der Hinweis bleibt stehen, bis der Spieler zum ersten Mal selbst aus einem Orbit startet.
+    private func launchFromDock() {
+        launch(accuracy: 0.7)
+        dockLaunch = true
+        hintShown = true
     }
 
     // MARK: Simulation
@@ -820,7 +857,7 @@ final class Game {
         // Nur für Tests im Simulator: Start mit Argument -autopilot
         if Game.bot { botStep() } else if Game.autopilot {
             if !started || (phase == .over && time - overAt > 2) { tap() }
-            else if phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3 { tap() }
+            else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
         }
         if phase != .over { simulate(simDt) }
         updateFx(simDt)
@@ -838,6 +875,8 @@ final class Game {
             blog("tick phase=\(phase) idx=\(currentIndex) score=\(score) energy=\(Int(energy)) speed=\(Int(speed)) shots=\(botShots) obstacles=\(asteroids.count)")
         }
         switch phase {
+        case .docked:
+            tap()
         case .orbiting:
             if botThreshold < 0 {
                 botThreshold = coneHalfAngle * CGFloat.random(in: 0.08...0.95)
@@ -875,7 +914,7 @@ final class Game {
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
-        if started { energy -= energyDrain * dt * (charging ? 0.5 : 1) * flightFactor }
+        if started && phase != .docked { energy -= energyDrain * dt * (charging ? 0.5 : 1) * flightFactor }
         missFlash = max(0, missFlash - dt)
 
         if energy <= 0 && rescueCharges > 0 {
@@ -898,6 +937,8 @@ final class Game {
         }
 
         switch phase {
+        case .docked:
+            break
         case .orbiting:
             let p = planets[currentIndex]
             // weiches Einschwingen: Tempo und Radius gleiten auf die Bahn
