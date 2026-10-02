@@ -79,7 +79,7 @@ struct HullTextures {
         let accent = UIColor(hsl(m.weapon.hue, 0.85, 0.58))
 
         // Albedo
-        let albedo = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+        let albedo = textureRenderer(CGSize(width: size, height: size)).image { ctx in
             let g = ctx.cgContext
             for p in panels {
                 let col: UIColor
@@ -189,7 +189,7 @@ struct HullTextures {
         // Höhenkarte → Normal-Map
         let hs = 512
         let scale = CGFloat(hs) / size
-        let heightImg = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let heightImg = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.scaleBy(x: scale, y: scale)
             for p in panels {
@@ -222,7 +222,7 @@ struct HullTextures {
         }
         let normal = normalMap(from: heightImg, size: hs, strength: 3.0)
 
-        let roughness = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let roughness = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.scaleBy(x: scale, y: scale)
             for p in panels {
@@ -231,7 +231,7 @@ struct HullTextures {
             }
         }
 
-        let emission = UIGraphicsImageRenderer(size: CGSize(width: hs, height: hs)).image { ctx in
+        let emission = textureRenderer(CGSize(width: hs, height: hs)).image { ctx in
             let g = ctx.cgContext
             g.setFillColor(UIColor.black.cgColor)
             g.fill(CGRect(x: 0, y: 0, width: hs, height: hs))
@@ -298,7 +298,13 @@ enum Ship3D {
     /// Ausschnitt des Sprites in Modell-Einheiten (Breite = Höhe)
     static let spriteSpan: CGFloat = 9
 
+    private static var sceneOrder: [String] = []
+
+    /// Showcase-Szenen sind speicherhungrig (Schatten, HDR, Texturen); nur die zuletzt gezeigten bleiben im Cache.
     static func scene(for m: ShipModel) -> SCNScene {
+        sceneOrder.removeAll { $0 == m.id }
+        sceneOrder.append(m.id)
+        while sceneOrder.count > 4 { sceneCache[sceneOrder.removeFirst()] = nil }
         if let s = sceneCache[m.id] { return s }
         let s = build(m, showcase: true)
         sceneCache[m.id] = s
@@ -389,7 +395,7 @@ enum Ship3D {
     }
 
     private static func dotImage() -> UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).image { ctx in
+        textureRenderer(CGSize(width: 32, height: 32)).image { ctx in
             let colors = [UIColor.white.cgColor, UIColor.white.withAlphaComponent(0).cgColor] as CFArray
             let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
             ctx.cgContext.drawRadialGradient(grad, startCenter: CGPoint(x: 16, y: 16), startRadius: 0,
@@ -399,7 +405,7 @@ enum Ship3D {
 
     /// Studio-Umgebung für Spiegelungen: dunkler Raum mit großen Softboxen, die Kanten auf Metall
     /// und Lack aufblitzen lassen (äquirektangulär, oben = Himmel)
-    private static let environment: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 512)).image { ctx in
+    private static let environment: UIImage = textureRenderer(CGSize(width: 1024, height: 512)).image { ctx in
         let g = ctx.cgContext
         let colors = [UIColor(red: 0.15, green: 0.145, blue: 0.14, alpha: 1).cgColor,
                       UIColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1).cgColor,
@@ -491,7 +497,7 @@ enum Ship3D {
             // weiche Schatten geben den Bauteilen Tiefe
             key.light?.castsShadow = true
             key.light?.shadowMode = .deferred
-            key.light?.shadowMapSize = CGSize(width: 2048, height: 2048)
+            key.light?.shadowMapSize = CGSize(width: 1024, height: 1024)
             key.light?.shadowSampleCount = 16
             key.light?.shadowRadius = 2.5
             key.light?.shadowColor = UIColor(white: 0, alpha: 0.75)
@@ -581,7 +587,7 @@ struct ShipModelView: UIViewRepresentable {
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
         v.backgroundColor = .clear
-        v.antialiasingMode = .multisampling4X
+        v.antialiasingMode = .multisampling2X
         v.isPlaying = true
         v.rendersContinuously = true
         configure(v)

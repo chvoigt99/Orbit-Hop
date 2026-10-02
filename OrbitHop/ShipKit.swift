@@ -3,14 +3,28 @@ import SceneKit
 import UIKit
 import simd
 
+/// Bildrenderer für Texturen: ein Pixel pro Punkt. Ohne festes Format nimmt UIKit die Bildschirm-Skalierung
+/// (3× auf aktuellen iPhones) und jede Textur bräuchte neunmal so viel Speicher.
+func textureRenderer(_ size: CGSize) -> UIGraphicsImageRenderer {
+    let f = UIGraphicsImageRendererFormat()
+    f.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: f)
+}
+
 // MARK: - Abgenutzter Lack
 
 /// Prozedurale Lacktexturen im Stil „gebrauchtes Kriegsgerät“: Paneelnähte, abgeplatzte Farbe, Kratzer, Schmutz.
 enum WornPaint {
     private static var cache: [String: SCNMaterial] = [:]
+    private static var order: [String] = []
+    /// Obergrenze für zwischengespeicherte Lacke (je Schiff etwa fünf), damit der Speicher nicht mit jedem Schiff wächst
+    private static let cacheLimit = 24
 
     static func material(_ key: String, base: UIColor, stripe: UIColor? = nil, marking: String? = nil) -> SCNMaterial {
         let id = "\(key)-\(marking ?? "")"
+        order.removeAll { $0 == id }
+        order.append(id)
+        while order.count > cacheLimit { cache[order.removeFirst()] = nil }
         if let m = cache[id] { return m }
         // Kennungen würden sich beim Kacheln überall wiederholen, deshalb ohne Beschriftung
         let (albedo, height, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: nil)
@@ -18,15 +32,14 @@ enum WornPaint {
         m.lightingModel = .physicallyBased
         // Fallback, falls der Shader nicht greift
         m.diffuse.contents = albedo
-        m.roughness.contents = rough
-        m.metalness.contents = metal
+        m.roughness.contents = 0.7
+        m.metalness.contents = 0.1
         // Texturen werden dreiachsig im Modellraum projiziert: gleiche Detaildichte auf jedem Bauteil,
         // egal wie groß oder klein es ist. Nähte und Kanten kommen als Relief über die Höhenkarte.
         m.shaderModifiers = [.surface: triplanar]
         m.setValue(SCNMaterialProperty(contents: albedo), forKey: "tpAlbedo")
-        m.setValue(SCNMaterialProperty(contents: rough), forKey: "tpRough")
-        m.setValue(SCNMaterialProperty(contents: metal), forKey: "tpMetal")
-        m.setValue(SCNMaterialProperty(contents: height), forKey: "tpHeight")
+        // Rauheit, Metall und Höhe teilen sich eine Textur (R, G, B)
+        m.setValue(SCNMaterialProperty(contents: pack(rough, metal, height)), forKey: "tpMask")
         m.setValue(NSNumber(value: 1.0 / 2.0), forKey: "tpScale")
         m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
@@ -37,9 +50,7 @@ enum WornPaint {
     static let triplanar = """
     #pragma arguments
     texture2d<float> tpAlbedo;
-    texture2d<float> tpRough;
-    texture2d<float> tpMetal;
-    texture2d<float> tpHeight;
+    texture2d<float> tpMask;
     float tpScale;
     float tpBump;
 
@@ -53,9 +64,10 @@ enum WornPaint {
     float2 tpUY = tpPos.xz;
     float2 tpUZ = tpPos.xy;
     float4 tpA = tpAlbedo.sample(tpS, tpUX) * tpW.x + tpAlbedo.sample(tpS, tpUY) * tpW.y + tpAlbedo.sample(tpS, tpUZ) * tpW.z;
-    float tpR = tpRough.sample(tpS, tpUX).r * tpW.x + tpRough.sample(tpS, tpUY).r * tpW.y + tpRough.sample(tpS, tpUZ).r * tpW.z;
-    float tpM = tpMetal.sample(tpS, tpUX).r * tpW.x + tpMetal.sample(tpS, tpUY).r * tpW.y + tpMetal.sample(tpS, tpUZ).r * tpW.z;
-    float tpH = tpHeight.sample(tpS, tpUX).r * tpW.x + tpHeight.sample(tpS, tpUY).r * tpW.y + tpHeight.sample(tpS, tpUZ).r * tpW.z;
+    float3 tpK = tpMask.sample(tpS, tpUX).rgb * tpW.x + tpMask.sample(tpS, tpUY).rgb * tpW.y + tpMask.sample(tpS, tpUZ).rgb * tpW.z;
+    float tpR = tpK.r;
+    float tpM = tpK.g;
+    float tpH = tpK.b;
     _surface.diffuse = float4(tpA.rgb, 1.0);
     _surface.roughness = tpR;
     _surface.metalness = tpM;
@@ -63,7 +75,7 @@ enum WornPaint {
     // und stellenweise bis aufs blanke Metall abplatzen lassen
     float tpEdge = saturate((length(fwidth(tpN)) - 0.03) * 5.0);
     float2 tpUW = (tpUX * tpW.x + tpUY * tpW.y + tpUZ * tpW.z) * 2.7;
-    float tpChip = smoothstep(0.4, 0.7, tpMetal.sample(tpS, tpUW).r + tpMetal.sample(tpS, tpUW * 0.37 + 0.5).r);
+    float tpChip = smoothstep(0.4, 0.7, tpMask.sample(tpS, tpUW).g + tpMask.sample(tpS, tpUW * 0.37 + 0.5).g);
     _surface.diffuse.rgb = mix(_surface.diffuse.rgb, _surface.diffuse.rgb * 1.18 + 0.03, tpEdge * 0.6);
     float tpBare = tpEdge * tpChip;
     _surface.diffuse.rgb = mix(_surface.diffuse.rgb, float3(0.42, 0.41, 0.39), tpBare);
@@ -82,6 +94,32 @@ enum WornPaint {
     float3 tpNew = abs(tpDet) * tpNv - tpBump * tpGrad;
     if (length(tpNew) > 1e-6) { _surface.normal = normalize(tpNew); }
     """
+
+    /// Drei Graustufenbilder in die Kanäle R, G, B eines Bildes legen
+    private static func pack(_ r: UIImage, _ g: UIImage, _ b: UIImage) -> UIImage {
+        let n = 512
+        func gray(_ img: UIImage) -> [UInt8] {
+            var px = [UInt8](repeating: 0, count: n * n)
+            if let cg = img.cgImage,
+               let ctx = CGContext(data: &px, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n,
+                                   space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+                ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
+            }
+            return px
+        }
+        let cr = gray(r), cg = gray(g), cb = gray(b)
+        var out = [UInt8](repeating: 255, count: n * n * 4)
+        for i in 0..<(n * n) {
+            out[i * 4] = cr[i]
+            out[i * 4 + 1] = cg[i]
+            out[i * 4 + 2] = cb[i]
+        }
+        let provider = CGDataProvider(data: Data(out) as CFData)!
+        let image = CGImage(width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+        return UIImage(cgImage: image)
+    }
 
     /// liefert (Farbe, Höhe, Rauheit, Metall)
     private static func textures(seed: String, base: UIColor, stripe: UIColor?, marking: String?) -> (UIImage, UIImage, UIImage, UIImage) {
@@ -141,7 +179,7 @@ enum WornPaint {
         }
         let stencils = ["NO STEP", "A-17", "▲ 04", "VENT", "07", "HX-2", "⚠", "PWR"]
 
-        let albedo = UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+        let albedo = textureRenderer(CGSize(width: s, height: s)).image { ctx in
             let g = ctx.cgContext
             base.setFill()
             g.fill(CGRect(x: 0, y: 0, width: s, height: s))
@@ -273,7 +311,7 @@ enum WornPaint {
         }
 
         func gray(_ draw: (CGContext) -> Void, fill: CGFloat) -> UIImage {
-            UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+            textureRenderer(CGSize(width: s, height: s)).image { ctx in
                 UIColor(white: fill, alpha: 1).setFill()
                 ctx.fill(CGRect(x: 0, y: 0, width: s, height: s))
                 draw(ctx.cgContext)
