@@ -1175,6 +1175,10 @@ final class World3D {
         lastPx = px
 
         syncPlanets(game, px: px)
+        // Im Hangar die Planeten voraus ausblenden, sie lägen je nach Level hinter dem Titel
+        for (i, n) in planetNodes where i > game.currentIndex {
+            n.opacity = 1 - kh
+        }
         syncOrbit(game, px: px)
         syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
@@ -1498,10 +1502,14 @@ final class World3D {
             look.x += fx
             look.z += fz
         }
+        // Wackeln: glattes Rauschen aus überlagerten Sinuswellen statt Zufall pro Bild, dazu leichtes Rollen
+        var roll: Float = 0
         if game.shake > 0 {
+            let t = Float(game.time)
             let amp = Float(game.shake) * pos.y * 0.012
-            pos.x += Float.random(in: -amp...amp)
-            pos.z += Float.random(in: -amp...amp)
+            pos.x += amp * (sin(t * 23.7) * 0.6 + sin(t * 41.3 + 1.7) * 0.4)
+            pos.z += amp * (sin(t * 29.1 + 0.4) * 0.6 + sin(t * 47.9 + 2.9) * 0.4)
+            roll = Float(game.shake) * 0.035 * (sin(t * 19.3 + 0.8) * 0.7 + sin(t * 33.1) * 0.3)
         }
         // Anflug-Einstellung einblenden
         let fa = Float(ka)
@@ -1518,15 +1526,19 @@ final class World3D {
             let fx = cos(dh), fz = sin(dh)
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
-            let hangarPos = SCNVector3(Float(dp.x - fx * 86 + lx * 36), 22, Float(dp.y - fz * 86 + lz * 36))
-            // Blickpunkt etwas nach rechts versetzt, damit das Schiff mittig steht
-            let hangarLook = SCNVector3(Float(dp.x + fx * 22 - lx * 7), 7, Float(dp.y + fz * 22 - lz * 7))
+            // weit genug hinten, dass beide Pylonen des Tors im Bild sind
+            let hangarPos = SCNVector3(Float(dp.x - fx * 110 + lx * 30), 26, Float(dp.y - fz * 110 + lz * 30))
+            let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)
         }
         cameraNode.position = pos
-        cameraNode.look(at: lookA, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+        // Rollen: Hochrichtung leicht zur Seite kippen (Seite = Blickrichtung × oben)
+        let dx = lookA.x - pos.x, dz = lookA.z - pos.z
+        let len = max(0.001, (dx * dx + dz * dz).squareRoot())
+        let up = SCNVector3(-dz / len * roll, 1, dx / len * roll)
+        cameraNode.look(at: lookA, up: up, localFront: SCNVector3(0, 0, -1))
         lastLook = lookA
         let normalFov = 50 + 12 * k
         var fov = normalFov + (parkedFov - normalFov) * ka

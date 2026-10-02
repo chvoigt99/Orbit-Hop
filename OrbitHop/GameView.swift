@@ -428,15 +428,17 @@ struct GameView: View {
     }
 
     private var tapPrompt: some View {
-        let pulse = 0.55 + 0.45 * sin(Double(game.time) * 4)
+        let pulse = 0.75 + 0.25 * sin(Double(game.time) * 4)
+        // dunkles Feld dahinter, damit der Text auch auf der hellen Startplattform lesbar bleibt
         return Text("TIPPEN ZUM STARTEN")
             .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .tracking(3)
             .foregroundStyle(signal)
+            .opacity(pulse)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
-            .overlay(Brackets(len: 8).stroke(signal, lineWidth: 1.5))
-            .opacity(pulse)
+            .background(Chamfer(cut: 6).fill(panel.opacity(0.8)))
+            .overlay(Brackets(len: 8).stroke(signal.opacity(pulse), lineWidth: 1.5))
     }
 
     private var titleTexts: some View {

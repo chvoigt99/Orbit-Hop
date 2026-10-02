@@ -475,6 +475,8 @@ final class Game {
         guard planets[currentIndex].bonus != nil, !bonusTaken.contains(currentIndex) else { return nil }
         return min(1, orbitCharge / chargeNeeded)
     }
+    /// Bildausschnitt für den freien Flug, einmal beim Start festgelegt (Startpunkt und Zielorbit)
+    private var flightFrame: CGRect?
     var insets = EdgeInsets()
     var techFocus: CGFloat = 0            // Restzeit: Kamera zoomt aufs Schiff
     var overflow: CGFloat = 0             // überschüssige Energie, alle 100 ein Tech-Teil
@@ -847,6 +849,10 @@ final class Game {
         lastAccuracy = accuracy
         lastLaunchTime = time
         dockLaunch = false
+        let tg = planets[min(currentIndex + 1, planets.count - 1)]
+        let ext = tg.orbitRadius + 360
+        flightFrame = CGRect(x: tg.center.x - ext, y: tg.center.y - ext, width: ext * 2, height: ext * 2)
+            .union(CGRect(x: pos.x - 90, y: pos.y - 90, width: 180, height: 180))
         if wideConeLaunches > 0 { wideConeLaunches -= 1 }
         techFocus = 0
         cameraLock = nil
@@ -1512,12 +1518,14 @@ final class Game {
         let usable = min(size.width, size.height * 0.62)
         var targetCenter = fp.center
         var targetScale = usable / (extent * 2)
-        // im freien Flug zusätzlich das Schiff im Bild halten
-        if phase == .flying && cameraLock == nil {
-            let minX = min(fp.center.x - extent, pos.x - 90), maxX = max(fp.center.x + extent, pos.x + 90)
-            let minY = min(fp.center.y - extent, pos.y - 90), maxY = max(fp.center.y + extent, pos.y + 90)
-            targetCenter = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
-            targetScale = min(size.width / (maxX - minX), size.height * 0.62 / (maxY - minY))
+        // Freier Flug: fester Ausschnitt aus Startpunkt und Zielorbit, damit nicht ständig nachgezoomt wird.
+        // Er wächst nur, falls das Schiff doch hinausfliegt. Kurz vor dem Ziel übernimmt die Orbit-Ansicht.
+        if phase == .flying && cameraLock == nil
+            && hypot(pos.x - fp.center.x, pos.y - fp.center.y) > fp.orbitRadius + 700 {
+            let ship = CGRect(x: pos.x - 90, y: pos.y - 90, width: 180, height: 180)
+            let r = flightFrame.map { $0.union(ship) } ?? ship
+            targetCenter = CGPoint(x: r.midX, y: r.midY)
+            targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
         }
         targetScale = min(max(targetScale, 0.04), 0.8)
 
