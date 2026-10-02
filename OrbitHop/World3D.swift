@@ -1221,7 +1221,7 @@ final class World3D {
         }
 
         // Zielerfassung
-        lockGroup.isHidden = game.phase == .over
+        lockGroup.isHidden = game.phase == .over || game.inHangarView
         let ti = game.currentIndex + 1
         if ti < game.planets.count {
             let t = game.planets[ti]
@@ -1514,7 +1514,7 @@ final class World3D {
             let fx = cos(dh), fz = sin(dh)
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
-            let hangarPos = SCNVector3(Float(dp.x - fx * 92 + lx * 20), 22, Float(dp.y - fz * 92 + lz * 20))
+            let hangarPos = SCNVector3(Float(dp.x - fx * 86 + lx * 36), 22, Float(dp.y - fz * 86 + lz * 36))
             let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)

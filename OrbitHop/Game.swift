@@ -391,6 +391,8 @@ final class Game {
     private(set) var dockHeading: CGFloat = 0
     /// letzter Start kam aus dem Hangar (keine Genauigkeitsanzeige)
     private(set) var dockLaunch = false
+    /// Hangar-Nahaufnahme oder der Übergang danach: Zielanzeigen der Draufsicht passen dann nicht ins Bild
+    var inHangarView: Bool { phase == .docked || (dockLaunch && time - lastLaunchTime < 1.8) }
     var started = false
     var hintShown = true
     var currentIndex = 0
