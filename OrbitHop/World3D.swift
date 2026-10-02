@@ -1080,8 +1080,11 @@ final class World3D {
         let danger = chaseOn
         let want: CGFloat = danger ? 1 : 0
         // rein zügig, raus langsam und weich
-        releasing = !danger && chase > 0.001
-        chase = smoothApproach(chase, want, rate: danger ? 1.4 : 0.45, dt: dt)
+        // Der Vorwärts-Schub beim Herauszoomen gilt nur im Flug; im Orbit würde er mit dem Schiff im Kreis laufen
+        releasing = !danger && chase > 0.001 && game.phase == .flying
+        // Im Orbit blendet eine Rest-Nahansicht zügig aus, sonst folgt die Kamera dem kreisenden Schiff
+        let chaseRate: CGFloat = danger ? 1.4 : (game.phase == .flying ? 0.45 : 3)
+        chase = smoothApproach(chase, want, rate: chaseRate, dt: dt)
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
@@ -1359,7 +1362,7 @@ final class World3D {
         }
         // Kamera hält genau dort an, wo sie gerade ist: kein eigener Kameraschwenk
         // nur aus der Nahansicht (Verfolgerkamera), nie in der Draufsicht
-        if game.phase == .flying && arrivalIndex != ti && distT < release && chase > 0.5 {
+        if game.phase == .flying && arrivalIndex != ti && distT < release && chase > 0.15 {
             arrivalIndex = ti
             arrivalActive = true
             // kurz stehen bleiben, dann in die Draufsicht
