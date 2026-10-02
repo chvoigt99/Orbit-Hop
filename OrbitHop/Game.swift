@@ -1416,8 +1416,8 @@ final class Game {
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
-        // Treffer gehen auf die Panzerung, die Panzerungsstufe des Schiffs mildert sie
-        let damage = (baseDamage * 4.5 * (1 - ship.armor)).rounded()
+        // Treffer gehen auf die Panzerung; gepanzerte Schiffe stecken mehr weg (Panzerungswert 0,6 → etwa 40 % weniger)
+        let damage = (baseDamage * 8 * (1 - 0.7 * ship.armor)).rounded()
         vel = CGVector(dx: vel.dx * keep, dy: vel.dy * keep)
         hull = max(0, hull - damage)
         brakeFlash = 1.2
