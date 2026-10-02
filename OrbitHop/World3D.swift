@@ -215,6 +215,7 @@ extension ItemKind {
         case .superBomb: return "burst.fill"
         case .rescue: return "flame.fill"
         case .tech: return "gearshape.fill"
+        case .shipPart: return "puzzlepiece.fill"
         }
     }
 }
@@ -1458,6 +1459,8 @@ final class World3D {
     private var arrivalHold: CGFloat = .infinity
     /// Dauer des Übergangs von der angehaltenen Kamera in die Orbit-Ansicht
     private let arrivalBlendTime: CGFloat = 1.7
+    /// zusätzliche Dauer der Anflugphase bei Flügen mit Hindernissen (Sekunden)
+    private static let arrivalLead: CGFloat = 1.5
     private var parkedPos = SCNVector3(0, 0, 0)
     private var parkedLook = SCNVector3(0, 0, 0)
     private var parkedScale: CGFloat = 1
@@ -1477,7 +1480,9 @@ final class World3D {
         }
         // Kamera hält genau dort an, wo sie gerade ist: kein eigener Kameraschwenk
         // nur aus der Nahansicht (Verfolgerkamera), nie in der Draufsicht
-        if game.phase == .flying && arrivalIndex != ti && distT < release && chase > 0.15 {
+        // setzt 1,5 s Flugzeit früher ein als das Ende der Verfolgerkamera, damit die Anflugphase länger läuft
+        let arrivalStart = release + game.speed * Self.arrivalLead
+        if game.phase == .flying && arrivalIndex != ti && distT < arrivalStart && chase > 0.15 {
             arrivalIndex = ti
             arrivalActive = true
             // kurz stehen bleiben, dann in die Draufsicht
