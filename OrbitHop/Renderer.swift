@@ -12,7 +12,7 @@ extension Game {
     func draw(_ context: GraphicsContext, size: CGSize) {
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
-        drawIndicator(context, size)
+        if !stationOpen { drawIndicator(context, size) }
         drawPopups(context, size)
         drawScreenFrame(context, size)
         drawRadar(context, size)

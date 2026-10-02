@@ -76,6 +76,16 @@ enum Grade: Int {
         }
     }
 
+    /// Tech-Teile für das erste Upgrade
+    var upgradeBase: Int {
+        switch self {
+        case .start: return 40
+        case .normal: return 50
+        case .good: return 75
+        case .superior: return 100
+        }
+    }
+
     var color: Color {
         switch self {
         case .start: return Color(red: 0.55, green: 0.6, blue: 0.72)
@@ -143,8 +153,8 @@ struct Ship {
     var drain: CGFloat { model.drain * (1 - 0.03 * l) }
     var weaponCostFactor: CGFloat { 1 - 0.08 * l }
 
-    /// Tech-Teile für die nächste Stufe
-    var upgradeCost: Int { level + 2 }
+    /// Tech-Teile für die nächste Stufe: Grundpreis je Klasse, jede Stufe 25 % teurer
+    var upgradeCost: Int { model.grade.upgradeBase * (4 + level) / 4 }
 
     static let starter = Ship(model: ShipModel.all[0], level: 0)
 }

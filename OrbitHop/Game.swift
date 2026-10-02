@@ -965,6 +965,8 @@ final class Game {
         lastTime = now
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
+            // im Stationsmenü fährt die Kamera noch auf die Station über dem Menü
+            if stationOpen { updateCamera(dt, size) }
             return
         }
         time += dt
@@ -1655,6 +1657,11 @@ final class Game {
             let r = flightFrame.map { $0.union(ship) } ?? ship
             targetCenter = CGPoint(x: r.midX, y: r.midY)
             targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
+        }
+        // Stationsmenü: Station in die obere Bildhälfte (etwa 28 % von oben), das Menü liegt darunter
+        if stationOpen {
+            targetScale = min(size.width, size.height * 0.4) / ((fp.orbitRadius + 60) * 2)
+            targetCenter.y = fp.center.y + size.height * 0.22 / targetScale
         }
         targetScale = min(max(targetScale, 0.04), 0.8)
 

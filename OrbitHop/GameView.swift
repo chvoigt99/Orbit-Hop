@@ -412,9 +412,9 @@ struct GameView: View {
 
     private var stationMenu: some View {
         let full = game.energy >= game.maxEnergy - 0.5
-        return ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
-            VStack(spacing: 14) {
+        return VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 12) {
                 label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
                 Text("RAUMSTATION")
                     .font(.system(size: 30, weight: .heavy, design: .monospaced))
@@ -436,7 +436,14 @@ struct GameView: View {
             .background(Chamfer(cut: 14).fill(panel.opacity(0.92)))
             .overlay(Chamfer(cut: 14).stroke(signal.opacity(0.45), lineWidth: 1))
             .overlay(Brackets(len: 14).stroke(signal, lineWidth: 2).padding(-6))
+            .padding(.bottom, 36)
         }
+        // nur unten abdunkeln, damit die Station oben frei bleibt
+        .background(
+            LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .center, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        )
     }
 
     // MARK: Titel und Game Over
