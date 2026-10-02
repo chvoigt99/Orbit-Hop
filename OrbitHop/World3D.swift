@@ -1515,7 +1515,8 @@ final class World3D {
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
             let hangarPos = SCNVector3(Float(dp.x - fx * 86 + lx * 36), 22, Float(dp.y - fz * 86 + lz * 36))
-            let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
+            // Blickpunkt etwas nach rechts versetzt, damit das Schiff mittig steht
+            let hangarLook = SCNVector3(Float(dp.x + fx * 22 - lx * 7), 7, Float(dp.y + fz * 22 - lz * 7))
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)

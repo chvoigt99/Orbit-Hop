@@ -851,7 +851,7 @@ extension Game {
     // MARK: Bildschirm-Ebene
 
     private func drawIndicator(_ c: GraphicsContext, _ size: CGSize) {
-        guard phase != .over else { return }
+        guard phase != .over, !inHangarView else { return }
         let t = planets[currentIndex + 1]
         let sp = toScreen(t.center, size)
         let margin: CGFloat = 34
