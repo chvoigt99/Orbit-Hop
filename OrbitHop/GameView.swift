@@ -193,6 +193,19 @@ struct GameView: View {
                 .frame(height: 14)
                 .shadow(color: barColor.opacity(0.5), radius: 6)
 
+                // Panzerung: schmale Leiste, wird bei wenig Panzerung rot
+                HStack(spacing: 6) {
+                    label("PANZ").foregroundStyle(dim)
+                    HStack(spacing: 2) {
+                        ForEach(0..<10, id: \.self) { i in
+                            Rectangle().fill(CGFloat(i) < (game.hull / 10).rounded(.up)
+                                             ? (game.hull <= 30 ? warn : gold) : Color.white.opacity(0.08))
+                        }
+                    }
+                    .frame(height: 5)
+                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(game.hull <= 30 ? warn : dim)
+                }
+
                 HStack(alignment: .bottom, spacing: 6) {
                     if let chargeColor {
                         label("LADEN · KEIN VERBRAUCH").foregroundStyle(chargeColor)
@@ -412,7 +425,8 @@ struct GameView: View {
     // MARK: Raumstation
 
     private var stationMenu: some View {
-        let full = game.energy >= game.maxEnergy - 0.5
+        let cost = game.repairCost
+        let canRepair = cost > 0 && game.profile.parts >= cost
         return VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 12) {
@@ -422,13 +436,16 @@ struct GameView: View {
                     .tracking(5)
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.6), radius: 12)
-                label("ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy)) · ⚙ \(game.profile.parts) · SCHIFFSTEILE \(game.profile.shipParts)")
+                label("PANZERUNG \(Int(ceil(game.hull))) % · ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy))")
                     .foregroundStyle(gold)
+                label("⚙ \(game.profile.parts) TECH-TEILE · \(game.profile.shipParts) SCHIFFSTEILE")
+                    .foregroundStyle(dim)
                     .padding(.bottom, 8)
-                menuButton(full ? "ENERGIE VOLL" : "REPARIEREN", "wrench.and.screwdriver.fill", full ? dim : signal) {
+                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "REPARIEREN · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
+                           "wrench.and.screwdriver.fill", canRepair ? signal : dim) {
                     game.repair()
                 }
-                .disabled(full)
+                .disabled(!canRepair)
                 menuButton("WERFT", "airplane", gold) { showShop = true }
                 menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
             }
@@ -559,7 +576,7 @@ struct GameView: View {
     private var gameOverPanel: some View {
         VStack(spacing: 14) {
             label("SYSTEM OFFLINE · T+\(missionClock)").foregroundStyle(warn.opacity(0.8))
-            Text("ENERGIE LEER")
+            Text(game.destroyed ? "SCHIFF ZERSTÖRT" : "ENERGIE LEER")
                 .font(.system(size: 28, weight: .heavy, design: .monospaced))
                 .tracking(2)
                 .foregroundStyle(warn)

@@ -214,6 +214,14 @@ final class Profile {
         save()
     }
 
+    /// zieht Tech-Teile ab, wenn genug da sind
+    func spendParts(_ n: Int) -> Bool {
+        guard parts >= n else { return false }
+        parts -= n
+        save()
+        return true
+    }
+
     func addParts(_ n: Int) {
         parts += n
         save()

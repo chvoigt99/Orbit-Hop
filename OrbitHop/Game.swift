@@ -556,8 +556,23 @@ final class Game {
     /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
     private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8) }
 
+    /// Panzerung: Kollisionen zehren daran, bei null explodiert das Schiff. Nur an Stationen reparierbar.
+    static let maxHull: CGFloat = 100
+    var hull: CGFloat = Game.maxHull
+    /// Flug endete durch zerstörte Panzerung statt leerer Energie
+    private(set) var destroyed = false
+
+    /// Tech-Teile für eine volle Reparatur: 1 je 10 % Panzerung, 1 je 25 Energie
+    var repairCost: Int {
+        Int(ceil((Game.maxHull - hull - 0.5) / 10)) + Int(ceil((maxEnergy - energy - 0.5) / 25))
+    }
+    var needsRepair: Bool { repairCost > 0 }
+
     func repair() {
+        let cost = repairCost
+        guard cost > 0, profile.spendParts(cost) else { return }
         energy = maxEnergy
+        hull = Game.maxHull
         overflow = 0
         Haptics.bonus()
     }
@@ -598,6 +613,8 @@ final class Game {
         ship = profile.selected
         runParts = 0
         runShipParts = 0
+        hull = Game.maxHull
+        destroyed = false
         items = []
         projectiles = []
         beams = []
@@ -1089,7 +1106,8 @@ final class Game {
             fireRescue()
         }
 
-        if energy <= 0 {
+        if energy <= 0 || hull <= 0 {
+            destroyed = hull <= 0
             blog("over score=\(score) t=\(Int(missionTime)) phase=\(phase) idx=\(currentIndex) flight=\(String(format: "%.1f", flightTime)) parts=\(runParts)")
             energy = 0
             phase = .over
@@ -1397,13 +1415,14 @@ final class Game {
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
-        let damage = (baseDamage * (1 - ship.armor)).rounded()
+        // Treffer gehen auf die Panzerung, die Panzerungsstufe des Schiffs mildert sie
+        let damage = (baseDamage * 4.5 * (1 - ship.armor)).rounded()
         vel = CGVector(dx: vel.dx * keep, dy: vel.dy * keep)
-        energy -= damage
+        hull = max(0, hull - damage)
         brakeFlash = 1.2
         burst(at: a.center, count: 30, hue: 30, speed: 260, life: 0.8)
         burst(at: a.center, count: 16, hue: 35, speed: 150, life: 1.1)
-        popups.append(Popup(pos: pos, text: damage > 0 ? "BREMSE -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
+        popups.append(Popup(pos: pos, text: damage > 0 ? "PANZERUNG -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
         shake = max(shake, 0.35)
         Haptics.miss()
         SoundFX.shared.play(.hit)
