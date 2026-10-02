@@ -333,7 +333,7 @@ struct GameView: View {
             Color(red: 0.01, green: 0.015, blue: 0.04).ignoresSafeArea()
             VStack(spacing: 14) {
                 label("NAV-SYSTEM // ORBITALTRANSFER").foregroundStyle(signal.opacity(0.8))
-                Text("ORBIT HOP")
+                Text("ORBIX")
                     .font(.system(size: 46, weight: .heavy, design: .monospaced))
                     .tracking(4)
                     .foregroundStyle(.white)
@@ -554,7 +554,7 @@ struct GameView: View {
         VStack(spacing: 12) {
             label("NAV-SYSTEM // ORBITALTRANSFER")
                 .foregroundStyle(signal.opacity(0.8))
-            Text("ORBIT HOP")
+            Text("ORBIX")
                 .font(.system(size: 50, weight: .heavy, design: .monospaced))
                 .tracking(4)
                 .lineLimit(1)
