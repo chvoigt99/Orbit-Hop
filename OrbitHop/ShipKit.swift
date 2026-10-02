@@ -448,11 +448,16 @@ final class ShipKit {
         for k in 0..<3 {
             box(x - 0.1 + Float(k) * 0.22, y, z + outer * Float(r * 1.0), 0.12, 0.04, 0.04, lamp, chamfer: 0.01, mirror: mirror)
         }
-        // Düse mit Glutring
-        tube(x - half - 0.12, y, z, r: r * 0.92, len: 0.26, metal, mirror: mirror)
-        tube(x - half - 0.26, y, z, r: r * 0.72, len: 0.03, fire, mirror: mirror)
-        let ring = SCNTorus(ringRadius: r * 0.8, pipeRadius: 0.025)
-        add(ring, lamp, SCNVector3(x - half - 0.24, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
+        // offene Düse: Glut sitzt vertieft im Rohr, davor ein dunkler Innenring
+        let nozzle = SCNTube(innerRadius: r * 0.74, outerRadius: r * 0.92, height: 0.3)
+        nozzle.radialSegmentCount = 24
+        add(nozzle, metal, SCNVector3(x - half - 0.12, y, z), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: mirror)
+        let liner = SCNTube(innerRadius: r * 0.6, outerRadius: r * 0.74, height: 0.22)
+        liner.radialSegmentCount = 24
+        add(liner, dark, SCNVector3(x - half - 0.08, y, z), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: mirror)
+        tube(x - half - 0.02, y, z, r: r * 0.62, len: 0.02, fire, mirror: mirror)
+        let ring = SCNTorus(ringRadius: r * 0.66, pipeRadius: 0.02)
+        add(ring, lamp, SCNVector3(x - half - 0.18, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
         let tail = x - half - 0.28
         for side in mirror && abs(z) > 0.001 ? [z, -z] : [z] {
             let outlet = SCNNode()
@@ -678,7 +683,7 @@ enum ShipDesigns {
     static let olive = c(75, 0.22, 0.4)
     static let orange = c(32, 0.75, 0.5)
     static let gunmetal = c(30, 0.05, 0.3)
-    static let navy = c(212, 0.25, 0.42)
+    static let navy = c(205, 0.12, 0.4)
     static let gold = c(44, 0.6, 0.55)
     static let night = c(262, 0.12, 0.17)
 
