@@ -474,7 +474,10 @@ final class ShipKit {
         face(rings[0], outward: -dir)
         face(rings[rings.count - 1], outward: dir)
         let idx = (0..<Int32(pos.count)).map { $0 }
-        let g = SCNGeometry(sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nor)],
+        // Texturkoordinaten braucht die Render-Pipeline, auch wenn der Lack-Shader dreiachsig projiziert
+        let uv = pos.map { CGPoint(x: CGFloat($0.x) / 2, y: CGFloat($0.y + $0.z) / 2) }
+        let g = SCNGeometry(sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nor),
+                                      SCNGeometrySource(textureCoordinates: uv)],
                             elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
         add(g, m ?? paint, SCNVector3(0, 0, z), mirror: mirror)
     }
@@ -960,12 +963,12 @@ enum ShipDesigns {
         // Nurflügler: breite, flache Pfeilform mit gezackter Hinterkante, Rumpf eingebettet
         let wing: [(CGFloat, CGFloat)] = [(2.9, 0.0), (-0.9, 3.0), (-1.6, 3.0), (-1.2, 2.0), (-2.0, 1.3), (-1.6, 0.0)]
         k.plate(wing, y: 0.0, thick: 0.2, k.paint, chamfer: 0.06)
-        k.hull([.init(3.5, 0.08, 0.04, 0.03), .init(2.5, 0.12, 0.5, 0.17), .init(0.8, 0.16, 0.85, 0.26),
-                .init(-0.9, 0.14, 0.8, 0.24), .init(-1.9, 0.1, 0.55, 0.16)], top: 0.45, bottom: 0.8, shoulder: 0.05, mirror: false)
+        k.hull([.init(3.5, 0.08, 0.04, 0.03), .init(2.5, 0.14, 0.5, 0.2), .init(0.8, 0.2, 0.85, 0.32),
+                .init(-0.9, 0.18, 0.8, 0.3), .init(-1.9, 0.12, 0.55, 0.2)], top: 0.45, bottom: 0.8, shoulder: 0.05, mirror: false)
         // flacher Rückenkamm mit Kanzel
-        k.hull([.init(2.0, 0.42, 0.05, 0.02), .init(1.2, 0.44, 0.3, 0.1), .init(-0.6, 0.42, 0.34, 0.1), .init(-1.3, 0.38, 0.2, 0.06)],
+        k.hull([.init(2.0, 0.5, 0.05, 0.02), .init(1.2, 0.56, 0.3, 0.12), .init(-0.6, 0.54, 0.34, 0.12), .init(-1.3, 0.46, 0.2, 0.06)],
                top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
-        k.canopy(1.5, 0.36, len: 1.0, height: 0.18, width: 0.42)
+        k.canopy(1.5, 0.48, len: 1.0, height: 0.2, width: 0.42)
         // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
         k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
