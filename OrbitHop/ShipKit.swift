@@ -14,68 +14,63 @@ enum WornPaint {
         // Kennungen würden sich beim Kacheln überall wiederholen, deshalb ohne Beschriftung
         let (albedo, height, rough, metal) = textures(seed: id, base: base, stripe: stripe, marking: nil)
         let m = SCNMaterial()
-        m.name = "worn"
         m.lightingModel = .physicallyBased
+        // Fallback, falls der Shader nicht greift
         m.diffuse.contents = albedo
         m.roughness.contents = rough
         m.metalness.contents = metal
-        m.normal.contents = normalMap(height, size: 512)
-        m.normal.intensity = 0.8
-        for p in [m.diffuse, m.roughness, m.metalness, m.normal] {
-            p.wrapS = .repeat
-            p.wrapT = .repeat
-            p.mipFilter = .linear
-        }
+        // Texturen werden dreiachsig im Modellraum projiziert: gleiche Detaildichte auf jedem Bauteil,
+        // egal wie groß oder klein es ist. Nähte und Kanten kommen als Relief über die Höhenkarte.
+        m.shaderModifiers = [.surface: triplanar]
+        m.setValue(SCNMaterialProperty(contents: albedo), forKey: "tpAlbedo")
+        m.setValue(SCNMaterialProperty(contents: rough), forKey: "tpRough")
+        m.setValue(SCNMaterialProperty(contents: metal), forKey: "tpMetal")
+        m.setValue(SCNMaterialProperty(contents: height), forKey: "tpHeight")
+        m.setValue(NSNumber(value: 1.0 / 2.4), forKey: "tpScale")
+        m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
         return m
     }
 
-    /// Kantenlänge einer Texturkachel in Modelleinheiten
-    static let tile: Float = 2.4
+    /// Dreiachsige Projektion (Triplanar) im Modellraum plus Relief aus der Höhenkarte über Bildschirm-Ableitungen.
+    static let triplanar = """
+    #pragma arguments
+    texture2d<float> tpAlbedo;
+    texture2d<float> tpRough;
+    texture2d<float> tpMetal;
+    texture2d<float> tpHeight;
+    float tpScale;
+    float tpBump;
 
-    /// Ersetzt die Texturkoordinaten aller Bauteile mit abgenutztem Lack durch eine Würfelprojektion
-    /// im Schiffsraum: gleiche Detaildichte auf jedem Bauteil, egal wie groß oder klein es ist.
-    static func boxMap(_ root: SCNNode) {
-        root.enumerateChildNodes { node, _ in
-            guard let g = node.geometry, g.materials.contains(where: { $0.name == "worn" }),
-                  let v = g.sources(for: .vertex).first, let nrm = g.sources(for: .normal).first else { return }
-            let pos = floats(v), nor = floats(nrm)
-            guard pos.count == v.vectorCount, nor.count == pos.count else { return }
-            let t = node.simdConvertTransform(matrix_identity_float4x4, to: root)
-            var uv = [SIMD2<Float>](); uv.reserveCapacity(pos.count)
-            for i in 0..<pos.count {
-                let p = xyz(t * SIMD4<Float>(pos[i], 1)) / tile
-                let n = xyz(t * SIMD4<Float>(nor[i], 0))
-                let a = abs(n)
-                if a.x >= a.y && a.x >= a.z { uv.append(SIMD2(n.x > 0 ? -p.z : p.z, -p.y)) }
-                else if a.y >= a.z { uv.append(SIMD2(p.x, n.y > 0 ? p.z : -p.z)) }
-                else { uv.append(SIMD2(n.z > 0 ? p.x : -p.x, -p.y)) }
-            }
-            let data = uv.withUnsafeBufferPointer { Data(buffer: $0) }
-            let tex = SCNGeometrySource(data: data, semantic: .texcoord, vectorCount: uv.count, usesFloatComponents: true,
-                                        componentsPerVector: 2, bytesPerComponent: 4, dataOffset: 0,
-                                        dataStride: MemoryLayout<SIMD2<Float>>.stride)
-            let copy = SCNGeometry(sources: [v, nrm, tex], elements: g.elements)
-            copy.materials = g.materials
-            node.geometry = copy
-        }
-    }
-
-    private static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
-
-    private static func floats(_ s: SCNGeometrySource) -> [SIMD3<Float>] {
-        guard s.usesFloatComponents, s.bytesPerComponent == 4, s.componentsPerVector >= 3 else { return [] }
-        var out = [SIMD3<Float>](); out.reserveCapacity(s.vectorCount)
-        s.data.withUnsafeBytes { raw in
-            for i in 0..<s.vectorCount {
-                let o = s.dataOffset + i * s.dataStride
-                out.append(SIMD3(raw.load(fromByteOffset: o, as: Float.self),
-                                 raw.load(fromByteOffset: o + 4, as: Float.self),
-                                 raw.load(fromByteOffset: o + 8, as: Float.self)))
-            }
-        }
-        return out
-    }
+    #pragma body
+    constexpr sampler tpS(filter::linear, mip_filter::linear, address::repeat);
+    float3 tpPos = (scn_node.inverseModelViewTransform * float4(_surface.position, 1.0)).xyz * tpScale;
+    float3 tpN = normalize((scn_node.inverseModelViewTransform * float4(_surface.normal, 0.0)).xyz);
+    float3 tpW = pow(abs(tpN), float3(6.0));
+    tpW = tpW / (tpW.x + tpW.y + tpW.z);
+    float2 tpUX = tpPos.zy;
+    float2 tpUY = tpPos.xz;
+    float2 tpUZ = tpPos.xy;
+    float4 tpA = tpAlbedo.sample(tpS, tpUX) * tpW.x + tpAlbedo.sample(tpS, tpUY) * tpW.y + tpAlbedo.sample(tpS, tpUZ) * tpW.z;
+    float tpR = tpRough.sample(tpS, tpUX).r * tpW.x + tpRough.sample(tpS, tpUY).r * tpW.y + tpRough.sample(tpS, tpUZ).r * tpW.z;
+    float tpM = tpMetal.sample(tpS, tpUX).r * tpW.x + tpMetal.sample(tpS, tpUY).r * tpW.y + tpMetal.sample(tpS, tpUZ).r * tpW.z;
+    float tpH = tpHeight.sample(tpS, tpUX).r * tpW.x + tpHeight.sample(tpS, tpUY).r * tpW.y + tpHeight.sample(tpS, tpUZ).r * tpW.z;
+    _surface.diffuse = float4(tpA.rgb, 1.0);
+    _surface.roughness = tpR;
+    _surface.metalness = tpM;
+    // Relief: Normale anhand der Höhenänderung pro Bildpunkt kippen
+    float3 tpDpx = dfdx(_surface.position);
+    float3 tpDpy = dfdy(_surface.position);
+    float tpDhx = dfdx(tpH);
+    float tpDhy = dfdy(tpH);
+    float3 tpNv = _surface.normal;
+    float3 tpR1 = cross(tpDpy, tpNv);
+    float3 tpR2 = cross(tpNv, tpDpx);
+    float tpDet = dot(tpDpx, tpR1);
+    float3 tpGrad = sign(tpDet) * (tpDhx * tpR1 + tpDhy * tpR2);
+    float3 tpNew = abs(tpDet) * tpNv - tpBump * tpGrad;
+    if (length(tpNew) > 1e-6) { _surface.normal = normalize(tpNew); }
+    """
 
     /// liefert (Farbe, Höhe, Rauheit, Metall)
     private static func textures(seed: String, base: UIColor, stripe: UIColor?, marking: String?) -> (UIImage, UIImage, UIImage, UIImage) {
@@ -85,7 +80,7 @@ enum WornPaint {
         // Positionen für Abplatzer, bevorzugt an den Kanten
         struct Chip { let path: UIBezierPath; let deep: Bool }
         var chips: [Chip] = []
-        for _ in 0..<110 {
+        for _ in 0..<70 {
             var x = rng.c(0...s), y = rng.c(0...s)
             if rng.chance(0.7) {
                 switch Int(rng.d(0...3.99)) {
@@ -263,7 +258,7 @@ enum WornPaint {
                 UIColor(white: c.deep ? 0.32 : 0.45, alpha: 1).setFill()
                 c.path.fill()
             }
-        }, fill: 0.62)
+        }, fill: 0.72)
         let metal = gray({ _ in
             for c in chips where c.deep {
                 UIColor(white: 0.9, alpha: 1).setFill()
@@ -271,32 +266,6 @@ enum WornPaint {
             }
         }, fill: 0.08)
         return (albedo, height, rough, metal)
-    }
-
-    private static func normalMap(_ img: UIImage, size: Int) -> UIImage {
-        guard let cg = img.cgImage else { return img }
-        var gray = [UInt8](repeating: 0, count: size * size)
-        let ctx = CGContext(data: &gray, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size,
-                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: size, height: size))
-        var out = [UInt8](repeating: 255, count: size * size * 4)
-        func h(_ x: Int, _ y: Int) -> Double { Double(gray[min(size - 1, max(0, y)) * size + min(size - 1, max(0, x))]) / 255 }
-        for y in 0..<size {
-            for x in 0..<size {
-                let dx = (h(x + 1, y) - h(x - 1, y)) * 2.5
-                let dy = (h(x, y + 1) - h(x, y - 1)) * 2.5
-                let len = (dx * dx + dy * dy + 1).squareRoot()
-                let i = (y * size + x) * 4
-                out[i] = UInt8(max(0, min(255, (-dx / len * 0.5 + 0.5) * 255)))
-                out[i + 1] = UInt8(max(0, min(255, (dy / len * 0.5 + 0.5) * 255)))
-                out[i + 2] = UInt8(max(0, min(255, (1 / len * 0.5 + 0.5) * 255)))
-            }
-        }
-        let provider = CGDataProvider(data: Data(out) as CFData)!
-        let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
-        return UIImage(cgImage: image)
     }
 }
 
@@ -675,7 +644,6 @@ enum ShipDesigns {
         case "nova": k = kit(m, bone, gold, navy, "NV"); nova(k, m)
         default: k = kit(m, bone, red, gunmetal, "FK"); falke(k, m)
         }
-        WornPaint.boxMap(k.root)
         return k.root
     }
 
