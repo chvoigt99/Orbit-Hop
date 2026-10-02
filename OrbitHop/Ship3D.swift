@@ -464,7 +464,7 @@ enum Ship3D {
         let scene = SCNScene()
         scene.background.contents = UIColor.clear
         scene.lightingEnvironment.contents = environment
-        scene.lightingEnvironment.intensity = showcase ? 1.3 : 1.6
+        scene.lightingEnvironment.intensity = showcase ? 0.9 : 1.6
 
         let accent = ui(m.weapon.hue, 0.85, 0.6)
         let pivot = shipNode(for: m, showcase: showcase)
@@ -475,7 +475,7 @@ enum Ship3D {
         let key = SCNNode()
         key.light = SCNLight()
         key.light?.type = .directional
-        key.light?.intensity = showcase ? 2200 : 1100
+        key.light?.intensity = showcase ? 1500 : 1100
         key.light?.color = UIColor(red: 1, green: 0.95, blue: 0.88, alpha: 1)
         if showcase {
             // weiche Schatten geben den Bauteilen Tiefe
@@ -549,7 +549,7 @@ enum Ship3D {
             cam.camera?.screenSpaceAmbientOcclusionBias = 0.02
             cam.camera?.vignettingIntensity = 0.7
             cam.camera?.vignettingPower = 1.2
-            cam.camera?.saturation = 0.95
+            cam.camera?.saturation = 1.1
             cam.camera?.contrast = 0.15
             cam.position = SCNVector3(0, 5.4, 9.8)
             cam.look(at: SCNVector3(0, -0.1, 0))
