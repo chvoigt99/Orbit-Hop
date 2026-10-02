@@ -388,7 +388,7 @@ final class World3D {
 
     // MARK: Hangar
 
-    /// Startplattform mit Leuchtkanten, zwei Pylonen und einer Brücke darüber.
+    /// Startplattform mit Leuchtkanten und einem Tor aus zwei Pylonen und einer Brücke.
     /// Lokal zeigt +x in Flugrichtung, die Plattform liegt knapp unter dem Schiff.
     private func buildDock() {
         let metal = WornPaint.material("dock", base: UIColor(white: 0.34, alpha: 1))
@@ -411,15 +411,15 @@ final class World3D {
         box(46, 0.5, 0.8, edge, 0, 0.1, 19.6)
         box(46, 0.5, 0.8, edge, 0, 0.1, -19.6)
         for i in 0..<4 { box(1.2, 0.5, 6, edge, 23.5, 0.1, Float(i - 2) * 9 + 4.5) }
-        // Pylonen hinten mit Brücke und Lampen
+        // Tor vorn: zwei Pylonen mit Brücke und Lampen, das Schiff startet hindurch
         for z: Float in [-23, 23] {
-            box(3.2, 24, 3.2, dark, -21, 10, z)
+            box(3.2, 24, 3.2, dark, 22, 10, z)
             let s = SCNNode(geometry: SCNSphere(radius: 1.3))
             s.geometry?.materials = [lamp]
-            s.position = SCNVector3(-21, 23, z)
+            s.position = SCNVector3(22, 23, z)
             dockNode.addChildNode(s)
         }
-        box(3, 2.6, 49, metal, -21, 21, 0)
+        box(3, 2.6, 49, metal, 22, 21, 0)
 
         // eigenes Licht für die Nahaufnahme
         let light = SCNNode()
@@ -1514,8 +1514,8 @@ final class World3D {
             let fx = cos(dh), fz = sin(dh)
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
-            let hangarPos = SCNVector3(Float(dp.x - fx * 72 + lx * 42), 24, Float(dp.y - fz * 72 + lz * 42))
-            let hangarLook = SCNVector3(Float(dp.x + fx * 55), 6, Float(dp.y + fz * 55))
+            let hangarPos = SCNVector3(Float(dp.x - fx * 92 + lx * 20), 22, Float(dp.y - fz * 92 + lz * 20))
+            let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)
