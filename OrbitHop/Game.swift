@@ -1658,10 +1658,9 @@ final class Game {
             targetCenter = CGPoint(x: r.midX, y: r.midY)
             targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
         }
-        // Stationsmenü: Station in die obere Bildhälfte (etwa 28 % von oben), das Menü liegt darunter
+        // Stationsmenü: Maßstab für die Station über dem Menü (Blickwinkel und Lage setzt World3D)
         if stationOpen {
             targetScale = min(size.width, size.height * 0.4) / ((fp.orbitRadius + 60) * 2)
-            targetCenter.y = fp.center.y + size.height * 0.22 / targetScale
         }
         targetScale = min(max(targetScale, 0.04), 0.8)
 

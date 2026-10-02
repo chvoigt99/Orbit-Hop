@@ -310,6 +310,8 @@ final class World3D {
     private var chaseHeading = SmoothAngle(0)
     /// 1 = Hangar-Nahaufnahme, läuft nach dem Start in die normale Kamera aus
     private var hangar: CGFloat = 1
+    /// Schrägblick auf die Raumstation, solange das Stationsmenü offen ist (0…1)
+    private var stationView: CGFloat = 0
     private let hangarBlendTime: CGFloat = 1.8
     private let dockNode = SCNNode()
     private var lastHangarFade: CGFloat = 0
@@ -1339,6 +1341,7 @@ final class World3D {
         // Beim Abflug löst sich die Kamera schon während des Anrollens
         let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
         hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
+        stationView = game.stationOpen ? min(1, stationView + dt / 1.4) : max(0, stationView - dt / 1.0)
         let kh = hangar * hangar * (3 - 2 * hangar)
         let k = chase * chase * (3 - 2 * chase)
         // Übergang aus der Anflug-Einstellung: eine einzige weiche Kurve (smootherstep) für Position,
@@ -1762,12 +1765,26 @@ final class World3D {
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)
         }
+        // Stationsmenü: schräger 3/4-Blick auf die Station statt Draufsicht
+        let sv = Float(stationView * stationView * (3 - 2 * stationView))
+        if sv > 0, game.planets.indices.contains(game.currentIndex) {
+            let sp = game.planets[game.currentIndex]
+            let center = SCNVector3(Float(sp.center.x), 0, Float(sp.center.y))
+            // von vorn rechts, etwa 33° über der Bahnebene
+            let el: Float = 0.58, az: Float = 1.25
+            let d = Float(topDist) * 0.92
+            let svPos = SCNVector3(center.x + d * cos(el) * cos(az), d * sin(el), center.z + d * cos(el) * sin(az))
+            pos = SCNVector3(pos.x + (svPos.x - pos.x) * sv, pos.y + (svPos.y - pos.y) * sv, pos.z + (svPos.z - pos.z) * sv)
+            lookA = SCNVector3(lookA.x + (center.x - lookA.x) * sv, lookA.y + (center.y - lookA.y) * sv, lookA.z + (center.z - lookA.z) * sv)
+        }
         cameraNode.position = pos
         // Rollen: Hochrichtung leicht zur Seite kippen (Seite = Blickrichtung × oben)
         let dx = lookA.x - pos.x, dz = lookA.z - pos.z
         let len = max(0.001, (dx * dx + dz * dz).squareRoot())
         let up = SCNVector3(-dz / len * roll, 1, dx / len * roll)
         cameraNode.look(at: lookA, up: up, localFront: SCNVector3(0, 0, -1))
+        // Station ins obere Bilddrittel: Kamera etwas nach unten neigen, das Menü liegt darunter
+        if sv > 0 { cameraNode.simdLocalRotate(by: simd_quatf(angle: -0.2 * sv, axis: SIMD3<Float>(1, 0, 0))) }
         lastLook = lookA
         let normalFov = 50 + 12 * k
         var fov = normalFov + (parkedFov - normalFov) * ka
