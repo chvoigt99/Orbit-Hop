@@ -1233,6 +1233,8 @@ final class World3D {
             if let badge = r.node.childNode(withName: "badge", recursively: false) {
                 let s = Float(24 * px * (isCur ? 1 + 0.08 * sin(game.time * 6) : 1))
                 badge.scale = SCNVector3(s, s, s)
+                // Abstand zum Ring in Bildschirmpunkten, damit das Symbol bei jedem Zoom neben dem Planeten sitzt
+                badge.position.z = Float(-(r.radius + 22 * px))
             }
         }
 

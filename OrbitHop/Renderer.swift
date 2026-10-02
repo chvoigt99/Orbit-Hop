@@ -661,11 +661,20 @@ extension Game {
         w.fill(diamond, with: .color(amber.opacity(0.9)))
     }
 
+    /// Bildschirmposition über die echte 3D-Kamera; die 2D-Rechnung kennt Neigung und Perspektive nicht
+    private func screenPoint(_ p: CGPoint, _ size: CGSize) -> CGPoint {
+        project?(p) ?? toScreen(p, size)
+    }
+
     private func drawTargetLabel(_ c: GraphicsContext, _ size: CGSize) {
         guard phase != .over, !inHangarView else { return }
         let t = planets[currentIndex + 1]
-        let sp = toScreen(t.center, size)
-        let h = (t.radius + 62) * camScale
+        let sp = screenPoint(t.center, size)
+        let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
+        let h = max(16, hypot(edge.x - sp.x, edge.y - sp.y))
+        // dunkler Schatten unter der Schrift, damit sie auch vor hellen Planeten lesbar bleibt
+        var c = c
+        c.addFilter(.shadow(color: .black.opacity(0.9), radius: 2.5))
         let flip: CGFloat = sp.x + h + 110 > size.width ? -1 : 1
         let corner = CGPoint(x: sp.x + h * flip, y: sp.y - h)
         guard corner.x > 8, corner.x < size.width - 8,
@@ -900,8 +909,10 @@ extension Game {
     }
 
     private func drawPopups(_ c: GraphicsContext, _ size: CGSize) {
+        var c = c
+        c.addFilter(.shadow(color: .black.opacity(0.85), radius: 3))
         for pp in popups {
-            let sp = toScreen(pp.pos, size)
+            let sp = screenPoint(pp.pos, size)
             let sy = sp.y - 18 - pp.age * 55
             let alpha = Double(max(0, 1 - pp.age / 1.3))
             let text = Text(pp.text)
