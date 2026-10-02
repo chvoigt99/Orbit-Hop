@@ -333,6 +333,9 @@ final class World3D {
     private let coneNode = SCNNode()
     private var coneKey = ""
     private var coneMats: [SCNMaterial] = []
+    private static let orbitRevealTime: CGFloat = 1.1
+    private var orbitReveal: CGFloat = 0   // 0…1 linear seit Eintritt in den Orbit
+    private var coneHeat: CGFloat = 0      // weicher Übergang grau → grün im Kegel
     private var orbitIndex = -1
 
     private let lockGroup = SCNNode()
@@ -1182,7 +1185,7 @@ final class World3D {
         for (i, r) in bonusRings where i > game.currentIndex {
             r.node.opacity = 1 - kh
         }
-        syncOrbit(game, px: px)
+        syncOrbit(game, px: px, dt: dt)
         syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
         // ebenso Hindernisse, Nebel und Items auf der Strecke (nur solange der Hangar-Übergang läuft)
@@ -1256,9 +1259,23 @@ final class World3D {
         }
     }
 
-    private func syncOrbit(_ game: Game, px: CGFloat) {
+    private func syncOrbit(_ game: Game, px: CGFloat, dt: CGFloat) {
         orbitGroup.isHidden = game.phase != .orbiting
-        guard !orbitGroup.isHidden else { return }
+        guard !orbitGroup.isHidden else {
+            orbitReveal = 0
+            return
+        }
+        // Weich einblenden: erst Bahn und Pfeile, der Kegel fährt leicht verzögert von der Spitze aus auf
+        if orbitReveal == 0 { coneHeat = game.inCone ? 1 : 0 }
+        orbitReveal = min(1, orbitReveal + dt / Self.orbitRevealTime)
+        func smoother(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * c * (c * (c * 6 - 15) + 10) }
+        let ringIn = smoother(orbitReveal / 0.75)
+        let coneIn = smoother((orbitReveal - 0.25) / 0.75)
+        orbitRing.opacity = ringIn
+        arrowSpinner.opacity = ringIn
+        coneNode.opacity = coneIn
+        let sweep = Float(0.2 + 0.8 * coneIn)
+        coneNode.scale = SCNVector3(sweep, 1, sweep)
         let p = game.planets[game.currentIndex]
         if orbitIndex != game.currentIndex {
             orbitIndex = game.currentIndex
@@ -1276,8 +1293,10 @@ final class World3D {
         let apex = point(from: p.center, angle: game.coneApexAngle, distance: p.orbitRadius)
         coneNode.position = SCNVector3(Float(apex.x - p.center.x), 0, Float(apex.y - p.center.y))
         coneNode.eulerAngles.y = Float(-game.coneDirection)
-        let hot = game.inCone
-        let tint = hot ? UIColor(red: 0.25, green: 0.75, blue: 0.62, alpha: 1) : UIColor(white: 0.55, alpha: 1)
+        coneHeat = smoothApproach(coneHeat, game.inCone ? 1 : 0, rate: 14, dt: dt)
+        let h = coneHeat
+        let tint = UIColor(red: 0.55 + (0.25 - 0.55) * h, green: 0.55 + (0.75 - 0.55) * h,
+                           blue: 0.55 + (0.62 - 0.55) * h, alpha: 1)
         coneMats.forEach { $0.multiply.contents = tint }
     }
 
