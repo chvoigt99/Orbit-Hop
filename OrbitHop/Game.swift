@@ -537,6 +537,8 @@ final class Game {
     }
 
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
+    /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
+    static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
@@ -984,6 +986,11 @@ final class Game {
             // an der Station auf das Menü warten, statt sofort weiterzufliegen
             else if atStation && stationMenuAt != nil {}
             else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
+        }
+        if Game.popupTest, phase == .orbiting, Int((time - dt) / 3) != Int(time / 3) {
+            for (t, h) in [("+1 TECH-TEIL", ItemKind.tech.hue), ("KOMET ZERSTÖRT", 200.0), ("+24", 140.0)] {
+                popups.append(Popup(pos: pos, text: t, color: hsl(h, 0.85, 0.65), age: 0))
+            }
         }
         if phase != .over { simulate(simDt) }
         if let t = stationMenuAt, time >= t {

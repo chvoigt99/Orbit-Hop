@@ -878,7 +878,10 @@ extension Game {
         let t = planets[currentIndex + 1]
         let sp = toScreen(t.center, size)
         let margin: CGFloat = 34
-        let top: CGFloat = insets.top + 150
+        // solange oben die Startbewertung steht, rückt der Pfeil darunter (gleitet danach zurück)
+        let sinceLaunch = time - lastLaunchTime
+        let badge: CGFloat = dockLaunch || sinceLaunch < 0 ? 0 : min(1, max(0, (1.7 - sinceLaunch) / 0.3))
+        let top: CGFloat = insets.top + 150 + 46 * badge
         let bottom: CGFloat = size.height - insets.bottom - 130
         if sp.x > margin && sp.x < size.width - margin && sp.y > top && sp.y < bottom { return }
 
