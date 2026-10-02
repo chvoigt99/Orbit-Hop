@@ -12,13 +12,21 @@ enum ShipPartPack: String, CaseIterable {
 
     var amount: Int { self == .ten ? 10 : 1 }
 
-    /// Aufteilung einer Menge in Käufe (Paket, Stückzahl), höchstens 10 Stück je Kauf
+    /// Günstigste Aufteilung für mindestens n Teile in Käufe (Paket, Stückzahl), höchstens 10 Stück je Kauf.
+    /// Ab 7 Einzelteilen ist ein Zehnerpaket billiger (7 × 0,29 € > 1,99 €); der Überschuss bleibt gutgeschrieben.
     static func split(_ n: Int) -> [(ShipPartPack, Int)] {
         var out: [(ShipPartPack, Int)] = []
         var tens = n / 10
+        var rest = n % 10
+        if rest >= 7 { tens += 1; rest = 0 }
         while tens > 0 { out.append((.ten, min(10, tens))); tens -= min(10, tens) }
-        if n % 10 > 0 { out.append((.single, n % 10)) }
+        if rest > 0 { out.append((.single, rest)) }
         return out
+    }
+
+    /// Wie viele Teile man beim Kauf von mindestens n tatsächlich bekommt
+    static func delivered(_ n: Int) -> Int {
+        split(n).reduce(0) { $0 + $1.0.amount * $1.1 }
     }
 }
 
@@ -126,6 +134,7 @@ struct ShipPartStoreView: View {
     private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
 
     private var missing: Int { max(0, model.grade.cost - profile.shipParts) }
+    private var delivered: Int { ShipPartPack.delivered(missing) }
 
     private func label(_ text: String) -> Text {
         Text(text)
@@ -173,10 +182,13 @@ struct ShipPartStoreView: View {
                         .font(.system(size: 22))
                         .foregroundStyle(partColor)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(missing) SCHIFFSTEILE")
+                        Text("\(delivered) SCHIFFSTEILE")
                             .font(.system(size: 16, weight: .bold, design: .monospaced))
                             .foregroundStyle(.white)
                         label("KAUFEN UND SCHIFF FREISCHALTEN").foregroundStyle(dim)
+                        if delivered > missing {
+                            label("\(delivered - missing) BLEIBEN FÜR SPÄTER").foregroundStyle(partColor.opacity(0.8))
+                        }
                     }
                     Spacer()
                     Text(store.price(for: missing) ?? "–")
