@@ -504,15 +504,15 @@ enum Ship3D {
         let rim = SCNNode()
         rim.light = SCNLight()
         rim.light?.type = .directional
-        rim.light?.intensity = showcase ? 1500 : 600
-        rim.light?.color = UIColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)
+        rim.light?.intensity = showcase ? 1000 : 600
+        rim.light?.color = showcase ? UIColor(red: 0.9, green: 0.92, blue: 1, alpha: 1) : UIColor(red: 0.6, green: 0.75, blue: 1, alpha: 1)
         rim.eulerAngles = SCNVector3(-Float.pi / 6, Float.pi, 0)
         scene.rootNode.addChildNode(rim)
         let amb = SCNNode()
         amb.light = SCNLight()
         amb.light?.type = .ambient
         amb.light?.intensity = showcase ? 70 : 250
-        amb.light?.color = UIColor(red: 0.6, green: 0.7, blue: 0.9, alpha: 1)
+        amb.light?.color = showcase ? UIColor(red: 0.85, green: 0.83, blue: 0.8, alpha: 1) : UIColor(red: 0.6, green: 0.7, blue: 0.9, alpha: 1)
         scene.rootNode.addChildNode(amb)
 
         let cam = SCNNode()

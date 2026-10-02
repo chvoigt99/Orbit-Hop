@@ -58,6 +58,16 @@ enum WornPaint {
     _surface.diffuse = float4(tpA.rgb, 1.0);
     _surface.roughness = tpR;
     _surface.metalness = tpM;
+    // Kantenabrieb: wo die Normale sich schnell dreht (Fasen, Rundungen), Lack aufhellen
+    // und stellenweise bis aufs blanke Metall abplatzen lassen
+    float tpEdge = saturate((length(fwidth(tpN)) - 0.03) * 5.0);
+    float2 tpUW = (tpUX * tpW.x + tpUY * tpW.y + tpUZ * tpW.z) * 2.7;
+    float tpChip = smoothstep(0.4, 0.7, tpMetal.sample(tpS, tpUW).r + tpMetal.sample(tpS, tpUW * 0.37 + 0.5).r);
+    _surface.diffuse.rgb = mix(_surface.diffuse.rgb, _surface.diffuse.rgb * 1.18 + 0.03, tpEdge * 0.6);
+    float tpBare = tpEdge * tpChip;
+    _surface.diffuse.rgb = mix(_surface.diffuse.rgb, float3(0.42, 0.41, 0.39), tpBare);
+    _surface.metalness = mix(_surface.metalness, 0.85, tpBare);
+    _surface.roughness = mix(_surface.roughness, 0.38, tpBare);
     // Relief: Normale anhand der Höhenänderung pro Bildpunkt kippen
     float3 tpDpx = dfdx(_surface.position);
     float3 tpDpy = dfdy(_surface.position);
@@ -77,31 +87,6 @@ enum WornPaint {
         var rng = SeededRNG(seed)
         let s: CGFloat = 512
 
-        // Positionen für Abplatzer, bevorzugt an den Kanten
-        struct Chip { let path: UIBezierPath; let deep: Bool }
-        var chips: [Chip] = []
-        for _ in 0..<130 {
-            var x = rng.c(0...s), y = rng.c(0...s)
-            if rng.chance(0.7) {
-                switch Int(rng.d(0...3.99)) {
-                case 0: x = rng.c(0...26)
-                case 1: x = s - rng.c(0...26)
-                case 2: y = rng.c(0...26)
-                default: y = s - rng.c(0...26)
-                }
-            }
-            let r = rng.c(2...9)
-            let p = UIBezierPath()
-            let n = 6
-            for k in 0..<n {
-                let a = CGFloat(k) / CGFloat(n) * .pi * 2
-                let rr = r * rng.c(0.4...1.3)
-                let pt = CGPoint(x: x + cos(a) * rr * rng.c(0.8...1.8), y: y + sin(a) * rr)
-                if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-            }
-            p.close()
-            chips.append(Chip(path: p, deep: rng.chance(0.45)))
-        }
         // Paneelnähte
         var seams: [(CGPoint, CGPoint)] = []
         for _ in 0..<Int(rng.d(6...10)) {
@@ -119,22 +104,76 @@ enum WornPaint {
         for _ in 0..<Int(rng.d(5...9)) {
             hatches.append(CGRect(x: rng.c(30...(s - 120)), y: rng.c(30...(s - 90)), width: rng.c(40...110), height: rng.c(26...70)))
         }
+        // Abplatzer in kleinen Gruppen entlang von Paneelkanten und Lukenrändern, wo Lack wirklich abgeht
+        struct Chip { let path: UIBezierPath; let deep: Bool }
+        var chips: [Chip] = []
+        var anchors: [CGPoint] = []
+        for (p, q) in seams {
+            for _ in 0..<4 {
+                let t = rng.c(0...1)
+                anchors.append(CGPoint(x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t))
+            }
+        }
+        for h in hatches {
+            anchors.append(CGPoint(x: rng.chance(0.5) ? h.minX : h.maxX, y: rng.c(h.minY...h.maxY)))
+            anchors.append(CGPoint(x: rng.c(h.minX...h.maxX), y: rng.chance(0.5) ? h.minY : h.maxY))
+        }
+        for _ in 0..<6 {
+            anchors.append(rng.chance(0.5) ? CGPoint(x: rng.chance(0.5) ? 10 : s - 10, y: rng.c(0...s))
+                                           : CGPoint(x: rng.c(0...s), y: rng.chance(0.5) ? 10 : s - 10))
+        }
+        for a in anchors {
+            for _ in 0..<Int(rng.d(2...6)) {
+                let x = a.x + rng.c(-14...14), y = a.y + rng.c(-8...8)
+                let r = rng.c(1.5...7)
+                let p = UIBezierPath()
+                let n = 7
+                for k in 0..<n {
+                    let ang = CGFloat(k) / CGFloat(n) * .pi * 2
+                    let rr = r * rng.c(0.35...1.3)
+                    let pt = CGPoint(x: x + cos(ang) * rr * rng.c(0.8...1.9), y: y + sin(ang) * rr)
+                    if k == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+                }
+                p.close()
+                chips.append(Chip(path: p, deep: rng.chance(0.45)))
+            }
+        }
         let stencils = ["NO STEP", "A-17", "▲ 04", "VENT", "07", "HX-2", "⚠", "PWR"]
 
         let albedo = UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
             let g = ctx.cgContext
             base.setFill()
             g.fill(CGRect(x: 0, y: 0, width: s, height: s))
-            // Farbrauschen
-            for _ in 0..<1600 {
-                let r = rng.c(1...5)
-                UIColor(white: rng.chance(0.5) ? 1 : 0, alpha: rng.c(0.015...0.05)).setFill()
-                g.fillEllipse(in: CGRect(x: rng.c(0...s), y: rng.c(0...s), width: r, height: r))
+            // ungleichmäßig ausgeblichener Lack: große, weiche Flecken statt Rauschen
+            for _ in 0..<26 {
+                let r = rng.c(40...120)
+                let c = CGPoint(x: rng.c(0...s), y: rng.c(0...s))
+                let tone = rng.chance(0.5) ? UIColor.white : UIColor.black
+                let fade = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: [tone.withAlphaComponent(rng.c(0.04...0.08)).cgColor, tone.withAlphaComponent(0).cgColor] as CFArray,
+                                      locations: [0, 1])!
+                g.drawRadialGradient(fade, startCenter: c, startRadius: 0, endCenter: c, endRadius: r, options: [])
             }
             if let stripe {
                 stripe.setFill()
                 // senkrechtes Band, damit es beim Kacheln nahtlos weiterläuft
                 g.fill(CGRect(x: s * 0.3, y: 0, width: s * 0.3, height: s))
+            }
+            // Schmutz sammelt sich in den Fugen und läuft unter Luken in Schlieren ab
+            g.setStrokeColor(UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0.18).cgColor)
+            g.setLineWidth(12)
+            for (a, b) in seams { g.move(to: a); g.addLine(to: b) }
+            g.strokePath()
+            for h in hatches where rng.chance(0.7) {
+                let len = rng.c(30...110)
+                let streak = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                        colors: [UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0.22).cgColor,
+                                                 UIColor(red: 0.16, green: 0.12, blue: 0.08, alpha: 0).cgColor] as CFArray,
+                                        locations: [0, 1])!
+                g.saveGState()
+                g.clip(to: CGRect(x: h.minX + 4, y: h.maxY, width: h.width - 8, height: len))
+                g.drawLinearGradient(streak, start: CGPoint(x: 0, y: h.maxY), end: CGPoint(x: 0, y: h.maxY + len), options: [])
+                g.restoreGState()
             }
             // Rand-Nähte und Nähte
             g.setStrokeColor(UIColor(white: 0, alpha: 0.45).cgColor)
@@ -211,15 +250,15 @@ enum WornPaint {
                 c.path.lineWidth = 1
                 c.path.stroke()
             }
-            // Kratzer
-            g.setStrokeColor(UIColor(white: 0.2, alpha: 0.4).cgColor)
-            g.setLineWidth(1)
-            for _ in 0..<90 {
-                let x = rng.c(0...s), y = rng.c(0...s)
+            // Kratzer: lange, meist waagerechte Riefen, hell wie blankes Metall
+            g.setLineWidth(0.8)
+            for _ in 0..<55 {
+                let x = rng.c(0...s), y = rng.c(0...s), l = rng.c(20...120)
+                g.setStrokeColor(UIColor(white: 0.85, alpha: rng.c(0.12...0.3)).cgColor)
                 g.move(to: CGPoint(x: x, y: y))
-                g.addLine(to: CGPoint(x: x + rng.c(-40...40), y: y + rng.c(-12...12)))
+                g.addLine(to: CGPoint(x: x + l, y: y + rng.c(-6...6)))
+                g.strokePath()
             }
-            g.strokePath()
             // weiche Schmutzflecken (kachelbar, ohne Verlauf über die ganze Fläche)
             for _ in 0..<22 {
                 let r = rng.c(30...100)
