@@ -912,14 +912,15 @@ final class World3D {
         }
         lockTicks.addChildNode(flatShape(ticks, glowMat(holo.withAlphaComponent(0.5)), depth: 0.2))
 
-        // Holo-Gitter um den Zielplaneten
-        let grid = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
-            let g = ctx.cgContext
-            g.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
-            g.setLineWidth(1.5)
-            for k in 0...16 { let x = CGFloat(k) * 32; g.move(to: CGPoint(x: x, y: 0)); g.addLine(to: CGPoint(x: x, y: 256)) }
-            for k in 0...8 { let y = CGFloat(k) * 32; g.move(to: CGPoint(x: 0, y: y)); g.addLine(to: CGPoint(x: 512, y: y)) }
-            g.strokePath()
+        // Holo-Gitter um den Zielplaneten (bei Stationen nicht, es würde das Modell verdecken)
+        if !p.isStation {
+            let grid = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
+                let g = ctx.cgContext
+                g.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
+                g.setLineWidth(1.5)
+                for k in 0...16 { let x = CGFloat(k) * 32; g.move(to: CGPoint(x: x, y: 0)); g.addLine(to: CGPoint(x: x, y: 256)) }
+                for k in 0...8 { let y = CGFloat(k) * 32; g.move(to: CGPoint(x: 0, y: y)); g.addLine(to: CGPoint(x: 512, y: y)) }
+                g.strokePath()
         }
         let hm = spriteMat(grid)
         hm.multiply.contents = holo.withAlphaComponent(0.35)
@@ -927,6 +928,7 @@ final class World3D {
         sphere.segmentCount = 48
         sphere.materials = [hm]
         lockHolo.addChildNode(SCNNode(geometry: sphere))
+        }
 
         // Klammern
         let h = p.radius + 62

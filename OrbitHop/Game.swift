@@ -976,6 +976,8 @@ final class Game {
         // Nur für Tests im Simulator: Start mit Argument -autopilot
         if Game.bot { botStep() } else if Game.autopilot {
             if !started || (phase == .over && time - overAt > 2) { tap() }
+            // an der Station auf das Menü warten, statt sofort weiterzufliegen
+            else if atStation && stationMenuAt != nil {}
             else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
         }
         if phase != .over { simulate(simDt) }
