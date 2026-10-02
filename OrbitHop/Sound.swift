@@ -3,9 +3,10 @@ import Foundation
 
 // MARK: - Sound
 
-/// Alle Klänge werden beim Start im Code erzeugt, es gibt keine Audiodateien.
-/// Kurze Effekte liegen als fertige Puffer bereit und laufen über einen kleinen Pool von Abspielern.
-/// Der Triebwerkston ist ein durchgehender Synthesizer, dessen Lautstärke und Tonhöhe das Spiel pro Frame setzt.
+/// Weiche, musikalische Klänge, alle im Code erzeugt (keine Audiodateien).
+/// Alle Töne liegen in D-Dur pentatonisch, damit sich überlagernde Effekte nie beißen.
+/// Kurze Effekte liegen als fertige Puffer bereit und laufen über einen kleinen Pool von Abspielern
+/// mit großem Hall. Darunter liegt ein leiser Klangteppich, der mit dem Flugtempo heller wird.
 final class SoundFX {
     static let shared = SoundFX()
 
@@ -31,13 +32,6 @@ final class SoundFX {
     private var buffers: [Effect: [AVAudioPCMBuffer]] = [:]
     private let hum = HumState()
     private var started = false
-    // aufgenommener Triebwerks-Loop, Tonhöhe über Varispeed (falls im Bundle vorhanden)
-    private let humPlayer = AVAudioPlayerNode()
-    private let humSpeed = AVAudioUnitVarispeed()
-    private var humLoop = false
-    private var humVolume: Float = 0
-    private var humRate: Float = 1
-    private var lastHumUpdate = Date()
 
     private init() {}
 
@@ -50,14 +44,14 @@ final class SoundFX {
         try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true)
 
-        // Effekte laufen über einen gemeinsamen Bus mit etwas Hall, das gibt Raum statt trockener Töne
+        // Effekte laufen über einen gemeinsamen Bus mit großem, weichem Hall
         engine.attach(fxBus)
         engine.attach(reverb)
-        reverb.loadFactoryPreset(.mediumHall)
-        reverb.wetDryMix = 16
+        reverb.loadFactoryPreset(.largeHall)
+        reverb.wetDryMix = 30
         engine.connect(fxBus, to: reverb, format: nil)
         engine.connect(reverb, to: engine.mainMixerNode, format: nil)
-        for _ in 0..<12 {
+        for _ in 0..<14 {
             let p = AVAudioPlayerNode()
             engine.attach(p)
             engine.connect(p, to: fxBus, format: format)
@@ -66,11 +60,6 @@ final class SoundFX {
         let humNode = makeHumNode()
         engine.attach(humNode)
         engine.connect(humNode, to: engine.mainMixerNode, format: format)
-        engine.attach(humPlayer)
-        engine.attach(humSpeed)
-        engine.connect(humPlayer, to: humSpeed, format: format)
-        engine.connect(humSpeed, to: engine.mainMixerNode, format: format)
-        humPlayer.volume = 0
         engine.mainMixerNode.outputVolume = 0.9
         engine.prepare()
         startEngine()
@@ -84,19 +73,9 @@ final class SoundFX {
         DispatchQueue.global(qos: .userInitiated).async {
             var made: [Effect: [AVAudioPCMBuffer]] = [:]
             for e in Effect.allCases {
-                // Aufnahmen im Bundle haben Vorrang, sonst der erzeugte Klang
-                let recorded = Samples.load(e, format: format)
-                if !recorded.isEmpty {
-                    made[e] = recorded
-                } else if let b = Synth.buffer(for: e, format: format) {
-                    made[e] = [b]
-                }
+                made[e] = (0..<Synth.variants(e)).compactMap { Synth.buffer(for: e, variant: $0, format: format) }
             }
-            let loop = Samples.loop("loop-engine", format: format)
-            DispatchQueue.main.async {
-                self.buffers = made
-                if let loop { self.startHumLoop(loop) }
-            }
+            DispatchQueue.main.async { self.buffers = made }
         }
     }
 
@@ -105,9 +84,11 @@ final class SoundFX {
         try? engine.start()
     }
 
-    /// Effekt abspielen (nur vom Main-Thread)
-    func play(_ effect: Effect, volume: CGFloat = 1) {
-        guard Self.enabled, let buf = buffers[effect]?.randomElement() else { return }
+    /// Effekt abspielen (nur vom Main-Thread). `variant` wählt eine bestimmte Variante,
+    /// zum Beispiel den nächsten Ton der Melodie beim Einfangen; ohne Angabe zufällig.
+    func play(_ effect: Effect, volume: CGFloat = 1, variant: Int? = nil) {
+        guard Self.enabled, let list = buffers[effect], !list.isEmpty else { return }
+        let buf = variant.map { list[(($0 % list.count) + list.count) % list.count] } ?? list.randomElement()!
         startEngine()
         guard engine.isRunning else { return }
         let p = players[nextPlayer]
@@ -118,89 +99,49 @@ final class SoundFX {
         p.play()
     }
 
-    /// Triebwerkston pro Frame setzen: `level` 0…1, `pitch` in Hz. Die Werte werden im Synth weich angeglichen.
+    /// Klangteppich pro Frame setzen: `level` 0…1, `pitch` steigt mit dem Tempo (50 = Ruhe).
     func engineHum(level: CGFloat, pitch: CGFloat) {
-        let target = Self.enabled ? Float(max(0, min(1, level))) : 0
-        guard humLoop else {
-            hum.level = target
-            hum.pitch = Float(max(20, pitch))
-            return
-        }
-        // Aufnahme: Lautstärke und Abspieltempo weich nachführen (50 Hz entspricht Originaltempo)
-        let now = Date()
-        let dt = Float(min(0.1, now.timeIntervalSince(lastHumUpdate)))
-        lastHumUpdate = now
-        let k = 1 - exp(-dt * 6)
-        humVolume += (target * 0.55 - humVolume) * k
-        humRate += (Float(max(0.5, min(2.2, pitch / 50))) - humRate) * k
-        humPlayer.volume = humVolume
-        humSpeed.rate = humRate
-        hum.level = 0
+        hum.level = Self.enabled ? Float(max(0, min(1, level))) : 0
+        hum.pitch = Float(max(20, pitch))
     }
 
-    private func startHumLoop(_ buffer: AVAudioPCMBuffer) {
-        startEngine()
-        guard engine.isRunning else { return }
-        humPlayer.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
-        humPlayer.play()
-        humLoop = true
-    }
-
-
-    /// Triebwerk: zwei leicht verstimmte Sägezähne mit Sub-Oktave durch einen resonanten Tiefpass,
-    /// dazu bandgefiltertes Rauschen als Fauchen. Wird mit der Last heller und lauter.
+    /// Weicher Klangteppich statt Triebwerksbrummen: Grundton D und Quinte A aus leicht verstimmten
+    /// Sinus-Paaren, die langsam schweben. Mit dem Tempo öffnet sich ein Filter, die Oktave kommt dazu.
     private func makeHumNode() -> AVAudioSourceNode {
         let hum = self.hum
         let sr = Float(Self.rate)
-        var t1: Float = 0, t2: Float = 0.37, sub: Float = 0
+        let freqs: [Float] = [73.42, 73.62, 110.0, 110.3, 146.83, 220.0]
+        var phases = [Float](repeating: 0, count: freqs.count)
         var level: Float = 0
-        var pitch: Float = 50
-        var lp1: Float = 0, lp2: Float = 0
-        var bp1: Float = 0, bp2: Float = 0
-        var seed: UInt32 = 22_222
-        var wobble: Float = 0
-
-        func blep(_ t: Float, _ dt: Float) -> Float {
-            if t < dt { let x = t / dt; return x + x - x * x - 1 }
-            if t > 1 - dt { let x = (t - 1) / dt; return x * x + x + x + 1 }
-            return 0
-        }
+        var bright: Float = 0
+        var lfo: Float = 0
+        var lp: Float = 0
 
         return AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
             let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
             let targetLevel = hum.level
-            let targetPitch = hum.pitch
+            let targetBright = min(1, max(0, (hum.pitch - 50) / 60))
             for frame in 0..<Int(frameCount) {
-                level += (targetLevel - level) * 0.0004
-                pitch += (targetPitch - pitch) * 0.0006
-                wobble += 2 * .pi * 0.7 / sr
-                if wobble > 2 * .pi { wobble -= 2 * .pi }
-                let f = pitch * (1 + 0.006 * sin(wobble))
-
-                let d1 = f / sr, d2 = f * 1.007 / sr
-                t1 += d1; if t1 >= 1 { t1 -= 1 }
-                t2 += d2; if t2 >= 1 { t2 -= 1 }
-                sub += 2 * .pi * f * 0.5 / sr; if sub > 2 * .pi { sub -= 2 * .pi }
-                let saw = (2 * t1 - 1 - blep(t1, d1)) + (2 * t2 - 1 - blep(t2, d2))
-                let raw = saw * 0.35 + sin(sub) * 0.6
-
-                // Tiefpass (zweistufig), Grenzfrequenz steigt mit Last und Tonhöhe
-                let cut = min(0.35, (180 + level * 900 + pitch * 5) * 2 * .pi / sr)
-                lp1 += (raw - lp1) * cut
-                lp2 += (lp1 - lp2) * cut
-
-                seed = seed &* 1_664_525 &+ 1_013_904_223
-                let white = Float(Int32(bitPattern: seed)) / Float(Int32.max)
-                // Fauchen: Rauschen zwischen zwei Tiefpässen als einfacher Bandpass
-                let bc = min(0.5, (900 + pitch * 18) * 2 * .pi / sr)
-                bp1 += (white - bp1) * bc
-                bp2 += (bp1 - bp2) * bc * 0.35
-                let hiss = (bp1 - bp2) * (0.15 + 0.6 * level)
-
-                let mix = (lp2 * 0.9 + hiss) * level * 0.5
-                let s = tanh(mix * 1.6) * 0.42
+                level += (targetLevel - level) * 0.00008
+                bright += (targetBright - bright) * 0.00005
+                lfo += 2 * .pi * 0.11 / sr
+                if lfo > 2 * .pi { lfo -= 2 * .pi }
+                var s: Float = 0
+                for i in 0..<freqs.count {
+                    phases[i] += 2 * .pi * freqs[i] / sr
+                    if phases[i] > 2 * .pi { phases[i] -= 2 * .pi }
+                    // tiefe Töne immer, Oktave und Quinte darüber kommen mit dem Tempo
+                    let w: Float = i < 4 ? 1 : 0.15 + 0.85 * bright
+                    // leichte Obertöne, damit es nicht nach reinem Sinus klingt
+                    let p = phases[i]
+                    s += (sin(p) + 0.18 * sin(2 * p) + 0.06 * sin(3 * p)) * w
+                }
+                s *= 0.8 + 0.2 * sin(lfo)
+                let cut = (0.02 + 0.06 * bright)
+                lp += (s - lp) * cut
+                let out = lp * level * 0.05
                 for buffer in abl {
-                    buffer.mData?.assumingMemoryBound(to: Float.self)[frame] = s
+                    buffer.mData?.assumingMemoryBound(to: Float.self)[frame] = out
                 }
             }
             return noErr
@@ -208,77 +149,7 @@ final class SoundFX {
     }
 }
 
-// MARK: - Aufnahmen
-
-/// Lädt Soundeffekte aus dem App-Bundle. Namensschema: `sfx-<effekt>.caf` oder mehrere Varianten
-/// `sfx-<effekt>-1.caf`, `sfx-<effekt>-2.caf` …, eine davon wird pro Abspielen zufällig gewählt.
-/// Erlaubt sind caf, wav, m4a und aif. Alles wird auf das Format der Engine umgerechnet.
-private enum Samples {
-    static func load(_ e: SoundFX.Effect, format: AVAudioFormat) -> [AVAudioPCMBuffer] {
-        let base = "sfx-\(e)"
-        var urls: [URL] = []
-        for ext in ["caf", "wav", "m4a", "aif", "aiff"] {
-            for url in Bundle.main.urls(forResourcesWithExtension: ext, subdirectory: nil) ?? [] {
-                let name = url.deletingPathExtension().lastPathComponent
-                if name == base || name.hasPrefix(base + "-") { urls.append(url) }
-            }
-        }
-        let maxLength = trim[e]
-        return urls.sorted { $0.lastPathComponent < $1.lastPathComponent }.compactMap { url in
-            guard let b = read(url, format: format) else { return nil }
-            if let maxLength { shorten(b, to: maxLength) }
-            return b
-        }
-    }
-
-    /// Lange Aufnahmen (Triebwerks-Schübe) werden auf diese Länge gekürzt und weich ausgeblendet
-    static let trim: [SoundFX.Effect: Double] = [.launch: 1.1, .rocket: 0.7, .rescue: 1.4]
-
-    static func loop(_ name: String, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        for ext in ["caf", "wav", "m4a", "aif"] {
-            if let url = Bundle.main.url(forResource: name, withExtension: ext) { return read(url, format: format) }
-        }
-        return nil
-    }
-
-    private static func shorten(_ b: AVAudioPCMBuffer, to seconds: Double) {
-        let n = min(Int(b.frameLength), Int(seconds * b.format.sampleRate))
-        let fade = min(n, Int(0.25 * b.format.sampleRate))
-        b.frameLength = AVAudioFrameCount(n)
-        guard let ch = b.floatChannelData else { return }
-        for c in 0..<Int(b.format.channelCount) {
-            for i in (n - fade)..<n {
-                let k = Float(n - i) / Float(fade)
-                ch[c][i] *= k * k
-            }
-        }
-    }
-
-    private static func read(_ url: URL, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        guard let file = try? AVAudioFile(forReading: url),
-              let src = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
-              (try? file.read(into: src)) != nil else { return nil }
-        if src.format == format { return src }
-        guard let conv = AVAudioConverter(from: src.format, to: format) else { return nil }
-        let ratio = format.sampleRate / src.format.sampleRate
-        let cap = AVAudioFrameCount(Double(src.frameLength) * ratio) + 1024
-        guard let dst = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: cap) else { return nil }
-        var given = false
-        var err: NSError?
-        let status = conv.convert(to: dst, error: &err) { _, outStatus in
-            if given {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            given = true
-            outStatus.pointee = .haveData
-            return src
-        }
-        return status == .error ? nil : dst
-    }
-}
-
-/// Zielwerte für den Triebwerkston, vom Spiel geschrieben und vom Audio-Thread gelesen
+/// Zielwerte für den Klangteppich, vom Spiel geschrieben und vom Audio-Thread gelesen
 private final class HumState {
     var level: Float = 0
     var pitch: Float = 50
@@ -286,20 +157,20 @@ private final class HumState {
 
 // MARK: - Klangerzeugung
 
-/// Kleiner Offline-Synthesizer: Sägezahn, FM, resonantes Filter, Sättigung, Körnung.
-/// Jeder Effekt ist ein Rezept aus diesen Bausteinen und wird einmal in einen Puffer gerechnet.
+/// Kleiner Offline-Synthesizer. Jeder Effekt ist ein Rezept aus Bausteinen und wird einmal
+/// in einen Puffer gerechnet.
 private enum Synth {
     static let sr: Double = 44_100
 
-    static func buffer(for e: SoundFX.Effect, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let (dur, gain, gen) = recipe(e)
+    static func buffer(for e: SoundFX.Effect, variant: Int, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let (dur, gain, gen) = recipe(e, variant)
         let n = Int(dur * sr)
         guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n)),
               let out = buf.floatChannelData?[0] else { return nil }
         buf.frameLength = AVAudioFrameCount(n)
         var samples = [Double](repeating: 0, count: n)
         var peak: Double = 0.0001
-        // leichter Hochpass gegen Gleichanteil und Rumpeln unter 30 Hz
+        // leichter Hochpass gegen Gleichanteil
         var hpIn = 0.0, hpOut = 0.0
         let hpA = 1 / (1 + 2 * .pi * 30 / sr)
         for i in 0..<n {
@@ -313,7 +184,7 @@ private enum Synth {
         for i in 0..<n {
             var s = samples[i] / peak * gain
             if i < fade { s *= Double(i) / Double(fade) }
-            if i > n - fade * 4 { s *= Double(n - i) / Double(fade * 4) }
+            if i > n - fade * 8 { s *= Double(n - i) / Double(fade * 8) }
             out[i] = Float(s)
         }
         return buf
@@ -423,177 +294,153 @@ private enum Synth {
         }
     }
 
-    // MARK: Zusammengesetzte Klänge
+    // MARK: Tonleiter und Instrumente
 
-    /// Explosion: Druckwelle (tiefer Schlag mit fallender Tonhöhe), Körper aus resonant gefiltertem
-    /// Rauschen, dazu nachrieselnde Trümmer. `size` 0…1.
-    static func explosion(length: Double, size: Double, seed: UInt64) -> (Double) -> Double {
-        let n = Noise(seed), deb = Noise(seed &+ 7), f1 = SVF(), f2 = SVF(), fd = SVF(), sub = Sine()
+    /// D-Dur pentatonisch: D E F# A B, über mehrere Oktaven
+    static func note(_ degree: Int, octave: Int = 4) -> Double {
+        let steps = [0, 2, 4, 7, 9]
+        let d = ((degree % 5) + 5) % 5
+        let o = octave + Int((Double(degree) / 5).rounded(.down))
+        let semis = Double(steps[d] + (o - 4) * 12 + 2)   // D4 liegt 2 Halbtöne über C4
+        return 261.63 * pow(2, semis / 12)
+    }
+
+    /// Weiches Zupfinstrument zwischen Kalimba und Marimba: Sinus mit kurzem FM-Anschlag
+    static func pluck(_ f: Double, at start: Double = 0, decay: Double = 0.5, bright: Double = 1) -> (Double) -> Double {
+        let fm = FM(), body = Sine()
         return { t in
-            let k = t / length
-            let boom = sub.next(glide(110 - 40 * size, 32, t / 0.5)) * env(t, attack: 0.002, decay: 0.16 + 0.25 * size)
-            let body = f1.low(n.white(), glide(4500, 160, pow(k, 0.6)), q: 1.4)
-            let roar = f2.band(n.white(), glide(900, 220, k), q: 1.2)
-            let bodyEnv = env(t, attack: 0.004, decay: length * (0.22 + 0.12 * size))
-            let debris = fd.band(deb.crackle(density: 900 * (1 - k)), 2600, q: 3) * env(t - 0.05, attack: 0.05, decay: length * 0.35)
-            let s = boom * (1.1 + 0.8 * size) + (body * 1.6 + roar * 1.2) * bodyEnv + debris * 0.5
-            return drive(s, 1.8 + size)
+            let tt = t - start
+            guard tt >= 0 else { return 0 }
+            let strike = fm.next(f, ratio: 4, index: 1.2 * bright * exp(-tt / 0.025))
+            let tone = body.next(f) + 0.12 * sin(body.phase * 2)
+            return (tone * 0.8 + strike * 0.35 * exp(-tt / 0.06)) * env(tt, attack: 0.004, decay: decay)
         }
     }
 
-    /// Glocke aus FM, klingt metallisch und hell
-    static func bell(_ f: Double, at start: Double, decay: Double, ratio: Double = 3.5, index: Double = 2.2) -> (Double) -> Double {
+    /// Glocke mit sanftem FM-Glanz, klingt lange nach
+    static func bell(_ f: Double, at start: Double = 0, decay: Double = 0.9) -> (Double) -> Double {
         let fm = FM()
         return { t in
             let tt = t - start
             guard tt >= 0 else { return 0 }
-            let e = env(tt, attack: 0.002, decay: decay)
-            return fm.next(f, ratio: ratio, index: index * (0.3 + 0.7 * exp(-tt / (decay * 0.4)))) * e
+            let idx = 0.25 + 0.9 * exp(-tt / 0.15)
+            return fm.next(f, ratio: 3, index: idx) * env(tt, attack: 0.006, decay: decay)
         }
     }
 
-    static func recipe(_ e: SoundFX.Effect) -> (Double, Double, (Double) -> Double) {
+    /// Flächenklang: drei leicht verstimmte Sinus, schwillt an und ab
+    static func pad(_ f: Double, attack: Double, decay: Double) -> (Double) -> Double {
+        let a = Sine(), b = Sine(), c = Sine()
+        return { t in
+            let s = a.next(f) + b.next(f * 1.004) + 0.5 * c.next(f * 2.002)
+            return s / 2.5 * env(t, attack: attack, decay: decay)
+        }
+    }
+
+    /// Luftiger Hauch: sanft gefiltertes Rauschen, ohne Zischen
+    static func breath(_ from: Double, _ to: Double, length: Double, seed: UInt64) -> (Double) -> Double {
+        let n = Noise(seed), f = SVF()
+        return { t in
+            f.band(n.white(), glide(from, to, t / length), q: 0.9) * env(t, attack: length * 0.35, decay: length * 0.45)
+        }
+    }
+
+    /// Weiches „Wumm“ statt Explosion: dumpfer Atem und tiefer, gleitender Ton
+    static func whomp(length: Double, root: Double, seed: UInt64) -> (Double) -> Double {
+        let n = Noise(seed), f = SVF(), low = Sine(), fifth = Sine()
+        return { t in
+            let k = t / length
+            let air = f.low(n.white(), glide(1400, 150, k), q: 0.8) * env(t, attack: 0.01, decay: length * 0.3)
+            let tone = low.next(glide(root * 2, root, t / 0.25)) * env(t, attack: 0.005, decay: length * 0.35)
+            let shine = fifth.next(root * 3) * env(t, attack: 0.02, decay: length * 0.25) * 0.25
+            return air * 1.3 + tone + shine
+        }
+    }
+
+    static func sum(_ parts: [(Double) -> Double]) -> (Double) -> Double {
+        { t in parts.reduce(0.0) { $0 + $1(t) } }
+    }
+
+    // MARK: Rezepte
+
+    static func variants(_ e: SoundFX.Effect) -> Int {
+        switch e {
+        case .capture: return 8      // Melodie: jeder Planet spielt den nächsten Ton
+        case .cannon, .crack, .hit, .item: return 3
+        default: return 1
+        }
+    }
+
+    static func recipe(_ e: SoundFX.Effect, _ v: Int) -> (Double, Double, (Double) -> Double) {
         switch e {
         case .launch:
-            // Katapult: tiefer Schub, Sägezahn-Sweep durch sich öffnenden Filter, Düsenfauchen
-            let stack = SawStack(voices: 4, spread: 0.018), f = SVF(), n = Noise(11), fn = SVF(), sub = Sine()
-            return (1.0, 0.8, { t in
-                let k = t / 1.0
-                let tone = f.low(stack.next(glide(55, 190, pow(k * 1.4, 0.6))), glide(250, 5200, min(1, k * 2.2)) * (1 - 0.5 * k), q: 2.2)
-                let jet = fn.band(n.white(), glide(600, 3800, k * 1.8), q: 1.6)
-                let thump = sub.next(glide(90, 45, t / 0.2)) * env(t, attack: 0.002, decay: 0.09)
-                let s = tone * env(t, attack: 0.015, decay: 0.32) + jet * 1.4 * env(t, attack: 0.04, decay: 0.3) + thump * 1.2
-                return drive(s, 2.2)
-            })
+            // sanftes Aufschwingen: Atem nach oben, dazu zwei Töne aufwärts
+            return (1.4, 0.6, sum([breath(300, 2200, length: 0.7, seed: 11),
+                                   pluck(note(3), decay: 0.5), pluck(note(0, octave: 5), at: 0.09, decay: 0.7)]))
         case .perfect:
-            // heller FM-Zweiklang mit Schimmer
-            let b1 = bell(1318.5, at: 0, decay: 0.45), b2 = bell(1975.5, at: 0.075, decay: 0.55)
-            let b3 = bell(3951, at: 0.075, decay: 0.25, ratio: 1.41, index: 1.2)
-            return (1.1, 0.55, { t in b1(t) + b2(t) * 0.85 + b3(t) * 0.25 })
+            // funkelnder Dreiklang ganz oben
+            return (1.8, 0.45, sum([bell(note(0, octave: 6), decay: 0.9), bell(note(2, octave: 6), at: 0.06, decay: 0.9),
+                                    bell(note(3, octave: 6), at: 0.12, decay: 1.1)]))
         case .capture:
-            // Traktorstrahl rastet ein: Akkord gleitet nach unten in Position, weicher Schlag, Glocke
-            let a = SawStack(voices: 3, spread: 0.01), b = SawStack(voices: 3, spread: 0.01), f = SVF(), sub = Sine()
-            let ding = bell(659.3, at: 0.06, decay: 0.35, ratio: 2, index: 1.4)
-            return (0.9, 0.65, { t in
-                let k = t / 0.18
-                let chord = a.next(glide(392, 196, k)) + b.next(glide(587, 293.7, k))
-                let pad = f.low(chord, glide(3000, 700, t / 0.4), q: 3) * env(t, attack: 0.01, decay: 0.22)
-                let thump = sub.next(glide(120, 50, t / 0.12)) * env(t, attack: 0.002, decay: 0.08)
-                return drive(pad * 0.8 + thump * 1.3 + ding(t) * 0.5, 1.6)
-            })
+            // Melodie über acht Planeten, jeweils Ton plus leiser Grundton darunter
+            let melody = [0, 2, 3, 4, 3, 5, 4, 7]
+            let d = melody[v % melody.count]
+            return (1.6, 0.6, sum([bell(note(d), decay: 0.8), pluck(note(d, octave: 3), decay: 0.6, bright: 0.4),
+                                   pad(note(0, octave: 3), attack: 0.08, decay: 0.5)]))
         case .release:
-            // Halteklammern lösen sich: metallischer Klonk, dann zischende Hydraulik
-            let fm = FM(), fm2 = FM(), n = Noise(5), f = SVF()
-            return (0.9, 0.6, { t in
-                let clank = fm.next(180, ratio: 1.41, index: 4 * exp(-t / 0.03)) * env(t, attack: 0.001, decay: 0.1)
-                let ring = fm2.next(523, ratio: 2.76, index: 1.5) * env(t, attack: 0.001, decay: 0.25) * 0.3
-                let hiss = f.band(n.white(), glide(5000, 2200, t / 0.6), q: 1.5) * env(t - 0.05, attack: 0.03, decay: 0.22)
-                return drive(clank + ring + hiss * 1.2, 1.5)
-            })
+            return (1.0, 0.5, sum([pluck(note(4, octave: 3), decay: 0.4), pluck(note(1, octave: 4), at: 0.12, decay: 0.6)]))
         case .item:
-            let notes = [659.3, 987.8, 1318.5]
-            let bells = notes.enumerated().map { bell($0.element, at: Double($0.offset) * 0.07, decay: 0.28, ratio: 2, index: 1.6) }
-            return (0.75, 0.55, { t in bells.reduce(0.0) { $0 + $1(t) } })
+            let starts = [[0, 2, 3], [2, 3, 5], [3, 5, 7]][v % 3]
+            return (1.2, 0.5, sum(starts.enumerated().map { pluck(note($0.element, octave: 5), at: Double($0.offset) * 0.07, decay: 0.45) }))
         case .tech:
-            let notes = [880, 1318.5, 1760, 2637]
-            let bells = notes.enumerated().map { bell($0.element, at: Double($0.offset) * 0.06, decay: 0.32, ratio: 3.5, index: 2) }
-            let shimmer = bell(5274, at: 0.2, decay: 0.3, ratio: 1.41, index: 0.8)
-            return (1.0, 0.6, { t in bells.reduce(0.0) { $0 + $1(t) } + shimmer(t) * 0.3 })
+            return (1.8, 0.5, sum([0, 2, 3, 5].enumerated().map { bell(note($0.element, octave: 5), at: Double($0.offset) * 0.08, decay: 0.8) }
+                                  + [pad(note(0, octave: 4), attack: 0.2, decay: 0.7)]))
         case .bonus:
-            // Plopp mit resonantem Filter-Sweep
-            let s = Saw(), f = SVF()
-            return (0.35, 0.55, { t in
-                f.low(s.next(glide(140, 420, t / 0.08)), glide(300, 3500, t / 0.07), q: 6) * env(t, attack: 0.002, decay: 0.07)
-            })
+            return (0.8, 0.4, bell(note(1, octave: 5), decay: 0.4))
         case .cannon:
-            // Laser: FM mit stark fallender Tonhöhe
-            let fm = FM(), n = Noise(3), f = SVF()
-            return (0.22, 0.5, { t in
-                let pew = fm.next(glide(1900, 240, t / 0.11), ratio: 0.5, index: 3 * exp(-t / 0.04)) * env(t, attack: 0.001, decay: 0.05)
-                let click = f.high(n.white(), 3000) * env(t, attack: 0.0005, decay: 0.006)
-                return drive(pew + click * 0.6, 1.8)
-            })
+            return (0.5, 0.3, pluck(note([3, 4, 5][v % 3], octave: 5), decay: 0.12, bright: 0.6))
         case .rocket:
-            // Zündung, dann fauchender Schub, der davonzieht
-            let n = Noise(9), f = SVF(), fi = SVF(), saw = SawStack(voices: 2, spread: 0.03), fl = SVF(), n2 = Noise(4)
-            return (0.75, 0.6, { t in
-                let ignite = fi.high(n2.white(), 2000) * env(t, attack: 0.001, decay: 0.012)
-                let thrust = f.band(n.white(), glide(700, 2400, t / 0.4), q: 2.5) * env(t, attack: 0.02, decay: 0.25)
-                let rumble = fl.low(saw.next(glide(70, 50, t / 0.6)), 400, q: 1.5) * env(t, attack: 0.01, decay: 0.2)
-                return drive(ignite * 0.8 + thrust * 1.6 + rumble * 0.6, 2)
-            })
+            return (0.9, 0.45, sum([breath(500, 1800, length: 0.5, seed: 21), pluck(note(0, octave: 4), decay: 0.3, bright: 0.5)]))
         case .railgun:
-            // elektrischer Schuss: heller FM-Zap, Knall und nachklingendes Sirren
-            let fm = FM(), ring = FM(), n = Noise(21), f = SVF()
-            return (0.6, 0.65, { t in
-                let zap = fm.next(glide(3200, 140, pow(t / 0.22, 0.5)), ratio: 1.5, index: 5 * exp(-t / 0.05)) * env(t, attack: 0.001, decay: 0.1)
-                let crack = f.high(n.white(), 1500, q: 1) * env(t, attack: 0.0005, decay: 0.02)
-                let sing = ring.next(1760, ratio: 2.01, index: 0.6) * env(t, attack: 0.003, decay: 0.2) * 0.25
-                return drive(zap + crack + sing, 2.2)
+            // gläserner Strich nach unten
+            let fm = FM()
+            return (0.9, 0.4, { t in
+                fm.next(glide(note(0, octave: 6), note(0, octave: 5), t / 0.25), ratio: 2, index: 0.8 * exp(-t / 0.2))
+                    * env(t, attack: 0.005, decay: 0.3)
             })
         case .bomb:
-            // dumpfes Abfeuern
-            let saw = Saw(), f = SVF(), n = Noise(13), fn = SVF()
-            return (0.35, 0.55, { t in
-                let thunk = f.low(saw.next(glide(160, 55, t / 0.12)), 500, q: 2) * env(t, attack: 0.002, decay: 0.08)
-                let puff = fn.low(n.white(), 1200) * env(t, attack: 0.002, decay: 0.04)
-                return drive(thunk * 1.3 + puff, 1.8)
-            })
+            return (0.7, 0.45, pluck(note(0, octave: 3), decay: 0.3, bright: 0.5))
         case .blast:
-            return (1.0, 0.8, explosion(length: 1.0, size: 0.4, seed: 101))
+            return (1.2, 0.6, whomp(length: 1.0, root: note(0, octave: 2), seed: 101))
         case .bigBlast:
-            return (2.0, 0.9, explosion(length: 2.0, size: 1, seed: 202))
+            return (2.4, 0.75, sum([whomp(length: 2.0, root: note(0, octave: 1), seed: 202),
+                                    pad(note(3, octave: 3), attack: 0.15, decay: 0.9)]))
         case .hit:
-            // Aufprall auf Fels: metallischer Schlag, Knirschen, Splitter
-            let fm = FM(), n = Noise(31), f = SVF(), deb = Noise(37), fd = SVF(), sub = Sine()
-            return (0.8, 0.85, { t in
-                let clang = fm.next(140, ratio: 1.73, index: 3 * exp(-t / 0.05)) * env(t, attack: 0.001, decay: 0.12)
-                let grit = f.band(n.white(), glide(2500, 700, t / 0.3), q: 1.2) * env(t, attack: 0.002, decay: 0.12)
-                let chips = fd.band(deb.crackle(density: 1200), 3200, q: 4) * env(t, attack: 0.01, decay: 0.2)
-                let thud = sub.next(glide(80, 38, t / 0.25)) * env(t, attack: 0.002, decay: 0.14)
-                return drive(clang * 0.7 + grit * 1.4 + chips * 0.5 + thud * 1.3, 2.2)
+            // gedämpfter, hölzerner Schlag
+            let n = Noise(31 + UInt64(v)), f = SVF(), body = Sine()
+            let root = note([0, 4, 3][v % 3], octave: 2)
+            return (0.7, 0.6, { t in
+                let knock = f.low(n.white(), 700, q: 0.8) * env(t, attack: 0.002, decay: 0.04)
+                return knock * 1.5 + body.next(glide(root * 1.5, root, t / 0.08)) * env(t, attack: 0.003, decay: 0.18)
             })
         case .crack:
-            // Asteroid zerbricht: Knacken und Geröll
-            let n = Noise(41), f = SVF(), deb = Noise(43), fd = SVF(), sub = Sine()
-            return (0.6, 0.6, { t in
-                let snap = f.band(n.white(), glide(3500, 900, t / 0.2), q: 1.5) * env(t, attack: 0.001, decay: 0.06)
-                let rubble = fd.band(deb.crackle(density: 1500 * exp(-t / 0.2)), 2000, q: 3) * env(t, attack: 0.005, decay: 0.18)
-                let thud = sub.next(glide(110, 55, t / 0.15)) * env(t, attack: 0.002, decay: 0.06)
-                return drive(snap * 1.5 + rubble * 0.7 + thud * 0.7, 2)
-            })
+            // zerbrechender Kristall: kurzes, helles Klingeln
+            let a = [1, 2, 4][v % 3]
+            return (0.9, 0.35, sum([pluck(note(a, octave: 5), decay: 0.18), pluck(note(a + 2, octave: 5), at: 0.03, decay: 0.2)]))
         case .empty:
-            // gesperrt: zwei kurze, gefilterte Brummer
-            let s = SawStack(voices: 2, spread: 0.02), f = SVF()
-            return (0.3, 0.4, { t in
-                let gate = (t < 0.09 || (t > 0.14 && t < 0.23)) ? 1.0 : 0
-                return f.low(s.next(98), 900, q: 2) * gate
-            })
+            return (0.5, 0.3, sum([pluck(note(3, octave: 3), decay: 0.1, bright: 0.3),
+                                   pluck(note(3, octave: 3), at: 0.13, decay: 0.1, bright: 0.3)]))
         case .warning:
-            // Alarm: zwei Töne mit Rechteck-Charakter
-            let a = Saw(), b = Saw(0.5), f = SVF()
-            return (0.4, 0.35, { t in
-                let freq = t < 0.17 ? 988.0 : 740.0
-                let tt = t < 0.17 ? t : t - 0.19
-                guard tt >= 0 else { return 0 }
-                let pulse = a.next(freq) - b.next(freq)
-                return f.low(pulse, 3200, q: 1) * env(tt, attack: 0.004, decay: 0.08)
-            })
+            // zwei sanfte Glockentöne abwärts
+            return (1.0, 0.35, sum([bell(note(3, octave: 5), decay: 0.25), bell(note(2, octave: 5), at: 0.2, decay: 0.3)]))
         case .gameOver:
-            // Systeme fahren herunter, dann große Explosion
-            let stack = SawStack(voices: 4, spread: 0.02), f = SVF(), boom = explosion(length: 2.0, size: 1, seed: 303)
-            return (2.4, 0.9, { t in
-                let down = f.low(stack.next(glide(330, 40, t / 1.6)), glide(4000, 200, t / 1.4), q: 3) * env(t, attack: 0.01, decay: 0.7)
-                return boom(t) * 0.9 + down * 0.6
-            })
+            // ruhige Melodie abwärts über einem tiefen Klang
+            let line = [5, 3, 2, 0]
+            return (3.5, 0.6, sum(line.enumerated().map { bell(note($0.element, octave: 4), at: Double($0.offset) * 0.32, decay: 1.0) }
+                                  + [pad(note(0, octave: 2), attack: 0.4, decay: 1.6), whomp(length: 1.4, root: note(0, octave: 1), seed: 303)]))
         case .rescue:
-            // Nachbrenner: steigender Sägezahn-Chor und Düsenfauchen
-            let stack = SawStack(voices: 4, spread: 0.02), f = SVF(), n = Noise(51), fn = SVF()
-            return (1.2, 0.75, { t in
-                let rise = f.low(stack.next(glide(110, 440, t / 0.7)), glide(500, 6000, t / 0.5), q: 2.5) * env(t, attack: 0.02, decay: 0.45)
-                let jet = fn.band(n.white(), glide(500, 4000, t / 0.6), q: 1.5) * env(t, attack: 0.04, decay: 0.35)
-                return drive(rise * 0.9 + jet * 1.5, 2)
-            })
+            return (1.8, 0.55, sum([0, 3, 5, 7, 10].enumerated().map { pluck(note($0.element, octave: 4), at: Double($0.offset) * 0.06, decay: 0.5) }
+                                   + [breath(300, 2600, length: 0.9, seed: 51)]))
         }
     }
 }

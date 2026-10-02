@@ -1512,7 +1512,7 @@ final class Game {
         let pl = planets[index]
         shake = max(shake, 0.3)
         Haptics.capture()
-        SoundFX.shared.play(.capture)
+        SoundFX.shared.play(.capture, variant: index)
 
         if index > score {
             score = index
