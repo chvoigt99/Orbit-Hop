@@ -605,10 +605,11 @@ final class World3D {
         root.position = v3(p.center)
         let rr = p.radius + 18
         let col = uic(kind.hue, 0.85, 0.6)
-        let base = UIBezierPath(ovalIn: CGRect(x: -rr - 3, y: -rr - 3, width: (rr + 3) * 2, height: (rr + 3) * 2))
-        base.append(UIBezierPath(ovalIn: CGRect(x: -rr + 3, y: -rr + 3, width: (rr - 3) * 2, height: (rr - 3) * 2)))
+        // Grundspur: deutlich sichtbar, damit man den Bonus-Planeten schon von weitem erkennt
+        let base = UIBezierPath(ovalIn: CGRect(x: -rr - 5, y: -rr - 5, width: (rr + 5) * 2, height: (rr + 5) * 2))
+        base.append(UIBezierPath(ovalIn: CGRect(x: -rr + 5, y: -rr + 5, width: (rr - 5) * 2, height: (rr - 5) * 2)))
         base.usesEvenOddFillRule = true
-        root.addChildNode(flatShape(base, glowMat(col.withAlphaComponent(0.22)), depth: 0.5))
+        root.addChildNode(flatShape(base, glowMat(col.withAlphaComponent(0.4)), depth: 0.5))
         let progress = SCNNode()
         root.addChildNode(progress)
         let badge = SCNNode(geometry: SCNPlane(width: 1, height: 1))
@@ -632,10 +633,17 @@ final class World3D {
         guard step > 0 else { return }
         let a0 = -CGFloat.pi / 2
         let a1 = a0 + .pi * 2 * CGFloat(step) / 120
-        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 16, from: a0, to: a1),
-                                          glowMat(r.color.withAlphaComponent(0.3)), depth: 0.4))
-        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 6, from: a0, to: a1),
+        // breiter Schein, kräftiger Kern und ein heller Punkt an der Spitze des Fortschritts
+        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 34, from: a0, to: a1),
+                                          glowMat(r.color.withAlphaComponent(0.45)), depth: 0.4))
+        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 13, from: a0, to: a1),
                                           glowMat(r.color), depth: 0.8))
+        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 4, from: a0, to: a1),
+                                          glowMat(UIColor.white.withAlphaComponent(0.85)), depth: 1.0))
+        let head = SCNNode(geometry: SCNSphere(radius: 11))
+        head.geometry?.materials = [glowMat(UIColor.white)]
+        head.position = SCNVector3(Float(cos(a1) * r.radius), 1, Float(sin(a1) * r.radius))
+        r.progress.addChildNode(head)
     }
 
     // MARK: Bahn, Kegel, Zielerfassung
