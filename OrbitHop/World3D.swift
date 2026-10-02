@@ -495,11 +495,16 @@ final class World3D {
         damageSmoke.particleLifeSpan = 1.3
         damageSmoke.particleLifeSpanVariation = 0.4
         damageSmoke.particleVelocity = 0
-        damageSmoke.particleImage = WorldTextures.dot
+        // weiche, gefüllte Puffs (dot ist ein Leuchtring und sähe wie eine Perlenkette aus)
+        damageSmoke.particleImage = WorldTextures.soft
+        damageSmoke.particleSizeVariation = 0.5
+        damageSmoke.particleAngleVariation = 180
+        damageSmoke.particleAngularVelocityVariation = 60
+        damageSmoke.emitterShape = SCNSphere(radius: 0.8)
         damageSmoke.blendMode = .alpha
         damageSmoke.isLightingEnabled = false
         damageSmoke.isAffectedByGravity = false
-        damageSmoke.particleColor = UIColor(white: 0.55, alpha: 0.55)
+        damageSmoke.particleColor = UIColor(white: 0.5, alpha: 0.45)
         damageSmoke.particleColorVariation = SCNVector4(0, 0, 0.15, 0)
         let fade = CAKeyframeAnimation()
         fade.values = [0.9, 0.5, 0]
@@ -513,11 +518,13 @@ final class World3D {
         damageSparks.particleLifeSpan = 0.35
         damageSparks.particleLifeSpanVariation = 0.15
         damageSparks.spreadingAngle = 180
-        damageSparks.particleImage = WorldTextures.dot
+        damageSparks.particleImage = WorldTextures.soft
+        // kurze Leuchtschweife in Flugrichtung der Funken
+        damageSparks.stretchFactor = 0.08
         damageSparks.blendMode = .additive
         damageSparks.isLightingEnabled = false
         damageSparks.isAffectedByGravity = false
-        damageSparks.particleColor = UIColor(red: 1, green: 0.65, blue: 0.25, alpha: 1)
+        damageSparks.particleColor = UIColor(red: 1, green: 0.78, blue: 0.4, alpha: 1)
         let sparkFade = CAKeyframeAnimation()
         sparkFade.values = [1, 0]
         damageSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: sparkFade)]
@@ -1577,13 +1584,15 @@ final class World3D {
         // Schadensbild nach Panzerung
         let alive = game.phase != .over && game.phase != .docked
         let hull = game.hull
-        damageSmoke.birthRate = alive && hull < 50 ? 14 + 40 * (1 - hull / 50) : 0
-        damageSmoke.particleSize = CGFloat(s) * 0.45
-        // Funken flackern: in unregelmäßigen Stößen
-        let flicker = sin(game.time * 23) + sin(game.time * 37 + 1.3) > 0.4
-        damageSparks.birthRate = alive && hull < 25 && flicker ? 90 : 0
-        damageSparks.particleVelocity = CGFloat(s) * 7
-        damageSparks.particleSize = CGFloat(s) * 0.09
+        damageSmoke.birthRate = alive && hull < 50 ? 30 + 60 * (1 - hull / 50) : 0
+        damageSmoke.particleSize = CGFloat(s) * 0.55
+        // Funken flackern: in unregelmäßigen Stößen, ab und zu ein kräftiger Schauer
+        let wave = sin(game.time * 23) + sin(game.time * 37 + 1.3)
+        let burstNow = sin(game.time * 2.3) + sin(game.time * 5.1 + 0.7) > 1.5
+        damageSparks.birthRate = alive && hull < 25 && wave > 0.2 ? (burstNow ? 420 : 140) : 0
+        damageSparks.particleVelocity = CGFloat(s) * 9
+        damageSparks.particleVelocityVariation = CGFloat(s) * 5
+        damageSparks.particleSize = CGFloat(s) * 0.2
         hitFlash.opacity = min(1, game.brakeFlash / 0.6) * (alive ? 1 : 0)
     }
 
