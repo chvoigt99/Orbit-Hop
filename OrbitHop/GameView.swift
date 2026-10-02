@@ -49,11 +49,14 @@ struct GameView: View {
                     if !game.started {
                         titleView
                     }
-                    if game.started && game.phase != .over && !game.paused {
+                    if game.started && game.phase != .over && !game.paused && !game.stationOpen {
                         pauseButton
                     }
                     if game.paused {
                         pauseMenu
+                    }
+                    if game.stationOpen {
+                        stationMenu
                     }
                     if game.phase == .over {
                         gameOverView
@@ -107,6 +110,7 @@ struct GameView: View {
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
+        if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
         if let kind = game.chargingKind, let f = game.chargeFraction {
             return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
         }
@@ -401,6 +405,37 @@ struct GameView: View {
             Spacer()
             // Platz für das Radar, das im Canvas gezeichnet wird
             Color.clear.frame(width: 104, height: 100)
+        }
+    }
+
+    // MARK: Raumstation
+
+    private var stationMenu: some View {
+        let full = game.energy >= game.maxEnergy - 0.5
+        return ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(spacing: 14) {
+                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
+                Text("RAUMSTATION")
+                    .font(.system(size: 30, weight: .heavy, design: .monospaced))
+                    .tracking(5)
+                    .foregroundStyle(.white)
+                    .shadow(color: signal.opacity(0.6), radius: 12)
+                label("ENERGIE \(Int(game.energy)) / \(Int(game.maxEnergy)) · ⚙ \(game.profile.parts) · SCHIFFSTEILE \(game.profile.shipParts)")
+                    .foregroundStyle(gold)
+                    .padding(.bottom, 8)
+                menuButton(full ? "ENERGIE VOLL" : "REPARIEREN", "wrench.and.screwdriver.fill", full ? dim : signal) {
+                    game.repair()
+                }
+                .disabled(full)
+                menuButton("WERFT", "airplane", gold) { showShop = true }
+                menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
+            .background(Chamfer(cut: 14).fill(panel.opacity(0.92)))
+            .overlay(Chamfer(cut: 14).stroke(signal.opacity(0.45), lineWidth: 1))
+            .overlay(Brackets(len: 14).stroke(signal, lineWidth: 2).padding(-6))
         }
     }
 

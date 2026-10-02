@@ -53,6 +53,22 @@ enum WorldTextures {
     static let dot: UIImage = radial(size: 64, stops: [(1, 1), (0.35, 0.4), (0, 0)])
     static let soft: UIImage = radial(size: 128, stops: [(0.9, 0), (0.5, 0.45), (0, 1)])
 
+    /// Lichter einer Stadt auf der Nachtseite eines bewohnten Planeten: Ballungen aus warmen Punkten
+    static let cityLights: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
+        UIColor.black.setFill()
+        ctx.fill(CGRect(x: 0, y: 0, width: 512, height: 256))
+        for _ in 0..<40 {
+            let cx = CGFloat.random(in: 0...512), cy = CGFloat.random(in: 40...216)
+            let spread = CGFloat.random(in: 6...26)
+            for _ in 0..<Int.random(in: 12...40) {
+                let x = cx + CGFloat.random(in: -spread...spread), y = cy + CGFloat.random(in: -spread...spread) * 0.6
+                let s = CGFloat.random(in: 0.8...2.2)
+                UIColor(red: 1, green: CGFloat.random(in: 0.7...0.9), blue: 0.45, alpha: CGFloat.random(in: 0.4...1)).setFill()
+                ctx.fill(CGRect(x: x, y: y, width: s, height: s))
+            }
+        }
+    }
+
     static func radial(size: Int, stops: [(CGFloat, CGFloat)]) -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
             let colors = stops.map { UIColor(white: 1, alpha: $0.0).cgColor } as CFArray
@@ -581,6 +597,12 @@ final class World3D {
             tilt.addChildNode(ring)
         }
 
+        if p.isStation {
+            m.emission.contents = WorldTextures.cityLights
+            m.emission.intensity = 0.9
+            root.addChildNode(makeStation(p))
+        }
+
         if p.hasMoon {
             let spin = SCNNode()
             spin.eulerAngles = SCNVector3(Float(p.tilt), Float(p.moonPhase), 0)
@@ -597,6 +619,80 @@ final class World3D {
             spin.addChildNode(mn)
             root.addChildNode(spin)
         }
+        return root
+    }
+
+    /// Raumstation: Wohnring um den bewohnten Planeten mit Speichen, Andockmodulen und Positionslichtern
+    private func makeStation(_ p: Planet) -> SCNNode {
+        let hull = WornPaint.material("station", base: UIColor(white: 0.62, alpha: 1))
+        let dark = WornPaint.material("station-dark", base: UIColor(white: 0.22, alpha: 1))
+        let lampMat = SCNMaterial()
+        lampMat.lightingModel = .constant
+        lampMat.diffuse.contents = UIColor(red: 1, green: 0.7, blue: 0.3, alpha: 1)
+        let windowMat = SCNMaterial()
+        windowMat.lightingModel = .constant
+        windowMat.diffuse.contents = UIColor(red: 0.6, green: 0.95, blue: 1, alpha: 1)
+
+        // flach gekippt unterhalb der Umlaufbahn, damit der Ring nicht durch die Flugbahn läuft
+        let tilt = SCNNode()
+        tilt.eulerAngles = SCNVector3(0.32, 0, 0.18)
+        tilt.position = SCNVector3(0, -30, 0)
+        let spin = SCNNode()
+        spin.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 90)))
+        tilt.addChildNode(spin)
+
+        let R = p.radius * 1.42
+        let ring = SCNTube(innerRadius: R - 14, outerRadius: R, height: 22)
+        ring.radialSegmentCount = 96
+        ring.materials = [hull]
+        spin.addChildNode(SCNNode(geometry: ring))
+        // Fensterband rundum
+        let band = SCNTube(innerRadius: R - 0.5, outerRadius: R + 0.8, height: 4)
+        band.radialSegmentCount = 96
+        band.materials = [windowMat]
+        spin.addChildNode(SCNNode(geometry: band))
+
+        let count = 12
+        for i in 0..<count {
+            let a = Float(i) / Float(count) * .pi * 2
+            let holder = SCNNode()
+            holder.eulerAngles.y = a
+            spin.addChildNode(holder)
+            // Module auf dem Ring
+            let module = SCNBox(width: 30, height: 30, length: 18, chamferRadius: 3)
+            module.materials = [i % 3 == 0 ? dark : hull]
+            let mn = SCNNode(geometry: module)
+            mn.position = SCNVector3(Float(R) - 7, 0, 0)
+            holder.addChildNode(mn)
+            // Positionslicht oben auf jedem Modul
+            let lamp = SCNBox(width: 5, height: 3, length: 5, chamferRadius: 1)
+            lamp.materials = [lampMat]
+            let ln = SCNNode(geometry: lamp)
+            ln.position = SCNVector3(Float(R) - 7, 16.5, 0)
+            holder.addChildNode(ln)
+            if i % 2 == 0 {
+                ln.runAction(.repeatForever(.sequence([.fadeOut(duration: 0.15), .wait(duration: 1.2), .fadeIn(duration: 0.15),
+                                                       .wait(duration: Double(i) * 0.1)])))
+            }
+            // Speichen zum Planeten bei jedem dritten Modul
+            if i % 3 == 0 {
+                let len = R - p.radius * 0.95
+                let spoke = SCNBox(width: len, height: 6, length: 6, chamferRadius: 1)
+                spoke.materials = [dark]
+                let sn = SCNNode(geometry: spoke)
+                sn.position = SCNVector3(Float(p.radius * 0.95 + len / 2), 0, 0)
+                holder.addChildNode(sn)
+            }
+        }
+        // Leuchtfeuer über einem Modul
+        let beacon = SCNSphere(radius: 5)
+        beacon.materials = [lampMat]
+        let bn = SCNNode(geometry: beacon)
+        bn.position = SCNVector3(Float(R) - 7, 26, 0)
+        bn.runAction(.repeatForever(.sequence([.fadeOut(duration: 0.4), .fadeIn(duration: 0.4)])))
+        spin.addChildNode(bn)
+        let root = SCNNode()
+        root.addChildNode(tilt)
         return root
     }
 

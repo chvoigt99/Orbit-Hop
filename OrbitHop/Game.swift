@@ -77,6 +77,7 @@ struct Planet {
     let energyScale: CGFloat   // spätere Planeten geben weniger Energie
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
+    var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
 
     var mass: CGFloat { radius * radius }
     var orbitRadius: CGFloat { radius + 90 }
@@ -536,6 +537,28 @@ final class Game {
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
+    /// Nur für Tests: erste Raumstation schon als dritten Planeten
+    static let stationEarly = ProcessInfo.processInfo.arguments.contains("-stationEarly")
+
+    // MARK: Raumstation
+    /// Index des nächsten Planeten, der eine Raumstation wird
+    private var nextStation = 0
+    /// Menü der Raumstation ist offen, die Simulation ruht
+    var stationOpen = false
+    var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
+
+    /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
+    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8) }
+
+    func repair() {
+        energy = maxEnergy
+        overflow = 0
+        Haptics.bonus()
+    }
+
+    func leaveStation() {
+        stationOpen = false
+    }
     var botThreshold: CGFloat = -1
     var botSkip = false
     var botWaitBonus = false
@@ -557,7 +580,7 @@ final class Game {
     /// Im Shop gewähltes Schiff übernehmen.
     func equip() {
         ship = profile.selected
-        if !started { energy = maxEnergy }
+        if !started { energy = maxEnergy } else { energy = min(energy, maxEnergy) }
     }
 
     // MARK: Start / Level
@@ -582,6 +605,8 @@ final class Game {
         superBombs = 0
         rescueCharges = 0
         boostTime = 0
+        stationOpen = false
+        nextStation = Game.stationEarly ? 2 : Int.random(in: 30...36)
         planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
@@ -632,24 +657,28 @@ final class Game {
         let prev = planets[planets.count - 1]
         // je weiter hinten, desto kleiner, schneller umkreist und weiter entfernt
         let lvl = min(1, CGFloat(planets.count) / 40)
-        let r = CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
+        let station = planets.count == nextStation
+        if station { nextStation += stationGap(lvl) }
+        // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
+        let r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl))
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = planets.count >= 5 && Double.random(in: 0...1) < Double(0.07 + 0.08 * lvl)
-        let hasField = !hasComet && planets.count >= 2 && Double.random(in: 0...1) < Double(0.45 + 0.4 * lvl)
+        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1) < Double(0.07 + 0.08 * lvl)
+        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1) < Double(0.45 + 0.4 * lvl)
         let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl))
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
         let spin = 150 / r * CGFloat.random(in: 0.9...1.2) * (1.1 + 0.5 * lvl)
         // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches
-        let bonus: ItemKind? = Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
-        let hue = bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
+        let bonus: ItemKind? = !station && Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
+        let hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
         planets.append(Planet.make(center: c, radius: r, spin: spin,
-                                   hue: hue, allowRing: true,
+                                   hue: hue, allowRing: !station,
                                    energyScale: (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
         planets[planets.count - 1].hardRoute = hasField || hasComet
+        planets[planets.count - 1].isStation = station
 
         guard planets.count >= 3 else { return }
         let gapIndex = planets.count - 1
@@ -832,7 +861,7 @@ final class Game {
     }
 
     func tap() {
-        guard !paused else { return }
+        guard !paused && !stationOpen else { return }
         if !started {
             started = true
             startedAt = time
@@ -930,7 +959,7 @@ final class Game {
         let now = date.timeIntervalSinceReferenceDate
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
-        guard !paused else {
+        guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
             return
         }
@@ -1547,6 +1576,8 @@ final class Game {
             addEnergy(pl.energyGain, from: pl.center)
             popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
                                 color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
+            // Erstbesuch einer Raumstation: Menü öffnen, Spiel ruht
+            if pl.isStation { stationOpen = true }
         }
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }
