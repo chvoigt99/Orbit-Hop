@@ -1160,11 +1160,10 @@ final class World3D {
         hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
         let kh = hangar * hangar * (3 - 2 * hangar)
         let k = chase * chase * (3 - 2 * chase)
-        // Übergang aus der Anflug-Einstellung: das Wegfahren passiert vorn im Übergang und läuft
-        // ruhig aus, statt kurz vor Schluss noch einmal sichtbar nach hinten zu ziehen
+        // Übergang aus der Anflug-Einstellung: eine einzige weiche Kurve (smootherstep) für Position,
+        // Blick, Bildwinkel und Schiffsgröße, damit alles als eine Bewegung läuft
         let ap = 1 - arrival
-        let ae = 1 - (1 - ap) * (1 - ap)
-        let ka = 1 - ae * ae * (3 - 2 * ae)
+        let ka = 1 - ap * ap * ap * (ap * (ap * 6 - 15) + 10)
 
         // Bildschirm-konstante Größe (Welt-Einheiten pro Punkt)
         let fovRad = CGFloat(50) * .pi / 180
@@ -1427,7 +1426,7 @@ final class World3D {
     private var arrivalIndex = -1
     private var arrivalHold: CGFloat = .infinity
     /// Dauer des Übergangs von der angehaltenen Kamera in die Orbit-Ansicht
-    private let arrivalBlendTime: CGFloat = 1.3
+    private let arrivalBlendTime: CGFloat = 1.7
     private var parkedPos = SCNVector3(0, 0, 0)
     private var parkedLook = SCNVector3(0, 0, 0)
     private var parkedScale: CGFloat = 1
@@ -1522,14 +1521,27 @@ final class World3D {
             pos.z += amp * (sin(t * 29.1 + 0.4) * 0.6 + sin(t * 47.9 + 2.9) * 0.4)
             roll = Float(game.shake) * 0.035 * (sin(t * 19.3 + 0.8) * 0.7 + sin(t * 33.1) * 0.3)
         }
-        // Anflug-Einstellung einblenden
-        let fa = Float(ka)
-        pos = SCNVector3(pos.x + (parkedPos.x - pos.x) * fa, pos.y + (parkedPos.y - pos.y) * fa, pos.z + (parkedPos.z - pos.z) * fa)
-        // Der Blick wendet sich in der ersten Hälfte des Übergangs dem Planeten zu,
-        // die Position fährt danach noch zu Ende. So ist früh der Planet im Fokus, nicht das Schiff.
-        let al = min(1, max(0, (arrival - 0.45) / 0.55))
-        let fl = Float(al * al * (3 - 2 * al))
-        var lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fl, look.y + (parkedLook.y - look.y) * fl, look.z + (parkedLook.z - look.z) * fl)
+        // Anflug-Einstellung einblenden: als Bogenfahrt um den Planeten (Abstand, Richtung und Höhenwinkel
+        // werden gemeinsam überblendet) statt einer geraden Linie. Dreht sich und zieht hoch in einem Zug.
+        var lookA = look
+        if ka > 0 {
+            let fa = Float(ka)
+            let pivot = look
+            func spherical(_ p: SCNVector3) -> (d: Float, az: Float, el: Float) {
+                let vx = p.x - pivot.x, vy = p.y - pivot.y, vz = p.z - pivot.z
+                let d = max(1, (vx * vx + vy * vy + vz * vz).squareRoot())
+                return (d, atan2(vz, vx), asin(max(-1, min(1, vy / d))))
+            }
+            let a = spherical(pos), b = spherical(parkedPos)
+            var dAz = (b.az - a.az).truncatingRemainder(dividingBy: 2 * .pi)
+            if dAz > .pi { dAz -= 2 * .pi }
+            if dAz < -.pi { dAz += 2 * .pi }
+            let d = exp(log(a.d) + (log(b.d) - log(a.d)) * fa)
+            let az = a.az + dAz * fa
+            let el = a.el + (b.el - a.el) * fa
+            pos = SCNVector3(pivot.x + d * cos(el) * cos(az), pivot.y + d * sin(el), pivot.z + d * cos(el) * sin(az))
+            lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fa, look.y + (parkedLook.y - look.y) * fa, look.z + (parkedLook.z - look.z) * fa)
+        }
         // Hangar-Nahaufnahme von hinten links, fest am Liegeplatz: das Schiff fliegt beim Start aus dem Bild,
         // dann zieht die Kamera hoch in die Übersicht
         if kh > 0 {
