@@ -312,6 +312,7 @@ final class World3D {
     private var hangar: CGFloat = 1
     /// Schrägblick auf die Raumstation, solange das Stationsmenü offen ist (0…1)
     private var stationView: CGFloat = 0
+    private var lastUITime: CGFloat = 0
     private let hangarBlendTime: CGFloat = 1.8
     private let dockNode = SCNNode()
     private var lastHangarFade: CGFloat = 0
@@ -1341,7 +1342,10 @@ final class World3D {
         // Beim Abflug löst sich die Kamera schon während des Anrollens
         let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
         hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
-        stationView = game.stationOpen ? min(1, stationView + dt / 1.4) : max(0, stationView - dt / 1.0)
+        // Spielzeit steht im Menü still, deshalb hier die durchlaufende UI-Zeit
+        let uiDt = max(0, min(0.1, game.uiTime - lastUITime))
+        lastUITime = game.uiTime
+        stationView = game.stationOpen ? min(1, stationView + uiDt / 1.4) : max(0, stationView - uiDt / 1.0)
         let kh = hangar * hangar * (3 - 2 * hangar)
         let k = chase * chase * (3 - 2 * chase)
         // Übergang aus der Anflug-Einstellung: eine einzige weiche Kurve (smootherstep) für Position,

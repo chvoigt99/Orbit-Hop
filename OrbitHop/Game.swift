@@ -458,6 +458,8 @@ final class Game {
     var missFlash: CGFloat = 0
 
     var time: CGFloat = 0
+    /// läuft auch in Pause und Stationsmenü weiter (für Kamerafahrten im Menü)
+    var uiTime: CGFloat = 0
     var lastTime: TimeInterval?
     var overAt: CGFloat = 0
     var lastAccuracy: CGFloat = 0
@@ -963,6 +965,7 @@ final class Game {
         let now = date.timeIntervalSinceReferenceDate
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
+        uiTime += dt
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
             // im Stationsmenü fährt die Kamera noch auf die Station über dem Menü
