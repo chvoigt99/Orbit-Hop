@@ -870,7 +870,7 @@ enum ShipDesigns {
         // Nadelrumpf, mittschiffs von einem großen Ring umschlossen
         k.hull([.init(4.0, 0.05, 0.04, 0.04), .init(3.0, 0.1, 0.28, 0.22), .init(1.2, 0.15, 0.42, 0.34),
                 .init(-0.9, 0.15, 0.5, 0.4), .init(-2.1, 0.15, 0.44, 0.34), .init(-2.4, 0.15, 0.34, 0.26)], mirror: false)
-        k.hull([.init(3.3, 0.36, 0.05, 0.03), .init(2.7, 0.4, 0.22, 0.1), .init(1.8, 0.42, 0.26, 0.12), .init(1.5, 0.4, 0.2, 0.08)],
+        k.hull([.init(2.0, 0.4, 0.05, 0.03), .init(1.6, 0.46, 0.3, 0.14), .init(0.5, 0.48, 0.34, 0.16), .init(0.1, 0.44, 0.24, 0.1)],
                k.second, mirror: false)
         let ring = SCNTube(innerRadius: 0.95, outerRadius: 1.12, height: 0.5)
         ring.radialSegmentCount = 12
@@ -893,16 +893,16 @@ enum ShipDesigns {
         k.engine(-2.4, -0.1, 0.36, r: 0.26, len: 1.0)
         k.fin(-1.7, 0.5, 0.0, height: 0.8, len: 0.9, tilt: 0, k.accent)
         k.box(-2.0, -0.35, 0, 0.7, 0.3, 0.06, k.accent, chamfer: 0.02, mirror: false)
-        k.canopy(2.2, 0.42, len: 1.0, height: 0.24, width: 0.36)
+        k.canopy(1.05, 0.6, len: 1.3, height: 0.34, width: 0.46)
         k.plates(x0: -2.0, x1: 1.0, y: 0.5, width: 0.55, count: 5)
         k.belly(x0: -1.8, x1: 2.4, y: -0.25, width: 0.5)
         k.sidePanels(x0: 0.2, x1: 2.6, y: 0.12, z: 0.4, count: 4)
         k.pipes(x0: -2.0, x1: -1.0, y: 0.15, z: 0.48)
-        k.greeble(x0: 0.4, x1: 1.4, y: 0.48, zMax: 0.2, count: 5)
+        k.greeble(x0: 1.9, x1: 2.6, y: 0.3, zMax: 0.15, count: 3)
         k.sensorNose(4.0, 0.05)
         k.lamp(3.0, 0.1, 0.3)
         k.antenna(-1.2, 0.55, 0.22, h: 0.5)
-        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (0.4, 3.4, 0.62), belly: (0.5, -0.5))
+        k.weapon(m.weapon, hardpoints: [(1.6, -0.05, 0.6)], spine: (2.1, 4.1, 0.5), belly: (0.5, -0.5))
     }
 
     // Abfangjäger: vorwärts gepfeilte Flügel, zwei enge Triebwerke
@@ -968,7 +968,7 @@ enum ShipDesigns {
         // flacher Rückenkamm mit Kanzel
         k.hull([.init(2.0, 0.5, 0.05, 0.02), .init(1.2, 0.56, 0.3, 0.12), .init(-0.6, 0.54, 0.34, 0.12), .init(-1.3, 0.46, 0.2, 0.06)],
                top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
-        k.canopy(1.5, 0.48, len: 1.0, height: 0.2, width: 0.42)
+        k.canopy(1.2, 0.64, len: 1.3, height: 0.3, width: 0.46)
         // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
         k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
@@ -984,7 +984,7 @@ enum ShipDesigns {
         k.belly(x0: -1.2, x1: 1.6, y: -0.12, width: 0.7)
         k.sensorNose(3.5, 0.08)
         k.lamp(-0.9, 0.08, 2.95, size: 0.1)
-        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-0.4, 3.3, 0.6), belly: (-0.2, -0.4))
+        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (2.0, 3.9, 0.42), belly: (-0.2, -0.4))
     }
 
     // Flaggschiff: elegant, Flügelspitzen-Triebwerke, goldene Akzente
