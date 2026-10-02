@@ -1088,7 +1088,8 @@ final class World3D {
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
-        } else {
+        } else if game.phase == .flying {
+            // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
             chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
