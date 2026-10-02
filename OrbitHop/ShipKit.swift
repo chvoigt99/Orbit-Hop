@@ -968,7 +968,7 @@ enum ShipDesigns {
         // flacher Rückenkamm mit Kanzel
         k.hull([.init(2.0, 0.5, 0.05, 0.02), .init(1.2, 0.56, 0.3, 0.12), .init(-0.6, 0.54, 0.34, 0.12), .init(-1.3, 0.46, 0.2, 0.06)],
                top: 0.5, bottom: 0.9, shoulder: 0.1, k.second, mirror: false)
-        k.canopy(1.2, 0.64, len: 1.3, height: 0.3, width: 0.46)
+        k.canopy(0.6, 0.64, len: 1.6, height: 0.36, width: 0.52)
         // Panzerfelder und rote Leuchtlinien entlang der Vorderkante
         k.plate([(1.6, 0.9), (-0.5, 2.3), (-1.0, 2.3), (-0.6, 1.3), (-1.0, 0.9)], y: 0.11, thick: 0.04, k.second, chamfer: 0.015)
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
