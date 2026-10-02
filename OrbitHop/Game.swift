@@ -545,6 +545,8 @@ final class Game {
     private var nextStation = 0
     /// Menü der Raumstation ist offen, die Simulation ruht
     var stationOpen = false
+    /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
+    private var stationMenuAt: CGFloat?
     var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
 
     /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
@@ -606,6 +608,7 @@ final class Game {
         rescueCharges = 0
         boostTime = 0
         stationOpen = false
+        stationMenuAt = nil
         nextStation = Game.stationEarly ? 2 : Int.random(in: 30...36)
         planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
         while planets.count < 4 { addPlanet() }
@@ -676,7 +679,7 @@ final class Game {
         let hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
         planets.append(Planet.make(center: c, radius: r, spin: spin,
                                    hue: hue, allowRing: !station,
-                                   energyScale: (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
+                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
         planets[planets.count - 1].hardRoute = hasField || hasComet
         planets[planets.count - 1].isStation = station
 
@@ -975,6 +978,10 @@ final class Game {
             else if phase == .docked || (phase == .orbiting && inCone && angleOffCenter < coneHalfAngle * 0.3) { tap() }
         }
         if phase != .over { simulate(simDt) }
+        if let t = stationMenuAt, time >= t {
+            stationMenuAt = nil
+            if atStation { stationOpen = true }
+        }
         updateFx(simDt)
         updateCamera(dt, size)
         updateSound()
@@ -1573,11 +1580,14 @@ final class Game {
                 spawnTech(from: planets[index].center)
                 techFocus = .infinity    // bleibt nah dran bis zum nächsten Start
             }
-            addEnergy(pl.energyGain, from: pl.center)
-            popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
-                                color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
-            // Erstbesuch einer Raumstation: Menü öffnen, Spiel ruht
-            if pl.isStation { stationOpen = true }
+            // Stationen geben keine Energie ab, dort repariert man
+            if pl.energyGain > 0 {
+                addEnergy(pl.energyGain, from: pl.center)
+                popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
+                                    color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
+            }
+            // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
+            if pl.isStation { stationMenuAt = time + 2.0 }
         }
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }

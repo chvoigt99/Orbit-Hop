@@ -635,13 +635,14 @@ final class World3D {
 
         // flach gekippt unterhalb der Umlaufbahn, damit der Ring nicht durch die Flugbahn läuft
         let tilt = SCNNode()
-        tilt.eulerAngles = SCNVector3(0.32, 0, 0.18)
-        tilt.position = SCNVector3(0, -30, 0)
+        tilt.eulerAngles = SCNVector3(0.14, 0, 0.08)
+        tilt.position = SCNVector3(0, -20, 0)
         let spin = SCNNode()
         spin.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 90)))
         tilt.addChildNode(spin)
 
-        let R = p.radius * 1.42
+        // dicht über der Oberfläche, klar innerhalb der Umlaufbahn (Radius + 90)
+        let R = p.radius * 1.2
         let ring = SCNTube(innerRadius: R - 14, outerRadius: R, height: 22)
         ring.radialSegmentCount = 96
         ring.materials = [hull]
