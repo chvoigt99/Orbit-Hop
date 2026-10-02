@@ -25,6 +25,12 @@ enum Haptics {
         #endif
     }
 
+    static func bonus() {
+        #if canImport(UIKit)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        #endif
+    }
+
     static func gameOver() {
         #if canImport(UIKit)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -476,6 +482,12 @@ final class Game {
     var bonusTaken: Set<Int> = []         // Planeten, die ihr Item schon abgegeben haben
 
     /// Ladefortschritt 0...1 am aktuellen Planeten, nil wenn es dort nichts gibt.
+    /// Lädt gerade ein Bonus-Item auf (kein Energieverbrauch)
+    var isCharging: Bool { phase == .orbiting && chargeFraction != nil }
+
+    /// Farbe des Items, das gerade geladen wird
+    var chargingKind: ItemKind? { isCharging ? planets[currentIndex].bonus : nil }
+
     var chargeFraction: CGFloat? {
         guard planets[currentIndex].bonus != nil, !bonusTaken.contains(currentIndex) else { return nil }
         return min(1, orbitCharge / chargeNeeded)
@@ -1010,7 +1022,7 @@ final class Game {
     private func simulate(_ dt: CGFloat) {
         let before = pos
         // Beim Aufladen eines Bonus-Items kein Verbrauch
-        let charging = phase == .orbiting && chargeFraction != nil
+        let charging = isCharging
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
@@ -1365,7 +1377,7 @@ final class Game {
         items.append(Item(kind: kind, from: from, p: from, gap: currentIndex,
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
         shake = max(shake, 0.15)
-        Haptics.capture()
+        Haptics.bonus()
         SoundFX.shared.play(.bonus)
     }
 

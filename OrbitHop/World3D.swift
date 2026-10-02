@@ -1232,6 +1232,8 @@ final class World3D {
             let isCur = i == game.currentIndex && game.phase != .over
             let frac = isCur ? min(1, game.orbitCharge / game.chargeNeeded) : 0
             updateProgress(&r, fraction: frac)
+            // Fortschrittsring atmet beim Laden, damit man sieht, dass etwas passiert
+            r.progress.opacity = frac > 0 ? 0.7 + 0.3 * CGFloat(sin(game.time * 5)) : 1
             bonusRings[i] = r
             if let badge = r.node.childNode(withName: "badge", recursively: false) {
                 let s = Float(24 * px * (isCur ? 1 + 0.08 * sin(game.time * 6) : 1))

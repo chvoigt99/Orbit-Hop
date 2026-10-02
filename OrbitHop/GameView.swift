@@ -104,6 +104,9 @@ struct GameView: View {
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
+        if let kind = game.chargingKind, let f = game.chargeFraction {
+            return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
+        }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
         if game.phase == .flying { return ("TRANSIT · SCHUB AKTIV", gold) }
@@ -142,9 +145,12 @@ struct GameView: View {
     private var topBar: some View {
         let fraction = max(0, min(1, game.energy / game.maxEnergy))
         let lit = Int(ceil(fraction * 20))
-        let barColor = hsl(Double(fraction) * 160, 0.8, 0.58)
-        let low = game.energy < 25 && game.started && game.phase != .over
+        let chargeColor = game.chargingKind.map { hsl($0.hue, 0.85, 0.62) }
+        let barColor = chargeColor ?? hsl(Double(fraction) * 160, 0.8, 0.58)
+        let low = game.energy < 25 && game.started && game.phase != .over && chargeColor == nil
         let blink = low && Int(game.time * 4) % 2 == 0
+        // beim Laden pulsiert die Leiste sanft in der Bonusfarbe
+        let chargePulse = chargeColor == nil ? 1 : 0.75 + 0.25 * sin(Double(game.time) * 5)
 
         return HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
@@ -173,15 +179,19 @@ struct GameView: View {
 
                 HStack(spacing: 3) {
                     ForEach(0..<20, id: \.self) { i in
-                        Slant().fill(i < lit ? barColor : Color.white.opacity(0.08))
+                        Slant().fill(i < lit ? barColor.opacity(chargePulse) : Color.white.opacity(0.08))
                     }
                 }
                 .frame(height: 14)
                 .shadow(color: barColor.opacity(0.5), radius: 6)
 
                 HStack(alignment: .bottom, spacing: 6) {
-                    label(low ? "RESERVE · WARNUNG" : "ZELLE A · NOMINAL")
-                        .foregroundStyle(low ? warn : signal.opacity(0.75))
+                    if let chargeColor {
+                        label("LADEN · KEIN VERBRAUCH").foregroundStyle(chargeColor)
+                    } else {
+                        label(low ? "RESERVE · WARNUNG" : "ZELLE A · NOMINAL")
+                            .foregroundStyle(low ? warn : signal.opacity(0.75))
+                    }
                     Spacer()
                     HStack(alignment: .bottom, spacing: 2) {
                         ForEach(0..<8, id: \.self) { i in
