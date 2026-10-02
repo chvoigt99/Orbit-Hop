@@ -478,7 +478,7 @@ final class Game {
     /// Bildausschnitt für den freien Flug, einmal beim Start festgelegt (Startpunkt und Zielorbit)
     private var flightFrame: CGRect?
     var insets = EdgeInsets()
-    var techFocus: CGFloat = 0            // Restzeit: Kamera zoomt aufs Schiff
+    var techFocus: CGFloat = 0            // Restzeit: Kamera zoomt näher an den Planeten
     var overflow: CGFloat = 0             // überschüssige Energie, alle 100 ein Tech-Teil
     var techZoom: CGFloat = 0
     /// Während der Anflug-Einstellung: Orbit-Ausschnitt dieses Planeten schon vorab ansteuern
@@ -1529,13 +1529,15 @@ final class Game {
         }
         targetScale = min(max(targetScale, 0.04), 0.8)
 
-        // Tech-Teil gefunden: weich aufs Schiff zoomen
+        // Tech-Teil gefunden: weich näher heranzoomen
         techFocus = max(0, techFocus - dt)
         // rein zügig, raus langsam
         techZoom = smoothApproach(techZoom, techFocus > 0 ? 1 : 0, rate: techFocus > 0 ? 1.6 : 0.6, dt: dt)
         let f = techZoom * techZoom * (3 - 2 * techZoom)
-        targetCenter = CGPoint(x: targetCenter.x + (pos.x - targetCenter.x) * f, y: targetCenter.y + (pos.y - targetCenter.y) * f)
-        targetScale += (max(targetScale * 2.2, 0.6) - targetScale) * f
+        // Näher ran, aber weiter auf den Planeten zentriert: so passt die ganze Bahn ins Bild und die
+        // Kamera kreist nicht mit dem Schiff mit
+        let orbitFit = usable / ((fp.orbitRadius + 80) * 2)
+        targetScale += (max(targetScale, orbitFit) - targetScale) * f
 
         // Federn statt fester Lerp-Rate: bei jedem Zielwechsel (neuer Planet, Start) läuft die Kamera
         // weich an, statt mit voller Geschwindigkeit loszuspringen.
