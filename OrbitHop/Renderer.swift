@@ -673,6 +673,7 @@ extension Game {
         let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
         let h = max(16, hypot(edge.x - sp.x, edge.y - sp.y))
         // dunkler Schatten unter der Schrift, damit sie auch vor hellen Planeten lesbar bleibt
+        let plain = c
         var c = c
         c.addFilter(.shadow(color: .black.opacity(0.9), radius: 2.5))
         let flip: CGFloat = sp.x + h + 110 > size.width ? -1 : 1
@@ -692,14 +693,19 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        c.draw(Text("ZIEL \(String(format: "%02d", currentIndex + 1))")
+        let title = c.resolve(Text("ZIEL \(String(format: "%02d", currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(amber),
-               at: CGPoint(x: tx, y: elbow.y - 3), anchor: anchorTop)
-        c.draw(Text("\(Int(targetDistance)) km · +\(Int(t.energyGain.rounded())) E")
+                .foregroundColor(amber))
+        let info = c.resolve(Text("\(Int(targetDistance)) km · +\(Int(t.energyGain.rounded())) E")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(amber.opacity(0.7)),
-               at: CGPoint(x: tx, y: elbow.y + 3), anchor: anchorBottom)
+                .foregroundColor(amber.opacity(0.85)))
+        let s1 = title.measure(in: size), s2 = info.measure(in: size)
+        let w = max(s1.width, s2.width)
+        let top = elbow.y - 3 - s1.height, bottom = elbow.y + 3 + s2.height
+        let plate = CGRect(x: flip > 0 ? tx : tx - w, y: top, width: w, height: bottom - top)
+        drawPlate(plain, plate.insetBy(dx: -6, dy: -3), accent: amber, alpha: 1, cut: 5)
+        c.draw(title, at: CGPoint(x: tx, y: elbow.y - 3), anchor: anchorTop)
+        c.draw(info, at: CGPoint(x: tx, y: elbow.y + 3), anchor: anchorBottom)
     }
 
     // MARK: Bahn und Kegel
@@ -909,19 +915,28 @@ extension Game {
     }
 
     private func drawPopups(_ c: GraphicsContext, _ size: CGSize) {
-        var c = c
-        c.addFilter(.shadow(color: .black.opacity(0.85), radius: 3))
         for pp in popups {
             let sp = screenPoint(pp.pos, size)
             // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
             let rise = 1 - exp(-pp.age * 3)
             let sy = sp.y - 18 - rise * 40
             let alpha = Double(min(1, max(0, (Popup.lifetime - pp.age) / Popup.fade)))
-            let text = Text(pp.text)
-                .font(.system(size: 18, weight: .bold, design: .monospaced))
-                .foregroundColor(pp.color.opacity(alpha))
+            let text = c.resolve(Text(pp.text)
+                .font(.system(size: 17, weight: .bold, design: .monospaced))
+                .foregroundColor(pp.color.opacity(alpha)))
+            let ts = text.measure(in: size)
+            let rect = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
+                              width: ts.width, height: ts.height)
+            drawPlate(c, rect.insetBy(dx: -9, dy: -4), accent: pp.color, alpha: alpha, cut: 6)
             c.draw(text, at: CGPoint(x: sp.x, y: sy))
         }
+    }
+
+    /// Dunkles Schild hinter HUD-Text, damit er auch vor gleichfarbigen Planeten lesbar bleibt.
+    private func drawPlate(_ c: GraphicsContext, _ rect: CGRect, accent: Color, alpha: Double, cut: CGFloat) {
+        let plate = Chamfer(cut: cut).path(in: rect)
+        c.fill(plate, with: .color(Color(red: 0.02, green: 0.03, blue: 0.06).opacity(0.82 * alpha)))
+        c.stroke(plate, with: .color(accent.opacity(0.55 * alpha)), lineWidth: 1)
     }
 
     private func drawScreenFrame(_ c: GraphicsContext, _ size: CGSize) {
