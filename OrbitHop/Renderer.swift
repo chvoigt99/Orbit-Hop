@@ -923,6 +923,8 @@ extension Game {
     }
 
     private func drawPopups(_ c: GraphicsContext, _ size: CGSize) {
+        // Ältere Meldungen bleiben stehen, neuere weichen nach oben aus, damit sich keine Schilder überdecken
+        var placed: [CGRect] = []
         for pp in popups {
             let sp = screenPoint(pp.pos, size)
             // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
@@ -933,10 +935,21 @@ extension Game {
                 .font(.system(size: 17, weight: .bold, design: .monospaced))
                 .foregroundColor(pp.color.opacity(alpha)))
             let ts = text.measure(in: size)
-            let rect = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
-                              width: ts.width, height: ts.height)
-            drawPlate(c, rect.insetBy(dx: -9, dy: -4), accent: pp.color, alpha: alpha, cut: 6)
-            c.draw(text, at: CGPoint(x: sp.x, y: sy))
+            var plate = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
+                               width: ts.width, height: ts.height).insetBy(dx: -9, dy: -4)
+            // nicht über den Bildrand hinaus
+            plate.origin.x = min(max(plate.minX, 8), size.width - 8 - plate.width)
+            var moved = true
+            while moved {
+                moved = false
+                for r in placed where r.insetBy(dx: -2, dy: -3).intersects(plate) {
+                    plate.origin.y = r.minY - 4 - plate.height
+                    moved = true
+                }
+            }
+            placed.append(plate)
+            drawPlate(c, plate, accent: pp.color, alpha: alpha, cut: 6)
+            c.draw(text, at: CGPoint(x: plate.midX, y: plate.midY))
         }
     }
 
