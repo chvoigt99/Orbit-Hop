@@ -1334,6 +1334,8 @@ final class World3D {
     private var arrivalActive = false
     private var arrivalIndex = -1
     private var arrivalHold: CGFloat = .infinity
+    /// Dauer des Übergangs von der angehaltenen Kamera in die Orbit-Ansicht
+    private let arrivalBlendTime: CGFloat = 1.3
     private var parkedPos = SCNVector3(0, 0, 0)
     private var parkedLook = SCNVector3(0, 0, 0)
     private var parkedScale: CGFloat = 1
@@ -1375,7 +1377,9 @@ final class World3D {
             arrivalHold = game.time
         }
         let want: CGFloat = arrivalActive && game.time < arrivalHold ? 1 : 0
-        arrival = smoothApproach(arrival, want, rate: 0.75, dt: dt)
+        // feste Dauer statt exponentiellem Ausklingen: kein langer Schwanz am Ende,
+        // die weiche Kurve kommt über smoothstep in sync/syncCamera
+        arrival = want == 1 ? 1 : max(0, arrival - dt / arrivalBlendTime)
         if want == 0 && arrival < 0.01 {
             arrival = 0
             arrivalActive = false
@@ -1415,7 +1419,11 @@ final class World3D {
         // Anflug-Einstellung einblenden
         let fa = Float(ka)
         pos = SCNVector3(pos.x + (parkedPos.x - pos.x) * fa, pos.y + (parkedPos.y - pos.y) * fa, pos.z + (parkedPos.z - pos.z) * fa)
-        let lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fa, look.y + (parkedLook.y - look.y) * fa, look.z + (parkedLook.z - look.z) * fa)
+        // Der Blick wendet sich in der ersten Hälfte des Übergangs dem Planeten zu,
+        // die Position fährt danach noch zu Ende. So ist früh der Planet im Fokus, nicht das Schiff.
+        let al = min(1, max(0, (arrival - 0.45) / 0.55))
+        let fl = Float(al * al * (3 - 2 * al))
+        let lookA = SCNVector3(look.x + (parkedLook.x - look.x) * fl, look.y + (parkedLook.y - look.y) * fl, look.z + (parkedLook.z - look.z) * fl)
         cameraNode.position = pos
         cameraNode.look(at: lookA, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
         lastLook = lookA
