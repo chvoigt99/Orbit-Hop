@@ -1154,7 +1154,9 @@ final class World3D {
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
-        hangar = game.phase == .docked ? 1 : max(0, hangar - dt / hangarBlendTime)
+        // Beim Abflug löst sich die Kamera schon während des Anrollens
+        let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
+        hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
         let kh = hangar * hangar * (3 - 2 * hangar)
         let k = chase * chase * (3 - 2 * chase)
         // Übergang aus der Anflug-Einstellung: das Wegfahren passiert vorn im Übergang und läuft
@@ -1273,7 +1275,7 @@ final class World3D {
 
         }
         shipHolder.isHidden = game.phase == .over
-        shipHolder.position = v3(game.pos, 4)
+        shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
         let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : 0
         shipHolder.eulerAngles.y = Float(-game.heading)
@@ -1290,8 +1292,10 @@ final class World3D {
         let flying = game.phase == .flying
         let boost = game.boostTime > 0
         for (ps, r) in exhausts {
-            ps.birthRate = game.phase == .over || game.phase == .docked ? 0 : (flying ? (boost ? 260 : 120) : 35)
-            ps.particleVelocity = CGFloat(s) * (flying ? (boost ? 6 : 3) : 1.5)
+            // im Hangar aus, beim Abheben leise, beim Anrollen voll
+            let departing: CGFloat = game.departElapsed.map { $0 > Game.liftTime ? 120 : 30 } ?? 0
+            ps.birthRate = game.phase == .over ? 0 : (game.phase == .docked ? departing : (flying ? (boost ? 260 : 120) : 35))
+            ps.particleVelocity = CGFloat(s) * (flying || departing > 100 ? (boost ? 6 : 3) : 1.5)
             ps.particleSize = CGFloat(s) * r * (boost ? 1.7 : 1.25)
         }
         trail.birthRate = flying ? 90 : (game.phase == .orbiting ? 40 : 0)

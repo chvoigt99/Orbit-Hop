@@ -391,6 +391,25 @@ final class Game {
     private(set) var dockHeading: CGFloat = 0
     /// letzter Start kam aus dem Hangar (keine Genauigkeitsanzeige)
     private(set) var dockLaunch = false
+    /// Zeitpunkt des Starttipps im Hangar; danach hebt das Schiff ab und rollt beschleunigend los
+    private(set) var departAt: CGFloat?
+    static let liftTime: CGFloat = 1.1
+    static let rollTime: CGFloat = 1.6
+    /// Sekunden seit dem Starttipp, solange das Schiff noch am Liegeplatz abhebt oder anrollt
+    var departElapsed: CGFloat? {
+        guard phase == .docked, let t0 = departAt else { return nil }
+        return time - t0
+    }
+    /// Höhe über der Plattform (nur 3D): sanft hoch, nach dem Abflug wieder auf Flughöhe
+    var liftHeight: CGFloat {
+        guard let t0 = departAt else { return 0 }
+        let t = time - t0
+        func ease(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * (3 - 2 * c) }
+        let up = ease(t / Game.liftTime)
+        let down = ease((t - Game.liftTime - Game.rollTime) / 1.0)
+        let hover = 0.5 * sin(t * 3.2) * up * (1 - ease((t - Game.liftTime) / 0.6))
+        return (7 * up + hover) * (1 - down)
+    }
     /// Hangar-Nahaufnahme oder der Übergang danach: Zielanzeigen der Draufsicht passen dann nicht ins Bild
     var inHangarView: Bool { phase == .docked || (dockLaunch && time - lastLaunchTime < 1.8) }
     var started = false
@@ -469,7 +488,9 @@ final class Game {
     var speed: CGFloat {
         switch phase {
         case .flying: return hypot(vel.dx, vel.dy)
-        case .docked: return 0
+        case .docked:
+            guard let t = departElapsed, t > Game.liftTime else { return 0 }
+            return launchSpeed(accuracy: Game.dockAccuracy) * (t - Game.liftTime) / Game.rollTime
         default: return abs(orbitOmega) * orbitDist
         }
     }
@@ -559,6 +580,7 @@ final class Game {
         dockPos = pos
         dockHeading = heading
         dockLaunch = false
+        departAt = nil
         phase = .docked
         vel = .zero
         trail = []
@@ -789,12 +811,12 @@ final class Game {
             started = true
             startedAt = time
             // der Tipp auf dem Titel startet direkt aus dem Hangar
-            if phase == .docked { launchFromDock() }
+            if phase == .docked { depart() }
             return
         }
         switch phase {
         case .docked:
-            launchFromDock()
+            depart()
         case .over:
             if time - overAt > 0.6 { reset() }
         case .flying:
@@ -810,10 +832,14 @@ final class Game {
         }
     }
 
+    private func launchSpeed(accuracy: CGFloat) -> CGFloat {
+        let p = planets[currentIndex]
+        return (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed
+    }
+
     /// Katapult aus dem Orbit (oder aus dem Hangar) in Richtung der Bahntangente.
     private func launch(accuracy: CGFloat) {
-        let p = planets[currentIndex]
-        let speed = (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed
+        let speed = launchSpeed(accuracy: accuracy)
         let hd = orbitAngle + orbitDir * CGFloat.pi / 2
         vel = CGVector(dx: cos(hd) * speed, dy: sin(hd) * speed)
         originIndex = currentIndex
@@ -837,8 +863,30 @@ final class Game {
 
     /// Start aus dem Hangar: fester, kräftiger Start ohne Genauigkeitswertung.
     /// Der Hinweis bleibt stehen, bis der Spieler zum ersten Mal selbst aus einem Orbit startet.
+    static let dockAccuracy: CGFloat = 0.7
+
+    /// Starttipp im Hangar: abheben, dann losrollen (weitere Tipps werden ignoriert)
+    private func depart() {
+        guard departAt == nil else { return }
+        departAt = time
+        Haptics.capture()
+    }
+
+    /// Abflug aus dem Hangar: erst schweben, dann gleichmäßig beschleunigen bis auf Starttempo.
+    /// Am Ende übernimmt der normale Flug mit genau diesem Tempo.
+    private func updateDeparture() {
+        guard let t = departElapsed else { return }
+        let roll = t - Game.liftTime
+        guard roll > 0 else { return }
+        let s = min(roll, Game.rollTime)
+        let v = launchSpeed(accuracy: Game.dockAccuracy)
+        let d = 0.5 * v / Game.rollTime * s * s
+        pos = CGPoint(x: dockPos.x + cos(dockHeading) * d, y: dockPos.y + sin(dockHeading) * d)
+        if roll >= Game.rollTime { launchFromDock() }
+    }
+
     private func launchFromDock() {
-        launch(accuracy: 0.7)
+        launch(accuracy: Game.dockAccuracy)
         dockLaunch = true
         hintShown = true
     }
@@ -940,7 +988,7 @@ final class Game {
 
         switch phase {
         case .docked:
-            break
+            updateDeparture()
         case .orbiting:
             let p = planets[currentIndex]
             // weiches Einschwingen: Tempo und Radius gleiten auf die Bahn

@@ -100,6 +100,7 @@ struct GameView: View {
     private var status: (String, Color) {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
+        if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
