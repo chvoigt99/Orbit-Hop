@@ -367,7 +367,7 @@ final class Game {
     var level: CGFloat { min(1, CGFloat(score) / 40) }
     /// Kegel wird enger: ca. 20° bis 11°
     var coneHalfAngle: CGFloat { 0.34 - 0.15 * level + (wideConeLaunches > 0 ? 0.2 : 0) }
-    let chargeNeeded: CGFloat = CGFloat.pi       // eine halbe Umrundung
+    let chargeNeeded: CGFloat = 2 * CGFloat.pi   // eine ganze Umrundung
     /// Energieverbrauch pro Sekunde steigt
     var energyDrain: CGFloat { (5 + 4 * level) * ship.drain }
     let captureMargin: CGFloat = 120
@@ -970,12 +970,12 @@ final class Game {
 
     private func simulate(_ dt: CGFloat) {
         let before = pos
-        // Beim Aufladen eines Bonus-Items halber Verbrauch
+        // Beim Aufladen eines Bonus-Items kein Verbrauch
         let charging = phase == .orbiting && chargeFraction != nil
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
-        if started && phase != .docked { energy -= energyDrain * dt * (charging ? 0.5 : 1) * flightFactor }
+        if started && phase != .docked { energy -= energyDrain * dt * (charging ? 0 : 1) * flightFactor }
         missFlash = max(0, missFlash - dt)
 
         if energy <= 0 && rescueCharges > 0 {
