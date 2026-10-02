@@ -142,7 +142,8 @@ struct GameView: View {
             precisionBadge
             Spacer()
             hint
-            bottomBar
+            // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
+            bottomBar.opacity(game.stationOpen ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)

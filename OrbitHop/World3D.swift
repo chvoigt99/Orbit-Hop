@@ -1453,7 +1453,8 @@ final class World3D {
         let coneIn = smoother((orbitReveal - 0.25) / 0.75)
         orbitRing.opacity = ringIn
         arrowSpinner.opacity = ringIn
-        coneNode.opacity = coneIn
+        // im Stationsmenü kein Startkegel, er ragt sonst ins HUD
+        coneNode.opacity = game.stationOpen ? 0 : coneIn
         let sweep = Float(0.2 + 0.8 * coneIn)
         coneNode.scale = SCNVector3(sweep, 1, sweep)
         let p = game.planets[game.currentIndex]

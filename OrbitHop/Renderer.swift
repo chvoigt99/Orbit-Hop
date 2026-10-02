@@ -15,7 +15,7 @@ extension Game {
         if !stationOpen { drawIndicator(context, size) }
         drawPopups(context, size)
         drawScreenFrame(context, size)
-        drawRadar(context, size)
+        if !stationOpen { drawRadar(context, size) }
         drawOverlays(context, size)
     }
 
