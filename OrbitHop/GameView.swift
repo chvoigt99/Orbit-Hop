@@ -4,6 +4,7 @@ struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
     @State private var world: World3D?
+    @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
     private let warn = Color(red: 1, green: 0.42, blue: 0.37)
@@ -65,6 +66,7 @@ struct GameView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .onAppear {
+            SoundFX.shared.prepare()
             // Welt erst nach dem ersten Bild aufbauen, damit der Ladebildschirm sichtbar ist
             if world == nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
@@ -272,6 +274,11 @@ struct GameView: View {
                 menuButton("WEITER", "play.fill", signal) { game.paused = false }
                 menuButton("NEUSTART", "arrow.counterclockwise", gold) { game.restart() }
                 menuButton("ABBRECHEN", "xmark", warn) { game.abort() }
+                if SoundFX.available {
+                    menuButton(soundOn ? "TON AN" : "TON AUS", soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill", dim) {
+                        soundOn.toggle()
+                    }
+                }
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 26)
@@ -411,6 +418,22 @@ struct GameView: View {
         .buttonStyle(.plain)
     }
 
+    private var soundButton: some View {
+        Button {
+            soundOn.toggle()
+        } label: {
+            Image(systemName: soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(soundOn ? signal : dim)
+                .frame(width: 48, height: 48)
+                .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                .overlay(Chamfer(cut: 8).stroke((soundOn ? signal : dim).opacity(0.7), lineWidth: 1.2))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(soundOn ? "Ton ausschalten" : "Ton einschalten")
+    }
+
     private var titleView: some View {
         VStack(spacing: 14) {
             titleTexts
@@ -419,7 +442,10 @@ struct GameView: View {
             // unter dem Startplaneten
             tapPrompt
                 .allowsHitTesting(false)
-            shipsButton
+            HStack(spacing: 10) {
+                shipsButton
+                if SoundFX.available { soundButton }
+            }
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

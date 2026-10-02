@@ -548,6 +548,7 @@ final class Game {
 
     func reset() {
         generation += 1
+        lastWarnTime = -10
         bursts = []
         ship = profile.selected
         runParts = 0
@@ -793,6 +794,7 @@ final class Game {
     // MARK: Pause
 
     var paused = false
+    private var lastWarnTime: CGFloat = -10
 
     func restart() {
         paused = false
@@ -869,6 +871,8 @@ final class Game {
         }
         shake = max(shake, 0.1 + accuracy * 0.15)
         Haptics.launch(accuracy)
+        SoundFX.shared.play(.launch, volume: 0.55 + 0.45 * accuracy)
+        if accuracy >= 0.9 { SoundFX.shared.play(.perfect) }
         blog("launch idx=\(currentIndex) acc=\(Int(accuracy * 100)) speed=\(Int(speed)) energy=\(Int(energy)) orbit=\(String(format: "%.1f", time - captureTime))s field=\(asteroids.contains { $0.gap == currentIndex + 1 })")
     }
 
@@ -881,6 +885,7 @@ final class Game {
         guard departAt == nil else { return }
         departAt = time
         Haptics.capture()
+        SoundFX.shared.play(.release)
     }
 
     /// Abflug aus dem Hangar: erst schweben, dann gleichmäßig beschleunigen bis auf Starttempo.
@@ -908,7 +913,10 @@ final class Game {
         let now = date.timeIntervalSinceReferenceDate
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
-        guard !paused else { return }
+        guard !paused else {
+            SoundFX.shared.engineHum(level: 0, pitch: 50)
+            return
+        }
         time += dt
 
         boostTime = max(0, boostTime - dt)
@@ -923,6 +931,37 @@ final class Game {
         if phase != .over { simulate(simDt) }
         updateFx(simDt)
         updateCamera(dt, size)
+        updateSound()
+    }
+
+    /// Triebwerkston nachführen und bei knapper Energie warnen
+    private func updateSound() {
+        var level: CGFloat = 0
+        var pitch: CGFloat = 48
+        switch phase {
+        case .docked:
+            if let t = departElapsed {
+                // Abheben: Triebwerke laufen hoch, beim Losrollen wird der Ton höher
+                let lift = min(1, t / Game.liftTime)
+                let roll = min(1, max(0, (t - Game.liftTime) / Game.rollTime))
+                level = 0.35 + 0.35 * lift + 0.3 * roll
+                pitch = 42 + 14 * lift + 30 * roll
+            }
+        case .orbiting:
+            level = 0.3
+            pitch = 50
+        case .flying:
+            level = 0.55 + (boostTime > 0 ? 0.35 : 0)
+            pitch = 50 + min(70, speed / 9)
+        case .over:
+            level = 0
+        }
+        SoundFX.shared.engineHum(level: started ? level : 0, pitch: pitch)
+
+        if started && (phase == .orbiting || phase == .flying) && energy < 20 && time - lastWarnTime > 1.4 {
+            lastWarnTime = time
+            SoundFX.shared.play(.warning)
+        }
     }
 
     private func botStep() {
@@ -994,6 +1033,7 @@ final class Game {
                 UserDefaults.standard.set(best, forKey: "orbitHopBest")
             }
             Haptics.gameOver()
+            SoundFX.shared.play(.gameOver)
             return
         }
 
@@ -1074,6 +1114,7 @@ final class Game {
         }
         popups.append(Popup(pos: p, text: kind.title, color: hsl(kind.hue, 0.85, 0.65), age: 0))
         Haptics.capture()
+        SoundFX.shared.play(kind == .tech ? .tech : .item)
     }
 
     // MARK: Waffen
@@ -1084,6 +1125,7 @@ final class Game {
         guard energy > weaponCost else {
             noEnergyFlash = 0.5
             Haptics.miss()
+            SoundFX.shared.play(.empty)
             return
         }
         energy -= weaponCost
@@ -1123,6 +1165,12 @@ final class Game {
                                           v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9))
         }
         Haptics.launch(0.3)
+        switch weapon {
+        case .cannon: SoundFX.shared.play(.cannon)
+        case .rocket: SoundFX.shared.play(.rocket)
+        case .railgun: SoundFX.shared.play(.railgun)
+        case .bomb: SoundFX.shared.play(.bomb)
+        }
     }
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit)
@@ -1214,6 +1262,7 @@ final class Game {
         waves.append(Wave(center: p, r0: 10, age: 0, maxAge: 0.6, hue: hue))
         shake = max(shake, radius > 200 ? 0.45 : 0.25)
         Haptics.launch(radius > 200 ? 1 : 0.6)
+        SoundFX.shared.play(radius > 200 ? .bigBlast : .blast)
     }
 
     /// Waffenschaden steigt mit der Ausbaustufe des Schiffs
@@ -1228,6 +1277,7 @@ final class Game {
             let a = asteroids[i]
             burst(at: a.center, count: 10, hue: a.kind == .comet ? 195 : 32, speed: 170, life: 0.5)
             shake = max(shake, 0.08)
+            if !blast { SoundFX.shared.play(.crack, volume: 0.45) }
         }
     }
 
@@ -1251,6 +1301,7 @@ final class Game {
         burst(at: a.center, count: 20, hue: a.kind == .wreck ? 20 : 32, speed: 240, life: 0.8)
         burst(at: a.center, count: 12, hue: 35, speed: 140, life: 1.0)
         if !blast { shake = max(shake, 0.12) }
+        SoundFX.shared.play(a.kind == .comet ? .blast : .crack, volume: blast ? 0.6 : 1)
     }
 
     private func hitAsteroid(_ i: Int) {
@@ -1280,6 +1331,7 @@ final class Game {
         popups.append(Popup(pos: pos, text: damage > 0 ? "BREMSE -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
         shake = max(shake, 0.35)
         Haptics.miss()
+        SoundFX.shared.play(.hit)
     }
 
     /// Energie auffüllen; was über das Maximum geht, sammelt sich und wird alle 100 zu einem Tech-Teil.
@@ -1314,6 +1366,7 @@ final class Game {
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
         shake = max(shake, 0.15)
         Haptics.capture()
+        SoundFX.shared.play(.bonus)
     }
 
     /// Liegt ein Hindernis dieser Strecke vor dem Schiff in der Flugbahn?
@@ -1351,6 +1404,7 @@ final class Game {
         popups.append(Popup(pos: pos, text: "SUPERBOMBE", color: hsl(ItemKind.superBomb.hue, 0.85, 0.7), age: 0))
         shake = max(shake, 0.6)
         Haptics.launch(1)
+        SoundFX.shared.play(.bigBlast)
     }
 
     private func fireRescue() {
@@ -1366,6 +1420,7 @@ final class Game {
         popups.append(Popup(pos: pos, text: "NACHBRENNER +30", color: hsl(ItemKind.rescue.hue, 0.9, 0.62), age: 0))
         shake = max(shake, 0.45)
         Haptics.launch(1)
+        SoundFX.shared.play(.rescue)
     }
 
     private func spawnExhaust() {}
@@ -1457,6 +1512,7 @@ final class Game {
         let pl = planets[index]
         shake = max(shake, 0.3)
         Haptics.capture()
+        SoundFX.shared.play(.capture, variant: index)
 
         if index > score {
             score = index
