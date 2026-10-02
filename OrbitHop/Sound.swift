@@ -114,7 +114,7 @@ final class SoundFX {
                 lfo += 2 * .pi * 3.1 / sr
                 if lfo > 2 * .pi { lfo -= 2 * .pi }
                 let f = pitch * (1 + 0.012 * sin(lfo))
-                phase += 2 * .pi * f / Synth.sr
+                phase += 2 * .pi * f / sr
                 if phase > 2 * .pi { phase -= 2 * .pi }
                 seed = seed &* 1_664_525 &+ 1_013_904_223
                 let white = Float(Int32(bitPattern: seed)) / Float(Int32.max)
