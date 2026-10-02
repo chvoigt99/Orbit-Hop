@@ -422,7 +422,7 @@ struct GameView: View {
                     .tracking(5)
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.6), radius: 12)
-                label("ENERGIE \(Int(game.energy)) / \(Int(game.maxEnergy)) · ⚙ \(game.profile.parts) · SCHIFFSTEILE \(game.profile.shipParts)")
+                label("ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy)) · ⚙ \(game.profile.parts) · SCHIFFSTEILE \(game.profile.shipParts)")
                     .foregroundStyle(gold)
                     .padding(.bottom, 8)
                 menuButton(full ? "ENERGIE VOLL" : "REPARIEREN", "wrench.and.screwdriver.fill", full ? dim : signal) {
