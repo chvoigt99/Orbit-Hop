@@ -433,6 +433,16 @@ enum Ship3D {
         return n
     }
 
+    /// Fürs Spiel: alle Bauteile zu wenigen Zeichenaufrufen (einer je Material) verschmelzen,
+    /// die Düsen-Marker bleiben als eigene Knoten erhalten.
+    static func simplified(_ ship: SCNNode) -> SCNNode {
+        let markers = outlets(of: ship).map { $0.0 }
+        markers.forEach { $0.removeFromParentNode() }
+        let flat = ship.flattenedClone()
+        markers.forEach { flat.addChildNode($0) }
+        return flat
+    }
+
     /// Düsen-Austritte eines Modells mit Radius
     static func outlets(of node: SCNNode) -> [(SCNNode, CGFloat)] {
         node.childNodes.compactMap { n in
@@ -443,7 +453,7 @@ enum Ship3D {
 
     /// Das Schiffsmodell ohne Licht und Kamera, Nase zeigt nach +x.
     static func shipNode(for m: ShipModel, showcase: Bool) -> SCNNode {
-        let n = ShipDesigns.build(m)
+        let n = showcase ? ShipDesigns.build(m) : simplified(ShipDesigns.build(m))
         for (o, r) in outlets(of: n) {
             // Glut hinter der Düse
             let halo = SCNNode(geometry: SCNPlane(width: r * 2.4, height: r * 2.4))

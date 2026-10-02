@@ -866,7 +866,7 @@ final class World3D {
     private func makeWreck(_ a: Asteroid) -> SCNNode {
         let root = SCNNode()
         root.position = v3(a.center, CGFloat((a.uid * 37) % 30 - 15))
-        let hull = ShipDesigns.build(ShipModel.all[a.variant % ShipModel.all.count])
+        let hull = Ship3D.simplified(ShipDesigns.build(ShipModel.all[a.variant % ShipModel.all.count]))
         let s = a.radius / 3.2
         hull.scale = SCNVector3(Float(s), Float(s), Float(s))
         hull.eulerAngles = SCNVector3(Float(a.phase), Float(a.phase * 1.7), 0.5)
