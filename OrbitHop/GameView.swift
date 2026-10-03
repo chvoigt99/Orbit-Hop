@@ -3,6 +3,7 @@ import SwiftUI
 struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
+    @State private var showMissions = false
     @State private var world: World3D?
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
@@ -11,6 +12,7 @@ struct GameView: View {
     private let gold = Color(red: 1, green: 0.85, blue: 0.42)
     private let dim = Color(red: 0.55, green: 0.6, blue: 0.72)
     private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
+    private let daily = Color(red: 0.72, green: 0.6, blue: 1)
 
     var body: some View {
         GeometryReader { geo in
@@ -70,6 +72,8 @@ struct GameView: View {
         .background(Color.black.ignoresSafeArea())
         .onAppear {
             SoundFX.shared.prepare()
+            // Nur für Tests: Missionsübersicht direkt öffnen
+            if ProcessInfo.processInfo.arguments.contains("-missions") { showMissions = true }
             if ProcessInfo.processInfo.arguments.contains("-renderShips") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
             }
@@ -81,6 +85,9 @@ struct GameView: View {
         .task {
             // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
             Store.shared.onCredit = { game.profile.addShipParts($0) }
+        }
+        .fullScreenCover(isPresented: $showMissions) {
+            MissionsView(log: game.missions, parts: game.profile.parts) { showMissions = false }
         }
         .fullScreenCover(isPresented: $showShop) {
             ShipShopView(profile: game.profile) {
@@ -115,6 +122,13 @@ struct GameView: View {
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
         if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
+        if game.inHorizon { return ("EREIGNISHORIZONT · PANZERUNG REISST", warn) }
+        if let c = game.horizonCountdown {
+            return ("SCHWARZES LOCH · BAHN ZERFÄLLT · \(Int(c.rounded(.up))) S", Color(red: 1, green: 0.6, blue: 0.3))
+        }
+        if game.phase == .orbiting && game.currentKind == .binary && game.solarPool > 0 {
+            return ("DOPPELSTERN · SONNENENERGIE", gold)
+        }
         if let kind = game.chargingKind, let f = game.chargeFraction {
             return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
         }
@@ -171,8 +185,13 @@ struct GameView: View {
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.7), radius: 8)
-                label("REKORD \(String(format: "%03d", game.best))")
-                    .foregroundStyle(signal.opacity(0.8))
+                if game.dailyMode {
+                    label("HEUTE \(String(format: "%03d", game.dailyBest))")
+                        .foregroundStyle(daily)
+                } else {
+                    label("REKORD \(String(format: "%03d", game.best))")
+                        .foregroundStyle(signal.opacity(0.8))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -351,6 +370,7 @@ struct GameView: View {
 
     private var effectsRow: some View {
         HStack(spacing: 6) {
+            if game.combo >= 2 { comboChip }
             if game.wideConeLaunches > 0 { chip("×\(game.wideConeLaunches)", .wideCone) }
             if game.superBombs > 0 { chip("×\(game.superBombs)", .superBomb) }
             if game.rescueCharges > 0 { chip("×\(game.rescueCharges)", .rescue) }
@@ -358,6 +378,24 @@ struct GameView: View {
             Spacer()
         }
         .frame(height: 20)
+    }
+
+    /// Combo-Anzeige: blinkt kurz auf, wenn sie wächst
+    private var comboChip: some View {
+        let col = Color(red: 1, green: 0.62, blue: 0.95)
+        let flash = max(0, 1 - (game.time - game.comboChangedAt) / 0.5)
+        return HStack(spacing: 4) {
+            Image(systemName: "flame.fill").font(.system(size: 9, weight: .bold))
+            label("COMBO ×\(game.combo) · +\(Int(((game.comboMultiplier - 1) * 100).rounded())) % ENERGIE")
+        }
+            .foregroundStyle(col)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Chamfer(cut: 5).fill(col.opacity(0.12 + 0.3 * Double(flash))))
+            .overlay(Chamfer(cut: 5).stroke(col.opacity(0.6 + 0.4 * Double(flash)), lineWidth: 1))
+            .scaleEffect(1 + 0.12 * flash)
     }
 
     private func chip(_ text: String, _ kind: ItemKind) -> some View {
@@ -512,6 +550,81 @@ struct GameView: View {
         .buttonStyle(.plain)
     }
 
+    /// Missionen und Erfolge; zeigt, wie nah die nächste Mission ist
+    private var missionsButton: some View {
+        let closest = game.missions.missions.map(\.fraction).max() ?? 0
+        return Button {
+            showMissions = true
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 14, weight: .bold))
+                label("\(game.missions.unlocked.count)/\(Achievement.all.count)")
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(signal.opacity(0.2))
+                        Rectangle().fill(signal).frame(width: g.size.width * closest)
+                    }
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 10)
+            }
+            .foregroundStyle(signal)
+            .frame(width: 56, height: 48)
+            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+            .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.7), lineWidth: 1.2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Missionen und Erfolge")
+    }
+
+    /// Tagesflug ein- oder ausschalten, im Tagesflug zusätzlich die Bestenliste
+    private var dailyRow: some View {
+        HStack(spacing: 10) {
+            Button {
+                let on = !game.dailyMode
+                game.setDaily(on)
+                if on { GameCenter.shared.authenticate() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: game.dailyMode ? "infinity" : "calendar")
+                        .font(.system(size: 12, weight: .bold))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(game.dailyMode ? "FREIES SPIEL" : "TAGESFLUG \(DailyChallenge.todayLabel)")
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .tracking(2)
+                        label(game.dailyMode ? "ZUFÄLLIGE STRECKE · REKORD \(game.best)"
+                                             : "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))")
+                            .foregroundStyle(dim)
+                    }
+                }
+                .foregroundStyle(game.dailyMode ? signal : daily)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                .overlay(Chamfer(cut: 8).stroke((game.dailyMode ? signal : daily).opacity(0.7), lineWidth: 1.2))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if game.dailyMode {
+                Button {
+                    GameCenter.shared.showDailyLeaderboard()
+                } label: {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(daily)
+                        .frame(width: 48, height: 48)
+                        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                        .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Bestenliste des Tages")
+            }
+        }
+    }
+
     private var soundButton: some View {
         Button {
             soundOn.toggle()
@@ -538,8 +651,10 @@ struct GameView: View {
                 .allowsHitTesting(false)
             HStack(spacing: 10) {
                 shipsButton
+                missionsButton
                 if SoundFX.available { soundButton }
             }
+            dailyRow
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -550,7 +665,7 @@ struct GameView: View {
     private var tapPrompt: some View {
         let pulse = 0.75 + 0.25 * sin(Double(game.time) * 4)
         // dunkles Feld dahinter, damit der Text auch auf der hellen Startplattform lesbar bleibt
-        return Text("TIPPEN ZUM STARTEN")
+        return Text(game.dailyMode ? "TIPPEN ZUM STARTEN · TAGESFLUG" : "TIPPEN ZUM STARTEN")
             .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .tracking(3)
             .foregroundStyle(signal)
@@ -588,7 +703,11 @@ struct GameView: View {
             VStack(spacing: 18) {
                 gameOverPanel
                     .allowsHitTesting(false)
-                shipsButton
+                HStack(spacing: 10) {
+                    shipsButton
+                    missionsButton
+                }
+                dailyRow
             }
         }
     }
@@ -609,13 +728,20 @@ struct GameView: View {
                     label("PLANETEN").foregroundStyle(dim)
                 }
                 VStack(spacing: 3) {
-                    Text(String(format: "%03d", game.best))
+                    Text(String(format: "%03d", game.dailyMode ? game.dailyBest : game.best))
                         .font(.system(size: 32, weight: .bold, design: .monospaced))
-                        .foregroundStyle(gold)
-                    label("REKORD").foregroundStyle(dim)
+                        .foregroundStyle(game.dailyMode ? daily : gold)
+                    label(game.dailyMode ? "HEUTE BESTER" : "REKORD").foregroundStyle(dim)
                 }
             }
             .foregroundStyle(.white)
+            if game.dailyMode {
+                label(game.dailyNewBest ? "TAGESFLUG \(DailyChallenge.todayLabel) · NEUER TAGESBESTWERT"
+                                        : "TAGESFLUG \(DailyChallenge.todayLabel) · VERSUCH \(DailyChallenge.tries(for: game.dailyDay))")
+                    .foregroundStyle(daily)
+            }
+            label("BESTE COMBO ×\(game.runBestCombo) · REKORD ×\(game.bestCombo)")
+                .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.95))
             label("+\(game.runParts) TECH-TEILE · GESAMT ⚙ \(game.profile.parts)")
                 .foregroundStyle(gold)
             if game.runShipParts > 0 {

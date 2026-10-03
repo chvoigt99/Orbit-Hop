@@ -24,7 +24,8 @@ extension Game {
         for a in asteroids where a.maxHP > 1 {
             guard let sp = project?(CGPoint(x: a.center.x, y: a.center.y)) else { continue }
             guard sp.x > -40, sp.x < size.width + 40, sp.y > insets.top + 120, sp.y < size.height - 120 else { continue }
-            let col = a.kind == .comet ? Color(red: 0.55, green: 0.85, blue: 1) : Color(red: 1, green: 0.6, blue: 0.3)
+            let col = a.kind == .comet ? Color(red: 0.55, green: 0.85, blue: 1)
+                : (a.kind == .drone ? Color(red: 1, green: 0.35, blue: 0.35) : Color(red: 1, green: 0.6, blue: 0.3))
             let segW: CGFloat = 7
             let total = CGFloat(a.maxHP) * (segW + 2)
             let x0 = sp.x - total / 2
