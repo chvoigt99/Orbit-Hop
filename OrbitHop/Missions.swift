@@ -9,6 +9,7 @@ enum MissionEvent {
     case perfect(inRun: Int)
     case obstacle
     case comet
+    case drone
     case bonus
     case blackHoleEscape
     case binary
@@ -124,6 +125,9 @@ struct Achievement: Identifiable {
         Achievement(id: "comet", title: "Kometenjäger", detail: "Einen Kometen zerstört", reward: 3, symbol: "sparkle") {
             if case .comet = $0 { return true }; return false
         },
+        Achievement(id: "drone", title: "Drohnenjäger", detail: "Eine Jägerdrohne zerstört", reward: 3, symbol: "scope") {
+            if case .drone = $0 { return true }; return false
+        },
         Achievement(id: "daily", title: "Tagesflieger", detail: "Einen Tagesflug abgeschlossen", reward: 2, symbol: "calendar") {
             if case .dailyDone = $0 { return true }; return false
         },
@@ -169,7 +173,7 @@ final class MissionLog {
             switch (m.kind, event) {
             case (.planetsInRun, .planet(let n)): p = max(p, n)
             case (.combo, .combo(let n)): p = max(p, n)
-            case (.obstacles, .obstacle), (.obstacles, .comet): p += 1
+            case (.obstacles, .obstacle), (.obstacles, .comet), (.obstacles, .drone): p += 1
             case (.perfects, .perfect): p += 1
             case (.specials, .blackHoleEscape), (.specials, .binary): p += 1
             case (.bonuses, .bonus): p += 1

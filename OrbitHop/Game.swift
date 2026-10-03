@@ -258,6 +258,8 @@ struct Item {
 
 enum ObstacleKind {
     case rock, debris, wreck, comet
+    /// Jägerdrohne: lauert auf der Strecke, verfolgt das fliegende Schiff und schießt
+    case drone
 
     var title: String {
         switch self {
@@ -265,6 +267,7 @@ enum ObstacleKind {
         case .debris: return "TRÜMMER"
         case .wreck: return "WRACK"
         case .comet: return "KOMET"
+        case .drone: return "DROHNE"
         }
     }
 }
@@ -285,6 +288,17 @@ struct Asteroid {
     var end: CGPoint? = nil    // hier verglüht der Komet
     var variant = 0
     var bumpUntil: CGFloat = 0 // nach einer Kollision kurz keine weitere
+    var fireAt: CGFloat = 0    // Drohne: nächster Schuss frühestens dann
+}
+
+/// Plasmaschuss einer Drohne
+struct EnemyShot {
+    let uid = UID.next()
+    var p: CGPoint
+    let v: CGVector
+    var age: CGFloat = 0
+    static let maxAge: CGFloat = 2.6
+    static let speed: CGFloat = 430
 }
 
 struct GasCloud {
@@ -501,6 +515,7 @@ final class Game {
     var beams: [Beam] = []
     var noEnergyFlash: CGFloat = 0
     var asteroids: [Asteroid] = []
+    var enemyShots: [EnemyShot] = []
     var clouds: [GasCloud] = []
     var brakeFlash: CGFloat = 0           // kurz nach einem Asteroidentreffer
     var orbitCharge: CGFloat = 0          // umrundeter Winkel am aktuellen Planeten
@@ -610,6 +625,8 @@ final class Game {
     static let stationTest = false
     /// Nur für Tests: Schwarzes Loch als zweites, Doppelstern als viertes Ziel (Start mit -planetTest)
     static let planetTest = ProcessInfo.processInfo.arguments.contains("-planetTest")
+    /// Nur für Tests: Drohnen auf jeder Strecke ab dem zweiten Ziel (Start mit -droneTest)
+    static let droneTest = ProcessInfo.processInfo.arguments.contains("-droneTest")
 
     // MARK: Raumstation
     /// Index des nächsten Planeten, der eine Raumstation wird
@@ -697,6 +714,7 @@ final class Game {
         beams = []
         weaponCooldown = 0
         asteroids = []
+        enemyShots = []
         clouds = []
         brakeFlash = 0
         orbitCharge = 0
@@ -789,6 +807,9 @@ final class Game {
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
         let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
         let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet oder vor einer Station)
+        let hasDrones = !station && !hasComet && planets.count >= (Game.droneTest ? 2 : 8)
+            && Double.random(in: 0...1, using: &Dice.rng) < (Game.droneTest ? 1 : Double(0.12 + 0.18 * lvl))
         let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
         let dist = prev.radius + r + gap
@@ -808,7 +829,7 @@ final class Game {
         planets.append(Planet.make(center: c, radius: r, spin: spin,
                                    hue: hue, allowRing: !station && kind == .normal,
                                    energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * kindEnergy, bonus: bonus))
-        planets[planets.count - 1].hardRoute = hasField || hasComet
+        planets[planets.count - 1].hardRoute = hasField || hasComet || hasDrones
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
 
@@ -817,6 +838,7 @@ final class Game {
 
         if hasField { spawnField(from: prev, to: planets[gapIndex], gap: gapIndex, lvl: lvl) }
         if hasComet { spawnComet(from: prev, to: planets[gapIndex], gap: gapIndex, lvl: lvl) }
+        if hasDrones { spawnDrones(from: prev, to: planets[gapIndex], gap: gapIndex, lvl: lvl) }
 
         // Gelegentlich ein Gasnebel (nur Optik)
         if Double.random(in: 0...1, using: &Dice.rng) < 0.2 {
@@ -850,7 +872,7 @@ final class Game {
         case .rock: count = Int.random(in: 8...(12 + Int(6 * lvl)), using: &Dice.rng)
         case .debris: count = Int.random(in: 10...(15 + Int(5 * lvl)), using: &Dice.rng)
         case .wreck: count = Int.random(in: 3...4, using: &Dice.rng)
-        case .comet: count = 0
+        case .comet, .drone: count = 0
         }
         for _ in 0..<count {
             // über die ganze Strecke verteilt, seitlich gestreut
@@ -897,7 +919,90 @@ final class Game {
                                   vel: CGVector(dx: dir.dx * 105, dy: dir.dy * 105), end: end))
     }
 
+    /// Ein bis drei Drohnen warten seitlich der Streckenmitte
+    private func spawnDrones(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
+        let count = 1 + (lvl > 0.35 ? 1 : 0) + (Double.random(in: 0...1, using: &Dice.rng) < Double(lvl) * 0.5 ? 1 : 0)
+        let dir = atan2(b.center.y - a.center.y, b.center.x - a.center.x)
+        for _ in 0..<count {
+            let t = CGFloat.random(in: 0.4...0.68, using: &Dice.rng)
+            let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
+            let p = point(from: along, angle: dir + .pi / 2, distance: CGFloat.random(in: -340...340, using: &Dice.rng))
+            let hp = 3 + Int(3 * lvl)
+            asteroids.append(Asteroid(center: p, radius: 22, shape: Array(repeating: 1, count: 9),
+                                      spin: 0, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
+                                      tone: 0.5, gap: gap, kind: .drone, hp: hp, maxHP: hp))
+        }
+    }
+
+    static let droneSpeed: CGFloat = 235
+    static let droneSight: CGFloat = 1500
+    static let droneRange: CGFloat = 780
+
+    /// Drohnen: im Flug auf ihrer Strecke Kurs auf das Schiff mit Vorhalt, schießen in Reichweite.
+    /// Sonst schweben sie langsam an ihrem Platz. In den Zielorbit folgen sie nicht.
+    private func moveDrones(_ dt: CGFloat) {
+        let tg = planets[min(originIndex + 1, planets.count - 1)]
+        for i in asteroids.indices where asteroids[i].kind == .drone {
+            let c = asteroids[i].center
+            let dx = pos.x - c.x, dy = pos.y - c.y
+            let d = hypot(dx, dy)
+            let hunting = phase == .flying && asteroids[i].gap == originIndex + 1 && d < Game.droneSight
+            var want = CGVector.zero
+            if hunting {
+                // Vorhalt: dorthin, wo das Schiff gleich sein wird
+                let lead = min(1.2, d / 600)
+                let ax = pos.x + vel.dx * lead - c.x, ay = pos.y + vel.dy * lead - c.y
+                let al = max(1, hypot(ax, ay))
+                want = CGVector(dx: ax / al * Game.droneSpeed, dy: ay / al * Game.droneSpeed)
+                if d < Game.droneRange && time >= asteroids[i].fireAt {
+                    asteroids[i].fireAt = time + CGFloat.random(in: 1.6...2.4)
+                    let sl = max(1, hypot(ax, ay))
+                    enemyShots.append(EnemyShot(p: c, v: CGVector(dx: ax / sl * EnemyShot.speed, dy: ay / sl * EnemyShot.speed)))
+                }
+            } else {
+                // langsames Kreisen am Platz
+                let a = asteroids[i].phase + time * 0.8
+                want = CGVector(dx: cos(a) * 25, dy: sin(a) * 25)
+            }
+            // nicht in den Zielorbit hinein
+            let tdx = c.x - tg.center.x, tdy = c.y - tg.center.y
+            let td = max(1, hypot(tdx, tdy))
+            if td < tg.orbitRadius + 260 {
+                want = CGVector(dx: tdx / td * Game.droneSpeed * 0.6, dy: tdy / td * Game.droneSpeed * 0.6)
+            }
+            // weich lenken statt sofort umzudrehen
+            let k = min(1, dt * 2.2)
+            asteroids[i].vel.dx += (want.dx - asteroids[i].vel.dx) * k
+            asteroids[i].vel.dy += (want.dy - asteroids[i].vel.dy) * k
+        }
+
+        // Plasmaschüsse fliegen geradeaus und treffen nur das Schiff
+        for i in enemyShots.indices.reversed() {
+            enemyShots[i].age += dt
+            enemyShots[i].p.x += enemyShots[i].v.dx * dt
+            enemyShots[i].p.y += enemyShots[i].v.dy * dt
+            let p = enemyShots[i].p
+            if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 {
+                enemyShots.remove(at: i)
+                let damage = (9 * (1 - 0.6 * ship.armor)).rounded()
+                hull = max(0, hull - damage)
+                brakeFlash = max(brakeFlash, 0.6)
+                burst(at: p, count: 18, hue: 355, speed: 200, life: 0.6)
+                popups.append(Popup(pos: pos, text: "PLASMATREFFER -\(Int(damage))", color: Color(red: 1, green: 0.45, blue: 0.45), age: 0))
+                shake = max(shake, 0.25)
+                Haptics.miss()
+                if comboFlight {
+                    comboFlight = false
+                    breakCombo()
+                }
+            } else if enemyShots[i].age > EnemyShot.maxAge {
+                enemyShots.remove(at: i)
+            }
+        }
+    }
+
     private func moveObstacles(_ dt: CGFloat) {
+        moveDrones(dt)
         // Kometen schieben sich immer vor das fliegende Schiff
         let sp = hypot(vel.dx, vel.dy)
         if phase == .flying && sp > 1 {
@@ -1428,9 +1533,10 @@ final class Game {
             let lead = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y) / 1900
             let ax = t.center.x + t.vel.dx * lead - muzzle.x
             let ay = t.center.y + t.vel.dy * lead - muzzle.y
-            // nur minimal ablenken: höchstens etwa 10°
+            // nur minimal ablenken: höchstens etwa 10°, bei Drohnen bis etwa 35°
             let want = atan2(ay, ax)
-            let hd = heading + max(-0.18, min(0.18, wrap(want - heading)))
+            let limit: CGFloat = t.kind == .drone ? 0.6 : 0.18
+            let hd = heading + max(-limit, min(limit, wrap(want - heading)))
             fwd = CGVector(dx: cos(hd), dy: sin(hd))
         }
 
@@ -1472,10 +1578,11 @@ final class Game {
             let dx = a.center.x - pos.x, dy = a.center.y - pos.y
             let d = hypot(dx, dy)
             // Kometen liegen ohnehin in der Flugbahn und werden früher erfasst
-            let range: CGFloat = a.kind == .comet ? 1700 : 750
+            let range: CGFloat = a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)
             guard d > 1, d < range + a.radius else { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
-            guard cosA > 0.96 || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
+            // Drohnen greifen von der Seite an: weiter Erfassungswinkel
+            guard cosA > (a.kind == .drone ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
             guard cosA > 0 else { continue }
             // Objekte direkt in der Flugbahn haben Vorrang
             let side = d * sqrt(max(0, 1 - cosA * cosA))
@@ -1574,13 +1681,14 @@ final class Game {
     private func destroyAsteroid(_ i: Int, blast: Bool) {
         let a = asteroids.remove(at: i)
         blog("destroy kind=\(a.kind)")
-        track(a.kind == .comet ? .comet : .obstacle)
+        track(a.kind == .comet ? .comet : (a.kind == .drone ? .drone : .obstacle))
         let techChance: Double
         switch a.kind {
         case .rock: techChance = 0.08
         case .debris: techChance = 0.08
         case .wreck: techChance = 0.35
         case .comet: techChance = 1
+        case .drone: techChance = 0.4
         }
         if Double.random(in: 0...1) < techChance { spawnTech(from: a.center) }
         // Schiffsteile sind selten: nur aus Wracks und Kometen
@@ -1591,6 +1699,10 @@ final class Game {
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
             popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0))
             shake = max(shake, 0.4)
+        }
+        if a.kind == .drone {
+            burst(at: a.center, count: 36, hue: 355, speed: 300, life: 0.9)
+            popups.append(Popup(pos: a.center, text: "DROHNE ZERSTÖRT", color: Color(red: 1, green: 0.5, blue: 0.45), age: 0))
         }
         burst(at: a.center, count: 20, hue: a.kind == .wreck ? 20 : 32, speed: 240, life: 0.8)
         burst(at: a.center, count: 12, hue: 35, speed: 140, life: 1.0)
@@ -1614,6 +1726,7 @@ final class Game {
         case .debris: (baseKeep, baseDamage) = (0.7, 2)
         case .wreck: (baseKeep, baseDamage) = (0.45, 5)
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
+        case .drone: (baseKeep, baseDamage) = (0.6, 4)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
         // Treffer gehen auf die Panzerung; gepanzerte Schiffe stecken mehr weg (Panzerungswert 0,6 → etwa 40 % weniger)

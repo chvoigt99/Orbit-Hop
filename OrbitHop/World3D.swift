@@ -409,6 +409,7 @@ final class World3D {
     private var asteroidNodes: [Int: SCNNode] = [:]
     private var itemNodes: [Int: SCNNode] = [:]
     private var projectileNodes: [Int: SCNNode] = [:]
+    private var enemyShotNodes: [Int: SCNNode] = [:]
     private var cloudNodes: [Int: SCNNode] = [:]
     private var seenBeams = Set<Int>()
     private var seenWaves = Set<Int>()
@@ -661,11 +662,11 @@ final class World3D {
     }
 
     private func clearAll() {
-        for d in [planetNodes, asteroidNodes, itemNodes, projectileNodes, cloudNodes] {
+        for d in [planetNodes, asteroidNodes, itemNodes, projectileNodes, cloudNodes, enemyShotNodes] {
             d.values.forEach { $0.removeFromParentNode() }
         }
         bonusRings.values.forEach { $0.node.removeFromParentNode() }
-        planetNodes = [:]; asteroidNodes = [:]; itemNodes = [:]; projectileNodes = [:]; cloudNodes = [:]; bonusRings = [:]
+        planetNodes = [:]; asteroidNodes = [:]; itemNodes = [:]; projectileNodes = [:]; cloudNodes = [:]; bonusRings = [:]; enemyShotNodes = [:]
         seenBeams = []; seenWaves = []
         orbitIndex = -1; lockIndex = -1; coneKey = ""
         arrivalIndex = -1; arrivalActive = false; arrival = 0
@@ -1213,7 +1214,79 @@ final class World3D {
         case .debris: return makeDebris(a)
         case .wreck: return makeWreck(a)
         case .comet: return makeComet(a)
+        case .drone: return makeDrone(a)
         }
+    }
+
+    /// Jägerdrohne: dunkler Rumpf, rotierender Schutzring mit drei Gondeln, rotes Auge vorn (+x)
+    private func makeDrone(_ a: Asteroid) -> SCNNode {
+        let root = SCNNode()
+        root.position = v3(a.center, 6)
+        let r = a.radius
+        let metal = SCNMaterial()
+        metal.lightingModel = .physicallyBased
+        metal.diffuse.contents = UIColor(white: 0.22, alpha: 1)
+        metal.metalness.contents = 0.9
+        metal.roughness.contents = 0.35
+        let red = glowMat(UIColor(red: 1, green: 0.18, blue: 0.15, alpha: 1), additive: false)
+
+        let body = SCNSphere(radius: r * 0.55)
+        body.segmentCount = 24
+        body.materials = [metal]
+        let bodyNode = SCNNode(geometry: body)
+        bodyNode.scale = SCNVector3(1.25, 0.7, 1)
+        root.addChildNode(bodyNode)
+
+        let eye = SCNSphere(radius: r * 0.2)
+        eye.materials = [red]
+        let eyeNode = SCNNode(geometry: eye)
+        eyeNode.position = SCNVector3(Float(r * 0.62), 0, 0)
+        root.addChildNode(eyeNode)
+
+        let spinner = SCNNode()
+        let ring = SCNTorus(ringRadius: r * 0.95, pipeRadius: r * 0.07)
+        ring.materials = [metal]
+        spinner.addChildNode(SCNNode(geometry: ring))
+        for k in 0..<3 {
+            let ang = Float(k) * 2 * .pi / 3
+            let pod = SCNBox(width: r * 0.32, height: r * 0.18, length: r * 0.32, chamferRadius: r * 0.05)
+            pod.materials = [metal]
+            let pn = SCNNode(geometry: pod)
+            pn.position = SCNVector3(cos(ang) * Float(r * 0.95), 0, sin(ang) * Float(r * 0.95))
+            spinner.addChildNode(pn)
+            let lamp = SCNSphere(radius: r * 0.08)
+            lamp.materials = [red]
+            let ln = SCNNode(geometry: lamp)
+            ln.position = SCNVector3(0, Float(r * 0.12), 0)
+            ln.runAction(.repeatForever(.sequence([.fadeOpacity(to: 0.2, duration: 0.35), .fadeOpacity(to: 1, duration: 0.35)])))
+            pn.addChildNode(ln)
+        }
+        spinner.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 1.6)))
+        root.addChildNode(spinner)
+
+        // roter Schein, damit man die Drohne auch klein erkennt
+        let glow = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
+        let gm = spriteMat(WorldTextures.soft)
+        gm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 0.55)
+        glow.geometry?.materials = [gm]
+        glow.constraints = [SCNBillboardConstraint()]
+        root.addChildNode(glow)
+        return root
+    }
+
+    /// Plasmaschuss der Drohnen: rote Kugel mit Schein
+    private func makeEnemyShot() -> SCNNode {
+        let n = SCNNode()
+        let core = SCNSphere(radius: 5)
+        core.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
+        n.addChildNode(SCNNode(geometry: core))
+        let glow = SCNNode(geometry: SCNPlane(width: 34, height: 34))
+        let gm = spriteMat(WorldTextures.soft)
+        gm.multiply.contents = UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
+        glow.geometry?.materials = [gm]
+        glow.constraints = [SCNBillboardConstraint()]
+        n.addChildNode(glow)
+        return n
     }
 
     private static let foil: SCNMaterial = {
@@ -1821,6 +1894,10 @@ final class World3D {
                 if a.kind == .comet && (a.vel.dx != 0 || a.vel.dy != 0) {
                     n.eulerAngles.y = Float(-atan2(a.vel.dy, a.vel.dx))
                 }
+                // Drohnen schauen in Flugrichtung, sobald sie Tempo haben
+                if a.kind == .drone && hypot(a.vel.dx, a.vel.dy) > 40 {
+                    n.eulerAngles.y = Float(-atan2(a.vel.dy, a.vel.dx))
+                }
             } else {
                 let n = makeObstacle(a)
                 scene.rootNode.addChildNode(n)
@@ -1889,6 +1966,23 @@ final class World3D {
         for (id, n) in projectileNodes where !alive.contains(id) {
             n.removeFromParentNode()
             projectileNodes[id] = nil
+        }
+
+        // Plasmaschüsse der Drohnen
+        alive = []
+        for sh in game.enemyShots {
+            alive.insert(sh.uid)
+            let n: SCNNode
+            if let e = enemyShotNodes[sh.uid] { n = e } else {
+                n = makeEnemyShot()
+                scene.rootNode.addChildNode(n)
+                enemyShotNodes[sh.uid] = n
+            }
+            n.position = v3(sh.p, 5)
+        }
+        for (id, n) in enemyShotNodes where !alive.contains(id) {
+            n.removeFromParentNode()
+            enemyShotNodes[id] = nil
         }
 
         // einmalige Effekte
