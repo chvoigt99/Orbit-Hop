@@ -2276,8 +2276,18 @@ struct WorldView: UIViewRepresentable {
     /// angehalten, solange ein Vollbild-Menü (Werft, Missionen) die Welt verdeckt
     var paused = false
 
+    func makeCoordinator() -> FrameCounter { FrameCounter() }
+
+    /// zählt fertig gezeichnete SceneKit-Bilder für die Bildraten-Messung
+    final class FrameCounter: NSObject, SCNSceneRendererDelegate {
+        func renderer(_ renderer: SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
+            PerfLog.sceneFrames += 1
+        }
+    }
+
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
+        if PerfLog.enabled { v.delegate = context.coordinator }
         v.scene = world.scene
         v.pointOfView = world.cameraNode
         v.backgroundColor = .black

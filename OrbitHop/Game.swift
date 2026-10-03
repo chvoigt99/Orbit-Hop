@@ -1,9 +1,52 @@
 import SwiftUI
+import QuartzCore
 #if canImport(UIKit)
 import UIKit
 #endif
 
 // MARK: - Haptik
+
+/// Bildraten-Messung für Tests auf dem Gerät (Startargument `-bot` oder `-perf`): schreibt alle 5 s eine Zeile
+/// `OHPERF` mit Bildern pro Sekunde (SwiftUI und SceneKit), Anzahl langsamer Bilder und Hauptthread-Zeit je Bild.
+enum PerfLog {
+    static let enabled = Game.bot || ProcessInfo.processInfo.arguments.contains("-perf")
+    /// vom SceneKit-Renderthread hochgezählt
+    static var sceneFrames = 0
+    private static var frames = 0
+    private static var slow = 0
+    private static var worst: Double = 0
+    private static var mainSum: Double = 0
+    private static var mainMax: Double = 0
+    private static var last: Double = 0
+    private static var windowStart: Double = 0
+    private static var lastScene = 0
+
+    /// einmal pro SwiftUI-Bild aufrufen; `main` = Dauer von Simulation und Szenenabgleich
+    static func frame(main: Double) {
+        guard enabled else { return }
+        let now = CACurrentMediaTime()
+        if last > 0 {
+            let dt = now - last
+            if dt > 1.0 / 45 { slow += 1 }
+            worst = max(worst, dt)
+        } else {
+            windowStart = now
+        }
+        last = now
+        frames += 1
+        mainSum += main
+        mainMax = max(mainMax, main)
+        let span = now - windowStart
+        guard span >= 5 else { return }
+        let scene = sceneFrames - lastScene
+        lastScene = sceneFrames
+        print(String(format: "OHPERF ui=%.0ffps scene=%.0ffps slow=%d worst=%.0fms main=%.1f/%.1fms mem=%dMB",
+                     Double(frames) / span, Double(scene) / span, slow, worst * 1000,
+                     mainSum / Double(max(1, frames)) * 1000, mainMax * 1000, Game.memoryMB()))
+        frames = 0; slow = 0; worst = 0; mainSum = 0; mainMax = 0
+        windowStart = now
+    }
+}
 
 enum Haptics {
     static func launch(_ accuracy: CGFloat) {

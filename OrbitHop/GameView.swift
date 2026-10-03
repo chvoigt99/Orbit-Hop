@@ -1,4 +1,5 @@
 import SwiftUI
+import QuartzCore
 
 struct GameView: View {
     @State private var game = Game()
@@ -23,12 +24,14 @@ struct GameView: View {
             // Werft und Missionen liegen als Vollbild darüber: dann steht die Welt still, statt unsichtbar
             // weiterzurechnen und neben der Werft-Vorschau eine zweite 3D-Szene zu zeichnen
             TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
+                let perfStart = CACurrentMediaTime()
                 let _ = (game.insets = insets)
                 let _ = game.step(date: timeline.date, size: full)
                 let _ = world.map { w in
                     game.project = w.project
                     w.sync(game, size: full)
                 }
+                let _ = PerfLog.frame(main: CACurrentMediaTime() - perfStart)
                 let loading = (world?.framesSynced ?? 0) < 3
                 let frameDate = timeline.date
                 ZStack {
