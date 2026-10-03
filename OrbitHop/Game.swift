@@ -954,6 +954,12 @@ final class Game {
                 let ax = pos.x + vel.dx * lead - c.x, ay = pos.y + vel.dy * lead - c.y
                 let al = max(1, hypot(ax, ay))
                 want = CGVector(dx: ax / al * Game.droneSpeed, dy: ay / al * Game.droneSpeed)
+                // Drohnen rammen nicht: aus der Nähe drehen sie seitlich ab und halten Abstand
+                if d < 320 {
+                    let side: CGFloat = asteroids[i].phase > .pi ? 1 : -1
+                    want = CGVector(dx: (-dx / max(1, d) - side * dy / max(1, d)) * Game.droneSpeed,
+                                    dy: (-dy / max(1, d) + side * dx / max(1, d)) * Game.droneSpeed)
+                }
                 if d < Game.droneRange && time >= asteroids[i].fireAt {
                     asteroids[i].fireAt = time + CGFloat.random(in: 1.6...2.4)
                     let sl = max(1, hypot(ax, ay))
@@ -1726,7 +1732,7 @@ final class Game {
         case .debris: (baseKeep, baseDamage) = (0.7, 2)
         case .wreck: (baseKeep, baseDamage) = (0.45, 5)
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
-        case .drone: (baseKeep, baseDamage) = (0.6, 4)
+        case .drone: (baseKeep, baseDamage) = (0.7, 2)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
         // Treffer gehen auf die Panzerung; gepanzerte Schiffe stecken mehr weg (Panzerungswert 0,6 → etwa 40 % weniger)

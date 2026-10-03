@@ -1237,11 +1237,19 @@ final class World3D {
         bodyNode.scale = SCNVector3(1.25, 0.7, 1)
         root.addChildNode(bodyNode)
 
-        let eye = SCNSphere(radius: r * 0.2)
+        // Auge sitzt vor dem Rumpf (Rumpf reicht in Flugrichtung bis etwa 0,69 r) und leuchtet nach oben sichtbar
+        let eye = SCNSphere(radius: r * 0.24)
         eye.materials = [red]
         let eyeNode = SCNNode(geometry: eye)
-        eyeNode.position = SCNVector3(Float(r * 0.62), 0, 0)
+        eyeNode.position = SCNVector3(Float(r * 0.7), Float(r * 0.12), 0)
+        eyeNode.renderingOrder = 10
         root.addChildNode(eyeNode)
+        let eyeGlow = SCNNode(geometry: SCNPlane(width: r * 1.2, height: r * 1.2))
+        let egm = spriteMat(WorldTextures.soft)
+        egm.multiply.contents = UIColor(red: 1, green: 0.25, blue: 0.2, alpha: 1)
+        eyeGlow.geometry?.materials = [egm]
+        eyeGlow.constraints = [SCNBillboardConstraint()]
+        eyeNode.addChildNode(eyeGlow)
 
         let spinner = SCNNode()
         let ring = SCNTorus(ringRadius: r * 0.95, pipeRadius: r * 0.07)
