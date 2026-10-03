@@ -7,6 +7,7 @@ struct GameView: View {
     @State private var showMissions = false
     @State private var world: World3D?
     @State private var loop = GameLoop()
+    @State private var sample = HUDSample()
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
@@ -54,11 +55,13 @@ struct GameView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
-                // HUD und Menüs: 30 Bilder pro Sekunde reichen für Zahlen und Leisten. Das Textlayout war der
-                // größte Posten auf dem Hauptthread und hat SwiftUI regelmäßig Bilder auslassen lassen.
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: worldCovered)) { hudTimeline in
+                // HUD und Menüs: 15 Bilder pro Sekunde reichen für Leisten und Blinken, fortlaufende Zahlen
+                // übernimmt HUDSample nur zweimal pro Sekunde. Das Textlayout war der größte Posten auf dem
+                // Hauptthread und hat zusammen mit dem Canvas regelmäßig Bilder auslassen lassen.
+                TimelineView(.animation(minimumInterval: 1.0 / 15, paused: worldCovered)) { hudTimeline in
                     let hudDate = hudTimeline.date
                     let _ = (PerfLog.uiFrames += 1)
+                    let _ = sample.update(game)
                     let loading = (world?.framesSynced ?? 0) < 3
                     ZStack {
                         if !PerfLog.noHUD {
@@ -165,8 +168,8 @@ struct GameView: View {
         if game.phase == .orbiting && game.currentKind == .binary && game.solarPool > 0 {
             return ("DOPPELSTERN · SONNENENERGIE", gold)
         }
-        if let kind = game.chargingKind, let f = game.chargeFraction {
-            return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
+        if let kind = game.chargingKind, game.chargeFraction != nil {
+            return ("BONUS LADEN · \(sample.charge) %", hsl(kind.hue, 0.85, 0.65))
         }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
@@ -247,7 +250,7 @@ struct GameView: View {
                 HStack {
                     label("ENERGIE")
                     Spacer()
-                    label(String(format: "%03d %%", Int(ceil(game.energy))))
+                    label(String(format: "%03d %%", sample.energy))
                 }
                 .foregroundStyle(blink ? warn : dim)
 
@@ -274,7 +277,7 @@ struct GameView: View {
                     .frame(height: 5)
                     .opacity(hullPulse)
                     .shadow(color: warn.opacity(hullLow ? 0.6 : 0), radius: 4)
-                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(hullLow || hitBlink ? warn : dim)
+                    label(String(format: "%03d", sample.hull)).foregroundStyle(hullLow || hitBlink ? warn : dim)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {
@@ -493,9 +496,9 @@ struct GameView: View {
             VStack(alignment: .leading, spacing: 4) {
                 label("TELEMETRIE").foregroundStyle(signal.opacity(0.8))
                 Rectangle().fill(signal.opacity(0.3)).frame(width: 110, height: 1)
-                readout("VEL", String(format: "%04d", Int(game.speed)), "M/S")
-                readout("ZIEL", String(format: "%05d", Int(game.targetDistance)), "KM")
-                readout("KURS", String(format: "%03d", game.headingDegrees), "GRD")
+                readout("VEL", String(format: "%04d", sample.speed), "M/S")
+                readout("ZIEL", String(format: "%05d", sample.distance), "KM")
+                readout("KURS", String(format: "%03d", sample.heading), "GRD")
                 readout("WAFFE", game.weapon.title, "\(Int(game.weaponCost))E")
                 readout("TECH", "+\(game.runParts)", "⚙")
                 if game.runShipParts > 0 { readout("SCHIFF", "+\(game.runShipParts)", "TEIL") }
@@ -854,6 +857,30 @@ struct Brackets: Shape {
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY - len))
         return p
+    }
+}
+
+/// Fortlaufende HUD-Zahlen, zweimal pro Sekunde übernommen: jede geänderte Zahl kostet ein neues Textlayout,
+/// und Tempo, Entfernung oder Energie änderten sich vorher in jedem Bild.
+final class HUDSample {
+    private var tick = -1
+    private(set) var energy = 0
+    private(set) var hull = 0
+    private(set) var charge = 0
+    private(set) var speed = 0
+    private(set) var distance = 0
+    private(set) var heading = 0
+
+    func update(_ game: Game) {
+        let t = Int(game.uiTime * 2)
+        guard t != tick else { return }
+        tick = t
+        energy = Int(ceil(game.energy))
+        hull = Int(ceil(game.hull))
+        charge = Int((game.chargeFraction ?? 0) * 100)
+        speed = Int(game.speed)
+        distance = Int(game.targetDistance)
+        heading = game.headingDegrees
     }
 }
 
