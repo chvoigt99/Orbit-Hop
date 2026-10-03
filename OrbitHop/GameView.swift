@@ -38,9 +38,11 @@ struct GameView: View {
                 // Markierungen und Ziel-Labels sitzen auf 3D-Objekten und laufen deshalb mit jedem Bild mit.
                 // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
                 // für unverändert und zeichnet ihn nie neu.
+                // rendersAsynchronously: RenderBox zeichnete den Canvas sonst im CA-Commit auf dem Hauptthread
+                // und wartete dort auf den Metal-Treiber
                 TimelineView(.animation(minimumInterval: nil, paused: worldCovered || PerfLog.noCanvas)) { timeline in
                     let frameDate = timeline.date
-                    Canvas { context, size in
+                    Canvas(rendersAsynchronously: true) { context, size in
                         _ = frameDate
                         game.drawTracked(context, size: size)
                     }
@@ -65,7 +67,7 @@ struct GameView: View {
                     let loading = (world?.framesSynced ?? 0) < 3
                     ZStack {
                         if !PerfLog.noHUD {
-                            Canvas { context, size in
+                            Canvas(rendersAsynchronously: true) { context, size in
                                 _ = hudDate
                                 game.drawChrome(context, size: size)
                             }
