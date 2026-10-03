@@ -8,13 +8,18 @@ extension Game {
     private var amber: Color { Color(red: 1, green: 0.78, blue: 0.4) }
     private var panel: Color { Color(red: 0.02, green: 0.07, blue: 0.11) }
 
-    /// Zeichnet nur noch die Bildschirm-Ebene über der 3D-Welt.
-    func draw(_ context: GraphicsContext, size: CGSize) {
+    /// Markierungen, die auf 3D-Objekten sitzen: laufen mit jedem Bild mit, sonst hinken sie hinterher
+    func drawTracked(_ context: GraphicsContext, size: CGSize) {
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
         if !stationOpen { drawPopups(context, size) }
-        drawScreenFrame(context, size)
+    }
+
+    /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild
+    /// auszuwerten, sprengte zusammen mit dem HUD das Zeitbudget des Hauptthreads.
+    func drawChrome(_ context: GraphicsContext, size: CGSize) {
+        drawScanBar(context, size)
         if !stationOpen { drawRadar(context, size) }
         drawOverlays(context, size)
     }
@@ -681,10 +686,9 @@ extension Game {
         let sp = screenPoint(t.center, size)
         let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
         let h = max(16, hypot(edge.x - sp.x, edge.y - sp.y))
-        // dunkler Schatten unter der Schrift, damit sie auch vor hellen Planeten lesbar bleibt
+        // kein Schattenfilter mehr: er kostete in jedem Bild einen eigenen Renderdurchgang, die dunkle Platte
+        // hinter der Schrift hält sie auch vor hellen Planeten lesbar
         let plain = c
-        var c = c
-        c.addFilter(.shadow(color: .black.opacity(0.9), radius: 2.5))
         let flip: CGFloat = sp.x + h + 110 > size.width ? -1 : 1
         let corner = CGPoint(x: sp.x + h * flip, y: sp.y - h)
         guard corner.x > 8, corner.x < size.width - 8,
@@ -705,7 +709,7 @@ extension Game {
         let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(amber))
-        let info = c.resolve(Text("\(Int(targetDistance)) km · +\(Int(t.energyGain.rounded())) E")
+        let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(amber.opacity(0.85)))
         let s1 = title.measure(in: size), s2 = info.measure(in: size)
@@ -920,7 +924,7 @@ extension Game {
         ar.fill(arrow, with: .color(col))
 
         let ty: CGFloat = iy > cy ? -32 : 32
-        c.draw(Text("\(Int(targetDistance)) km")
+        c.draw(Text("\(shownDistance) km")
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .foregroundColor(col),
                at: CGPoint(x: min(max(ix, 40), size.width - 40), y: iy + ty))
@@ -964,7 +968,8 @@ extension Game {
         c.stroke(plate, with: .color(accent.opacity(0.55 * alpha)), lineWidth: 1)
     }
 
-    private func drawScreenFrame(_ c: GraphicsContext, _ size: CGSize) {
+    /// Vignette und Scanlines ändern sich nie und werden nur bei neuer Bildgröße gezeichnet
+    func drawStaticFrame(_ c: GraphicsContext, size: CGSize) {
         let full = Path(CGRect(origin: .zero, size: size))
 
         // Vignette
@@ -974,7 +979,7 @@ extension Game {
             startRadius: min(size.width, size.height) * 0.45,
             endRadius: max(size.width, size.height) * 0.75))
 
-        // Scanlines und wandernder Abtastbalken
+        // Scanlines
         var scan = Path()
         var y: CGFloat = 0
         while y < size.height {
@@ -983,49 +988,13 @@ extension Game {
             y += 3
         }
         c.stroke(scan, with: .color(Color.white.opacity(0.018)), lineWidth: 1)
+    }
+
+    private func drawScanBar(_ c: GraphicsContext, _ size: CGSize) {
         let by = mod(time * 70, size.height + 240) - 120
         c.fill(Path(CGRect(x: 0, y: by, width: size.width, height: 120)),
                with: .linearGradient(Gradient(colors: [holo.opacity(0), holo.opacity(0.035), holo.opacity(0)]),
                                      startPoint: CGPoint(x: 0, y: by), endPoint: CGPoint(x: 0, y: by + 120)))
-
-        // Seitenskalen, laufen mit der Kamera
-        let top = insets.top + 160
-        let bottom = size.height - insets.bottom - 140
-        guard bottom > top else { return }
-        let spacing: CGFloat = 16
-        drawScale(c, x: 6, dir: 1, top: top, bottom: bottom, shift: cam.y * camScale * 0.6, spacing: spacing)
-        drawScale(c, x: size.width - 6, dir: -1, top: top, bottom: bottom, shift: cam.x * camScale * 0.6, spacing: spacing)
-    }
-
-    private func drawScale(_ c: GraphicsContext, x: CGFloat, dir: CGFloat, top: CGFloat, bottom: CGFloat,
-                           shift: CGFloat, spacing: CGFloat) {
-        let base = Int(floor(shift / spacing))
-        let off = shift - CGFloat(base) * spacing
-        var ticks = Path()
-        var k = 0
-        var y = top + spacing - off
-        while y < bottom {
-            let long = ((k + base) % 5 + 5) % 5 == 0
-            ticks.move(to: CGPoint(x: x, y: y))
-            ticks.addLine(to: CGPoint(x: x + dir * (long ? 10 : 4), y: y))
-            y += spacing
-            k += 1
-        }
-        let fade = Gradient(stops: [
-            .init(color: holo.opacity(0), location: 0),
-            .init(color: holo.opacity(0.45), location: 0.3),
-            .init(color: holo.opacity(0.45), location: 0.7),
-            .init(color: holo.opacity(0), location: 1)
-        ])
-        c.stroke(ticks, with: .linearGradient(fade, startPoint: CGPoint(x: x, y: top), endPoint: CGPoint(x: x, y: bottom)),
-                 lineWidth: 1)
-        let mid = (top + bottom) / 2
-        var marker = Path()
-        marker.move(to: CGPoint(x: x + dir * 14, y: mid))
-        marker.addLine(to: CGPoint(x: x + dir * 21, y: mid - 5))
-        marker.addLine(to: CGPoint(x: x + dir * 21, y: mid + 5))
-        marker.closeSubpath()
-        c.fill(marker, with: .color(signal.opacity(0.8)))
     }
 
     private func drawRadar(_ c: GraphicsContext, _ size: CGSize) {

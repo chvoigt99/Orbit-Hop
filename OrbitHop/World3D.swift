@@ -54,7 +54,7 @@ enum WorldTextures {
     static let soft: UIImage = radial(size: 128, stops: [(0.9, 0), (0.5, 0.45), (0, 1)])
 
     /// Solarzellen: dunkelblaue Felder mit hellem Raster
-    static let solarCells: UIImage = UIGraphicsImageRenderer(size: CGSize(width: 128, height: 64)).image { ctx in
+    static let solarCells: UIImage = textureRenderer(CGSize(width: 128, height: 64)).image { ctx in
         UIColor(red: 0.06, green: 0.1, blue: 0.22, alpha: 1).setFill()
         ctx.fill(CGRect(x: 0, y: 0, width: 128, height: 64))
         UIColor(red: 0.5, green: 0.6, blue: 0.75, alpha: 0.6).setStroke()
@@ -66,7 +66,7 @@ enum WorldTextures {
     }
 
     static func radial(size: Int, stops: [(CGFloat, CGFloat)]) -> UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+        textureRenderer(CGSize(width: size, height: size)).image { ctx in
             let colors = stops.map { UIColor(white: 1, alpha: $0.0).cgColor } as CFArray
             let locs = stops.map { $0.1 }
             let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: locs)!
@@ -76,12 +76,21 @@ enum WorldTextures {
         }
     }
 
-    /// Sternenhimmel als Rundum-Panorama
-    static let sky: UIImage = {
+    /// Sternenhimmel als Rundum-Panorama. Doppelte Auflösung reicht für scharfe Sterne
+    /// (dreifach, wie UIKit es von sich aus nähme, wären über 70 MB).
+    static let sky: UIImage = skyImage(scale: 2)
+
+    /// Kleine Fassung desselben Himmels für die Umgebungsbeleuchtung: SceneKit filtert sie ohnehin weich,
+    /// eine große Vorlage kostet dort nur Speicher und Ladezeit
+    static let skyLight: UIImage = skyImage(scale: 0.25)
+
+    private static func skyImage(scale: CGFloat) -> UIImage {
         var rng = SeededRNG("sky")
         let w: CGFloat = 2048, h: CGFloat = 1024
-        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h)).image { ctx in
+        // in Punkten zeichnen und das Bild selbst skalieren, damit beide Fassungen denselben Himmel zeigen
+        return textureRenderer(CGSize(width: w * scale, height: h * scale)).image { ctx in
             let g = ctx.cgContext
+            g.scaleBy(x: scale, y: scale)
             g.setFillColor(UIColor(red: 0.012, green: 0.016, blue: 0.04, alpha: 1).cgColor)
             g.fill(CGRect(x: 0, y: 0, width: w, height: h))
             for _ in 0..<26 {
@@ -101,13 +110,13 @@ enum WorldTextures {
                 g.fillEllipse(in: CGRect(x: p.x - s / 2, y: p.y - s / 2, width: s, height: s))
             }
         }
-    }()
+    }
 
     /// Gasriese / Gesteinsplanet als Panoramatextur
     static func planet(_ p: Planet, seed: String) -> UIImage {
         var rng = SeededRNG(seed)
         let w: CGFloat = 512, h: CGFloat = 256
-        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h)).image { ctx in
+        return textureRenderer(CGSize(width: w, height: h), scale: 2).image { ctx in
             let g = ctx.cgContext
             let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                                   colors: [uic(p.hue, 0.55, 0.5).cgColor, uic(p.hue, 0.6, 0.38).cgColor, uic(p.hue, 0.55, 0.5).cgColor] as CFArray,
@@ -166,7 +175,7 @@ enum WorldTextures {
     /// Photonenring des Schwarzen Lochs: dünner, heller Saum knapp außerhalb des Kerns
     static let photonRing: UIImage = {
         let size: CGFloat = 256
-        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+        return textureRenderer(CGSize(width: size, height: size)).image { ctx in
             let c = CGPoint(x: size / 2, y: size / 2)
             let colors = [UIColor(red: 1, green: 0.75, blue: 0.45, alpha: 0).cgColor,
                           UIColor(red: 1, green: 0.93, blue: 0.8, alpha: 1).cgColor,
@@ -185,7 +194,7 @@ enum WorldTextures {
     static let accretionDisk: UIImage = {
         var rng = SeededRNG("accretion")
         let size: CGFloat = 512
-        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+        return textureRenderer(CGSize(width: size, height: size), scale: 2).image { ctx in
             let g = ctx.cgContext
             let c = CGPoint(x: size / 2, y: size / 2)
             let R = size / 2
@@ -225,7 +234,7 @@ enum WorldTextures {
     static func sunSurface(hue: Double, seed: String) -> UIImage {
         var rng = SeededRNG(seed)
         let w: CGFloat = 256, h: CGFloat = 128
-        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h)).image { ctx in
+        return textureRenderer(CGSize(width: w, height: h), scale: 2).image { ctx in
             uic(hue, 0.95, 0.66).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
             for _ in 0..<500 {
@@ -241,10 +250,33 @@ enum WorldTextures {
         }
     }
 
+    private static var ringCache: [Int: UIImage] = [:]
+
+    /// Bei Speicherwarnung: Ringtexturen neu erzeugen lassen statt sie vorzuhalten
+    static func purge() { ringCache.removeAll() }
+
+    /// Ringtextur je Farbton nur einmal erzeugen (gleicher Farbton ergibt ohnehin dasselbe Bild)
     static func ring(hue: Double) -> UIImage {
+        if let img = cachedRing(hue: hue) { return img }
+        let img = makeRing(hue: hue)
+        storeRing(img, hue: hue)
+        return img
+    }
+
+    /// Zugriff auf den Vorrat nur vom Hauptthread
+    static func cachedRing(hue: Double) -> UIImage? { ringCache[Int(hue)] }
+
+    static func storeRing(_ img: UIImage, hue: Double) {
+        // kleiner Vorrat genügt, es sind immer nur wenige Planeten gleichzeitig in der Szene
+        if ringCache.count > 8 { ringCache.removeAll() }
+        ringCache[Int(hue)] = img
+    }
+
+    /// darf auf jedem Thread laufen
+    static func makeRing(hue: Double) -> UIImage {
         var rng = SeededRNG("ring\(Int(hue))")
         let s: CGFloat = 512
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+        return textureRenderer(CGSize(width: s, height: s), scale: 2).image { ctx in
             let g = ctx.cgContext
             var r: CGFloat = s / 2
             while r > s * 0.3 {
@@ -260,7 +292,7 @@ enum WorldTextures {
     static let rock: UIImage = {
         var rng = SeededRNG("rock")
         let s: CGFloat = 256
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { ctx in
+        return textureRenderer(CGSize(width: s, height: s)).image { ctx in
             UIColor(red: 0.42, green: 0.38, blue: 0.35, alpha: 1).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: s, height: s))
             for _ in 0..<500 {
@@ -271,11 +303,20 @@ enum WorldTextures {
         }
     }()
 
-    /// Hexagon-Plakette mit Symbol (Items und Ladering)
+    private static var badgeCache: [ItemKind: UIImage] = [:]
+
+    /// Hexagon-Plakette mit Symbol (Items und Ladering), je Sorte nur einmal gezeichnet
     static func badge(_ kind: ItemKind) -> UIImage {
+        if let img = badgeCache[kind] { return img }
+        let img = makeBadge(kind)
+        badgeCache[kind] = img
+        return img
+    }
+
+    private static func makeBadge(_ kind: ItemKind) -> UIImage {
         let s: CGFloat = 128
         let col = uic(kind.hue, 0.85, 0.62)
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { _ in
+        return textureRenderer(CGSize(width: s, height: s)).image { _ in
             let hex = UIBezierPath()
             for k in 0..<6 {
                 let a = CGFloat(k) * .pi / 3 + .pi / 6
@@ -401,7 +442,9 @@ final class World3D {
     private struct BonusRing {
         let node: SCNNode
         let progress: SCNNode
-        let color: UIColor
+        /// Materialien der Fortschrittsbögen (Schein, Kern, heller Strich); ihr Shader blendet den Rest des Rings aus
+        let arcMats: [SCNMaterial]
+        let head: SCNNode
         let radius: CGFloat
         var step = -1
     }
@@ -449,7 +492,7 @@ final class World3D {
 
     init() {
         scene.background.contents = WorldTextures.sky
-        scene.lightingEnvironment.contents = WorldTextures.sky
+        scene.lightingEnvironment.contents = WorldTextures.skyLight
         scene.lightingEnvironment.intensity = 0.5
 
         let cam = SCNCamera()
@@ -486,6 +529,16 @@ final class World3D {
         scene.rootNode.addChildNode(lockGroup)
         buildOrbitParts()
         buildDock()
+        // Stationslacke schon während des Ladebildschirms erzeugen, sonst hakt es beim Auftauchen der ersten Station
+        for (key, c) in [("station", UIColor(white: 0.66, alpha: 1)), ("station-dark", UIColor(white: 0.22, alpha: 1)),
+                         ("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))] {
+            _ = WornPaint.material(key, base: c)
+        }
+        // Texturen des Schwarzen Lochs entstehen beim ersten Zugriff; das im Hintergrund erledigen
+        Self.textureQueue.async {
+            _ = WorldTextures.accretionDisk
+            _ = WorldTextures.photonRing
+        }
         scene.rootNode.addChildNode(dockNode)
     }
 
@@ -675,7 +728,19 @@ final class World3D {
 
     // MARK: Planeten
 
-    private func makePlanet(_ p: Planet, index: Int) -> SCNNode {
+    /// Planeten- und Ringtexturen entstehen im Hintergrund: ein Planet braucht dafür um 50 ms, auf dem
+    /// Hauptthread war das jedes Mal ein spürbarer Hänger. Neue Planeten liegen weit voraus, bis sie ins Bild
+    /// kommen, ist die Textur längst da.
+    private static let textureQueue = DispatchQueue(label: "orbix.textures", qos: .userInitiated)
+
+    /// Lädt Texturen und Shader eines Materials oder Knotens vorab auf die GPU und ruft dann `then` auf dem
+    /// Hauptthread auf. Ohne das erledigt SceneKit es im ersten Bild, in dem das Objekt auftaucht, und dieses Bild hängt.
+    private func upload(_ object: Any, then: @escaping () -> Void) {
+        guard let view else { then(); return }
+        view.prepare([object]) { _ in DispatchQueue.main.async(execute: then) }
+    }
+
+    private func makePlanet(_ p: Planet, index: Int, immediate: Bool) -> SCNNode {
         let root = SCNNode()
         root.position = v3(p.center)
         // Raumstation statt Planet: eigenes Modell, kein Planetenkörper
@@ -689,7 +754,7 @@ final class World3D {
             root.addChildNode(makeBlackHole(p))
             return root
         case .binary:
-            root.addChildNode(makeBinary(p, seed: "binary\(index)"))
+            root.addChildNode(makeBinary(p, seed: "binary\(index)", immediate: immediate))
             return root
         }
 
@@ -701,7 +766,21 @@ final class World3D {
         sphere.segmentCount = 64
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
-        m.diffuse.contents = WorldTextures.planet(p, seed: "planet\(index)")
+        let seed = "planet\(index)"
+        if immediate {
+            m.diffuse.contents = WorldTextures.planet(p, seed: seed)
+        } else {
+            // Grundfarbe als Platzhalter, bis die Textur fertig ist
+            m.diffuse.contents = uic(p.hue, 0.55, 0.45)
+            Self.textureQueue.async { [weak self] in
+                let img = WorldTextures.planet(p, seed: seed)
+                DispatchQueue.main.async {
+                    let ready = m.copy() as! SCNMaterial
+                    ready.diffuse.contents = img
+                    self?.upload(ready) { sphere.materials = [ready] }
+                }
+            }
+        }
         m.roughness.contents = 0.85
         m.metalness.contents = 0
         sphere.materials = [m]
@@ -737,12 +816,32 @@ final class World3D {
             path.append(UIBezierPath(ovalIn: CGRect(x: -p.radius * 1.25, y: -p.radius * 1.25, width: p.radius * 2.5, height: p.radius * 2.5)))
             path.usesEvenOddFillRule = true
             let rm = SCNMaterial()
+            // Form entsteht erst unten; die Textur kann frühestens im nächsten Durchlauf des Hauptthreads kommen
+            weak var shape: SCNGeometry?
             rm.lightingModel = .lambert
-            rm.diffuse.contents = WorldTextures.ring(hue: p.hue)
+            if let img = WorldTextures.cachedRing(hue: p.hue) {
+                rm.diffuse.contents = img
+            } else if immediate {
+                rm.diffuse.contents = WorldTextures.ring(hue: p.hue)
+            } else {
+                // unsichtbar, bis die Ringtextur im Hintergrund fertig ist
+                rm.diffuse.contents = UIColor.clear
+                let hue = p.hue
+                Self.textureQueue.async { [weak self] in
+                    let img = WorldTextures.makeRing(hue: hue)
+                    DispatchQueue.main.async {
+                        WorldTextures.storeRing(img, hue: hue)
+                        let ready = rm.copy() as! SCNMaterial
+                        ready.diffuse.contents = img
+                        self?.upload(ready) { shape?.materials = [ready] }
+                    }
+                }
+            }
             rm.isDoubleSided = true
             rm.writesToDepthBuffer = true
             rm.transparencyMode = .aOne
             let ring = flatShape(path, rm, depth: 0.5)
+            shape = ring.geometry
             tilt.addChildNode(ring)
         }
 
@@ -825,7 +924,7 @@ final class World3D {
 
     /// Doppelstern: zwei Sonnen umkreisen den gemeinsamen Schwerpunkt. Der Winkel kommt aus dem Spiel,
     /// damit das Pendeln der Bahn zur sichtbaren Stellung der Sonnen passt.
-    private func makeBinary(_ p: Planet, seed: String) -> SCNNode {
+    private func makeBinary(_ p: Planet, seed: String, immediate: Bool) -> SCNNode {
         let root = SCNNode()
         let pair = SCNNode()
         pair.name = "binary"
@@ -843,9 +942,26 @@ final class World3D {
             sphere.segmentCount = 48
             let m = SCNMaterial()
             m.lightingModel = .constant
-            let tex = WorldTextures.sunSurface(hue: sun.hue, seed: "\(seed)-\(k)")
-            m.diffuse.contents = tex
-            m.emission.contents = tex
+            let sunSeed = "\(seed)-\(k)"
+            if immediate {
+                let tex = WorldTextures.sunSurface(hue: sun.hue, seed: sunSeed)
+                m.diffuse.contents = tex
+                m.emission.contents = tex
+            } else {
+                // zwei Sonnentexturen kosteten zusammen bis 90 ms auf dem Hauptthread; bis sie fertig sind, Grundfarbe
+                let base = uic(sun.hue, 0.95, 0.6)
+                m.diffuse.contents = base
+                m.emission.contents = base
+                Self.textureQueue.async { [weak self] in
+                    let tex = WorldTextures.sunSurface(hue: sun.hue, seed: sunSeed)
+                    DispatchQueue.main.async {
+                        let ready = m.copy() as! SCNMaterial
+                        ready.diffuse.contents = tex
+                        ready.emission.contents = tex
+                        self?.upload(ready) { sphere.materials = [ready] }
+                    }
+                }
+            }
             sphere.materials = [m]
             let body = SCNNode(geometry: sphere)
             body.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 18 + Double(k) * 6)))
@@ -1034,6 +1150,21 @@ final class World3D {
         root.addChildNode(flatShape(base, glowMat(col.withAlphaComponent(0.4)), depth: 0.5))
         let progress = SCNNode()
         root.addChildNode(progress)
+        // Fortschritt: drei volle Ringe, einmal gebaut; der Shader zeigt nur den geladenen Anteil.
+        // Früher entstanden beim Laden bis zu 360 neue SCNShape-Geometrien je Bonus.
+        let arcMats = [glowMat(col.withAlphaComponent(0.45)), glowMat(col), glowMat(UIColor.white.withAlphaComponent(0.85))]
+        for (m, (width, depth)) in zip(arcMats, [(34, 0.4), (13, 0.8), (4, 1.0)] as [(CGFloat, CGFloat)]) {
+            m.shaderModifiers = [.fragment: Self.progressShader]
+            m.setValue(NSNumber(value: 0), forKey: "pgProgress")
+            let path = UIBezierPath(ovalIn: CGRect(x: -rr - width / 2, y: -rr - width / 2, width: rr * 2 + width, height: rr * 2 + width))
+            path.append(UIBezierPath(ovalIn: CGRect(x: -rr + width / 2, y: -rr + width / 2, width: rr * 2 - width, height: rr * 2 - width)))
+            path.usesEvenOddFillRule = true
+            progress.addChildNode(flatShape(path, m, depth: depth))
+        }
+        let head = SCNNode(geometry: SCNSphere(radius: 11))
+        head.geometry?.materials = [glowMat(UIColor.white)]
+        progress.addChildNode(head)
+        progress.isHidden = true
         let badge = SCNNode(geometry: SCNPlane(width: 1, height: 1))
         // immer obenauf, damit der Planet das Symbol nicht verdeckt
         let bm = spriteMat(WorldTextures.badge(kind))
@@ -1044,29 +1175,32 @@ final class World3D {
         badge.name = "badge"
         badge.position = SCNVector3(0, Float(p.radius * 0.35), Float(-rr - 12))
         root.addChildNode(badge)
-        return BonusRing(node: root, progress: progress, color: col, radius: rr)
+        return BonusRing(node: root, progress: progress, arcMats: arcMats, head: head, radius: rr)
     }
 
     private func updateProgress(_ r: inout BonusRing, fraction: CGFloat) {
         let step = Int(fraction * 120)
         guard step != r.step else { return }
         r.step = step
-        r.progress.childNodes.forEach { $0.removeFromParentNode() }
-        guard step > 0 else { return }
-        let a0 = -CGFloat.pi / 2
-        let a1 = a0 + .pi * 2 * CGFloat(step) / 120
-        // breiter Schein, kräftiger Kern und ein heller Punkt an der Spitze des Fortschritts
-        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 34, from: a0, to: a1),
-                                          glowMat(r.color.withAlphaComponent(0.45)), depth: 0.4))
-        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 13, from: a0, to: a1),
-                                          glowMat(r.color), depth: 0.8))
-        r.progress.addChildNode(flatShape(arcPath(radius: r.radius, width: 4, from: a0, to: a1),
-                                          glowMat(UIColor.white.withAlphaComponent(0.85)), depth: 1.0))
-        let head = SCNNode(geometry: SCNSphere(radius: 11))
-        head.geometry?.materials = [glowMat(UIColor.white)]
-        head.position = SCNVector3(Float(cos(a1) * r.radius), 1, Float(sin(a1) * r.radius))
-        r.progress.addChildNode(head)
+        let f = CGFloat(step) / 120
+        r.progress.isHidden = step <= 0
+        r.arcMats.forEach { $0.setValue(NSNumber(value: Float(f)), forKey: "pgProgress") }
+        // heller Punkt an der Spitze des Fortschritts
+        let a1 = -CGFloat.pi / 2 + .pi * 2 * f
+        r.head.position = SCNVector3(Float(cos(a1) * r.radius), 1, Float(sin(a1) * r.radius))
     }
+
+    /// Zeigt von einem vollen Ring nur den Bogen ab 12 Uhr bis `pgProgress` (0…1). Die Materialien mischen additiv,
+    /// Schwarz ist daher unsichtbar. Winkel im Modellraum der Ringform (Pfadebene), wie bei arcPath.
+    private static let progressShader = """
+    #pragma arguments
+    float pgProgress;
+
+    #pragma body
+    float3 pgPos = (scn_node.inverseModelViewTransform * float4(_surface.position, 1.0)).xyz;
+    float pgT = fract((atan2(pgPos.y, pgPos.x) + 1.5707963) / 6.2831853);
+    if (pgT > pgProgress) { _output.color = float4(0.0); }
+    """
 
     // MARK: Bahn, Kegel, Zielerfassung
 
@@ -1119,13 +1253,7 @@ final class World3D {
         tri.addLine(to: CGPoint(x: cos(half) * len, y: sin(half) * len))
         tri.addLine(to: CGPoint(x: cos(half) * len, y: -sin(half) * len))
         tri.close()
-        let grad = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 8)).image { ctx in
-            let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                               colors: [UIColor(white: 0.45, alpha: 1).cgColor, UIColor(white: 0, alpha: 1).cgColor] as CFArray,
-                               locations: [0, 1])!
-            ctx.cgContext.drawLinearGradient(g, start: .zero, end: CGPoint(x: 256, y: 0), options: [])
-        }
-        let fill = spriteMat(grad)
+        let fill = spriteMat(WorldTextures.coneFade)
         fill.multiply.contents = UIColor.white
         let fillNode = flatShape(tri, fill, depth: 0.3)
         coneNode.addChildNode(fillNode)
@@ -1176,20 +1304,12 @@ final class World3D {
 
         // Holo-Gitter um den Zielplaneten (bei Stationen nicht, es würde das Modell verdecken)
         if !p.isStation && p.kind == .normal {
-            let grid = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
-                let g = ctx.cgContext
-                g.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
-                g.setLineWidth(1.5)
-                for k in 0...16 { let x = CGFloat(k) * 32; g.move(to: CGPoint(x: x, y: 0)); g.addLine(to: CGPoint(x: x, y: 256)) }
-                for k in 0...8 { let y = CGFloat(k) * 32; g.move(to: CGPoint(x: 0, y: y)); g.addLine(to: CGPoint(x: 512, y: y)) }
-                g.strokePath()
-        }
-        let hm = spriteMat(grid)
-        hm.multiply.contents = holo.withAlphaComponent(0.35)
-        let sphere = SCNSphere(radius: p.radius * 1.03)
-        sphere.segmentCount = 48
-        sphere.materials = [hm]
-        lockHolo.addChildNode(SCNNode(geometry: sphere))
+            let hm = spriteMat(WorldTextures.holoGrid)
+            hm.multiply.contents = holo.withAlphaComponent(0.35)
+            let sphere = SCNSphere(radius: p.radius * 1.03)
+            sphere.segmentCount = 48
+            sphere.materials = [hm]
+            lockHolo.addChildNode(SCNNode(geometry: sphere))
         }
 
         // Klammern
@@ -1309,7 +1429,7 @@ final class World3D {
     }()
 
     private static let solar: SCNMaterial = {
-        let img = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256)).image { ctx in
+        let img = textureRenderer(CGSize(width: 256, height: 256)).image { ctx in
             UIColor(red: 0.06, green: 0.12, blue: 0.32, alpha: 1).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
             UIColor(red: 0.5, green: 0.6, blue: 0.75, alpha: 1).setStroke()
@@ -1378,12 +1498,18 @@ final class World3D {
     private func makeWreck(_ a: Asteroid) -> SCNNode {
         let root = SCNNode()
         root.position = v3(a.center, CGFloat((a.uid * 37) % 30 - 15))
-        let hull = Ship3D.simplified(ShipDesigns.build(ShipModel.all[a.variant % ShipModel.all.count]))
+        // Schiffsmodell je Typ nur einmal bauen und danach klonen (der Klon teilt Geometrie und Materialien).
+        // Der Bau mit neuen Lacken dauert pro Typ bis 100 ms, deshalb im Hintergrund; das Wrack liegt weit
+        // voraus und bekommt seinen Rumpf, sobald das Modell fertig ist
         let s = a.radius / 3.2
-        hull.scale = SCNVector3(Float(s), Float(s), Float(s))
-        hull.eulerAngles = SCNVector3(Float(a.phase), Float(a.phase * 1.7), 0.5)
-        hull.runAction(.repeatForever(.rotate(by: .pi * 2, around: SCNVector3(0.3, 1, 0.2), duration: 22)))
-        root.addChildNode(hull)
+        let phase = a.phase
+        withWreckModel(a.variant % ShipModel.all.count) { model in
+            let hull = model.clone()
+            hull.scale = SCNVector3(Float(s), Float(s), Float(s))
+            hull.eulerAngles = SCNVector3(Float(phase), Float(phase * 1.7), 0.5)
+            hull.runAction(.repeatForever(.rotate(by: .pi * 2, around: SCNVector3(0.3, 1, 0.2), duration: 22)))
+            root.addChildNode(hull)
+        }
         let fire = SCNNode(geometry: SCNPlane(width: a.radius * 1.4, height: a.radius * 1.4))
         let fm = spriteMat(WorldTextures.soft)
         fm.multiply.contents = UIColor(red: 1, green: 0.35, blue: 0.08, alpha: 1)
@@ -1555,6 +1681,31 @@ final class World3D {
     }
 
     private var activeBeams: [(node: SCNNode, angle: CGFloat, len: CGFloat)] = []
+    private var wreckModels: [Int: SCNNode] = [:]
+    private var wreckWaiting: [Int: [(SCNNode) -> Void]] = [:]
+
+    /// liefert das Wrack-Modell eines Schiffstyps, sofort oder (beim ersten Mal) nach dem Bau im Hintergrund
+    private func withWreckModel(_ variant: Int, _ use: @escaping (SCNNode) -> Void) {
+        if let m = wreckModels[variant] { use(m); return }
+        if wreckWaiting[variant] != nil {
+            wreckWaiting[variant]?.append(use)
+            return
+        }
+        wreckWaiting[variant] = [use]
+        Self.textureQueue.async { [weak self] in
+            let model = Ship3D.simplified(ShipDesigns.build(ShipModel.all[variant]))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Klone teilen Geometrie und Lacke, einmal hochladen reicht für alle Wracks dieses Typs
+                self.upload(model) { [weak self] in
+                    guard let self else { return }
+                    self.wreckModels[variant] = model
+                    let waiting = self.wreckWaiting.removeValue(forKey: variant) ?? []
+                    waiting.forEach { $0(model) }
+                }
+            }
+        }
+    }
 
     private func spawnBeam(_ b: Beam, px: CGFloat) {
         let dx = b.to.x - b.from.x, dy = b.to.y - b.from.y
@@ -1701,7 +1852,9 @@ final class World3D {
         let px = normalPx + (parkedPx - normalPx) * ka
         lastPx = px
 
+        let t0 = CACurrentMediaTime()
         syncPlanets(game, px: px)
+        let t1 = CACurrentMediaTime()
         // Im Hangar die Planeten voraus ausblenden, sie lägen je nach Level hinter dem Titel
         for (i, n) in planetNodes where i > game.currentIndex {
             n.opacity = 1 - kh
@@ -1710,8 +1863,15 @@ final class World3D {
             r.node.opacity = 1 - kh
         }
         syncOrbit(game, px: px, dt: dt)
+        let t2 = CACurrentMediaTime()
         syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
+        let t3 = CACurrentMediaTime()
+        // Messung: einzelne langsame Abgleiche benennen
+        if PerfLog.enabled && t3 - t0 > 0.012 {
+            print(String(format: "OHSPIKE planets=%.1fms orbit=%.1fms objects=%.1fms idx=%d",
+                         (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000, game.currentIndex))
+        }
         // ebenso Hindernisse, Nebel und Items auf der Strecke (nur solange der Hangar-Übergang läuft)
         if kh > 0 || lastHangarFade > 0 {
             for n in [asteroidNodes, cloudNodes, itemNodes].flatMap({ $0.values }) {
@@ -1735,7 +1895,8 @@ final class World3D {
             planetNodes[i] = nil
         }
         for i in first..<game.planets.count where planetNodes[i] == nil {
-            let n = makePlanet(game.planets[i], index: i + game.generation * 1000)
+            // Start- und Zielplanet sofort fertig, alles weiter voraus mit Textur aus dem Hintergrund
+            let n = makePlanet(game.planets[i], index: i + game.generation * 1000, immediate: i <= game.currentIndex + 1)
             scene.rootNode.addChildNode(n)
             planetNodes[i] = n
         }
@@ -1755,6 +1916,8 @@ final class World3D {
             if bonusRings[i] == nil {
                 let r = makeBonusRing(game.planets[i], kind: kind)
                 scene.rootNode.addChildNode(r.node)
+                // Ladeshader schon jetzt übersetzen, nicht erst beim ersten Laden im Orbit
+                view?.prepare([r.node], completionHandler: nil)
                 bonusRings[i] = r
             }
             guard var r = bonusRings[i] else { continue }
@@ -1915,6 +2078,10 @@ final class World3D {
         for (id, n) in asteroidNodes where !alive.contains(id) {
             n.removeFromParentNode()
             asteroidNodes[id] = nil
+        }
+        // Wrack-Modelle nur vorhalten, solange ein Wrackfeld in der Nähe ist (je Typ etwa 10 MB Lacktexturen)
+        if !wreckModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .wreck }) {
+            wreckModels.removeAll()
         }
 
         // Nebel
@@ -2209,25 +2376,62 @@ final class World3D {
 
 extension WorldTextures {
     static let railHue: Double = WeaponKind.railgun.hue
+
+    /// Verlauf im Startkegel: zur Spitze hell, nach außen dunkel
+    static let coneFade: UIImage = textureRenderer(CGSize(width: 256, height: 8)).image { ctx in
+        let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                           colors: [UIColor(white: 0.45, alpha: 1).cgColor, UIColor(white: 0, alpha: 1).cgColor] as CFArray,
+                           locations: [0, 1])!
+        ctx.cgContext.drawLinearGradient(g, start: .zero, end: CGPoint(x: 256, y: 0), options: [])
+    }
+
+    /// Holo-Gitter der Zielerfassung, wird für jeden Zielplaneten wiederverwendet
+    static let holoGrid: UIImage = textureRenderer(CGSize(width: 512, height: 256), scale: 2).image { ctx in
+        let g = ctx.cgContext
+        g.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
+        g.setLineWidth(1.5)
+        for k in 0...16 { let x = CGFloat(k) * 32; g.move(to: CGPoint(x: x, y: 0)); g.addLine(to: CGPoint(x: x, y: 256)) }
+        for k in 0...8 { let y = CGFloat(k) * 32; g.move(to: CGPoint(x: 0, y: y)); g.addLine(to: CGPoint(x: 512, y: y)) }
+        g.strokePath()
+    }
 }
 
 // MARK: - SwiftUI-Hülle
 
 struct WorldView: UIViewRepresentable {
     let world: World3D
+    /// angehalten, solange ein Vollbild-Menü (Werft, Missionen) die Welt verdeckt
+    var paused = false
+
+    func makeCoordinator() -> FrameCounter { FrameCounter() }
+
+    /// zählt fertig gezeichnete SceneKit-Bilder für die Bildraten-Messung
+    final class FrameCounter: NSObject, SCNSceneRendererDelegate {
+        func renderer(_ renderer: SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
+            PerfLog.sceneFrame()
+        }
+    }
 
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
+        if PerfLog.enabled { v.delegate = context.coordinator }
         v.scene = world.scene
         v.pointOfView = world.cameraNode
         v.backgroundColor = .black
-        v.antialiasingMode = .multisampling4X
-        v.isPlaying = true
-        v.rendersContinuously = true
+        // 2× reicht bei der Pixeldichte aktueller iPhones; 4× verdoppelt die HDR-Bildpuffer
+        v.antialiasingMode = .multisampling2X
         v.preferredFramesPerSecond = 60
+        apply(paused, to: v)
         world.view = v
         return v
     }
 
-    func updateUIView(_ v: SCNView, context: Context) {}
+    func updateUIView(_ v: SCNView, context: Context) {
+        if v.isPlaying == paused { apply(paused, to: v) }
+    }
+
+    private func apply(_ paused: Bool, to v: SCNView) {
+        v.isPlaying = !paused
+        v.rendersContinuously = !paused
+    }
 }

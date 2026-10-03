@@ -1,10 +1,13 @@
 import SwiftUI
+import QuartzCore
 
 struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
     @State private var showMissions = false
     @State private var world: World3D?
+    @State private var loop = GameLoop()
+    @State private var sample = HUDSample()
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
@@ -20,51 +23,77 @@ struct GameView: View {
             let full = CGSize(width: geo.size.width + insets.leading + insets.trailing,
                               height: geo.size.height + insets.top + insets.bottom)
 
-            TimelineView(.animation) { timeline in
-                let _ = (game.insets = insets)
-                let _ = game.step(date: timeline.date, size: full)
-                let _ = world.map { w in
-                    game.project = w.project
-                    w.sync(game, size: full)
+            // Simulation und 3D-Welt laufen im Bildschirmtakt (GameLoop). Früher hingen sie an der TimelineView,
+            // und jedes Bild, das SwiftUI ausließ, stand die Welt still, obwohl SceneKit weiterzeichnete: Ruckeln.
+            let _ = loop.configure(size: full, insets: insets, paused: worldCovered)
+            // Werft und Missionen liegen als Vollbild darüber: dann steht die Welt still, statt unsichtbar
+            // weiterzurechnen und neben der Werft-Vorschau eine zweite 3D-Szene zu zeichnen
+            ZStack {
+                if let world {
+                    WorldView(world: world, paused: worldCovered)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
                 }
-                let loading = (world?.framesSynced ?? 0) < 3
-                let frameDate = timeline.date
-                ZStack {
-                    if let world {
-                        WorldView(world: world)
-                            .ignoresSafeArea()
-                            .allowsHitTesting(false)
-                    }
 
-                    // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
-                    // für unverändert und zeichnet ihn nie neu.
-                    Canvas { context, size in
+                // Markierungen und Ziel-Labels sitzen auf 3D-Objekten und laufen deshalb mit jedem Bild mit.
+                // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
+                // für unverändert und zeichnet ihn nie neu.
+                // rendersAsynchronously: RenderBox zeichnete den Canvas sonst im CA-Commit auf dem Hauptthread
+                // und wartete dort auf den Metal-Treiber
+                TimelineView(.animation(minimumInterval: nil, paused: worldCovered || PerfLog.noCanvas)) { timeline in
+                    let frameDate = timeline.date
+                    Canvas(rendersAsynchronously: true) { context, size in
                         _ = frameDate
-                        game.draw(context, size: size)
+                        game.drawTracked(context, size: size)
                     }
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { game.tap() }
+                }
 
-                    hud
-                        .allowsHitTesting(false)
-                    if !game.started {
-                        titleView
-                    }
-                    if game.started && game.phase != .over && !game.paused && !game.stationOpen {
-                        pauseButton
-                    }
-                    if game.paused {
-                        pauseMenu
-                    }
-                    if game.stationOpen {
-                        stationMenu
-                    }
-                    if game.phase == .over {
-                        gameOverView
-                    }
-                    if loading {
-                        loadingView
+                Canvas { context, size in
+                    game.drawStaticFrame(context, size: size)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+                // HUD und Menüs: 15 Bilder pro Sekunde reichen für Leisten und Blinken, fortlaufende Zahlen
+                // übernimmt HUDSample nur zweimal pro Sekunde. Das Textlayout war der größte Posten auf dem
+                // Hauptthread und hat zusammen mit dem Canvas regelmäßig Bilder auslassen lassen.
+                TimelineView(.animation(minimumInterval: 1.0 / 15, paused: worldCovered)) { hudTimeline in
+                    let hudDate = hudTimeline.date
+                    let _ = (PerfLog.uiFrames += 1)
+                    let _ = sample.update(game)
+                    let loading = (world?.framesSynced ?? 0) < 3
+                    ZStack {
+                        if !PerfLog.noHUD {
+                            Canvas(rendersAsynchronously: true) { context, size in
+                                _ = hudDate
+                                game.drawChrome(context, size: size)
+                            }
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
+                            hud
+                                .allowsHitTesting(false)
+                        }
+                        if !game.started {
+                            titleView
+                        }
+                        if game.started && game.phase != .over && !game.paused && !game.stationOpen {
+                            pauseButton
+                        }
+                        if game.paused {
+                            pauseMenu
+                        }
+                        if game.stationOpen {
+                            stationMenu
+                        }
+                        if game.phase == .over {
+                            gameOverView
+                        }
+                        if loading {
+                            loadingView
+                        }
                     }
                 }
             }
@@ -78,9 +107,19 @@ struct GameView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
             }
             // Welt erst nach dem ersten Bild aufbauen, damit der Ladebildschirm sichtbar ist
+            loop.start(game)
             if world == nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    let w = World3D()
+                    world = w
+                    loop.world = w
+                }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            // iOS beendet speicherhungrige Apps ohne Absturzbericht; vorher alles abgeben, was sich neu erzeugen lässt
+            Ship3D.purgeCaches()
+            WorldTextures.purge()
         }
         .task {
             // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
@@ -102,6 +141,8 @@ struct GameView: View {
     }
 
     // MARK: Hilfen
+
+    private var worldCovered: Bool { showShop || showMissions }
 
     private func label(_ text: String) -> Text {
         Text(text)
@@ -129,8 +170,8 @@ struct GameView: View {
         if game.phase == .orbiting && game.currentKind == .binary && game.solarPool > 0 {
             return ("DOPPELSTERN · SONNENENERGIE", gold)
         }
-        if let kind = game.chargingKind, let f = game.chargeFraction {
-            return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
+        if let kind = game.chargingKind, game.chargeFraction != nil {
+            return ("BONUS LADEN · \(sample.charge) %", hsl(kind.hue, 0.85, 0.65))
         }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
@@ -157,9 +198,16 @@ struct GameView: View {
             topBar
             statusLine
             effectsRow
-            precisionBadge
+            // unsichtbare Texte nicht jedes Bild neu setzen lassen (Textlayout ist der größte Posten im Profil)
+            if game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch {
+                precisionBadge
+            } else {
+                Color.clear.frame(height: 42)
+            }
             Spacer()
-            hint
+            if game.hintShown && game.started && game.phase != .docked {
+                hint
+            }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
             bottomBar.opacity(game.stationOpen ? 0 : 1)
         }
@@ -204,7 +252,7 @@ struct GameView: View {
                 HStack {
                     label("ENERGIE")
                     Spacer()
-                    label(String(format: "%03d %%", Int(ceil(game.energy))))
+                    label(String(format: "%03d %%", sample.energy))
                 }
                 .foregroundStyle(blink ? warn : dim)
 
@@ -231,7 +279,7 @@ struct GameView: View {
                     .frame(height: 5)
                     .opacity(hullPulse)
                     .shadow(color: warn.opacity(hullLow ? 0.6 : 0), radius: 4)
-                    label(String(format: "%03d", Int(ceil(game.hull)))).foregroundStyle(hullLow || hitBlink ? warn : dim)
+                    label(String(format: "%03d", sample.hull)).foregroundStyle(hullLow || hitBlink ? warn : dim)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {
@@ -414,7 +462,6 @@ struct GameView: View {
     }
 
     private var precisionBadge: some View {
-        let show = game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch
         let tier = precisionTier(game.lastAccuracy)
         return Text("\(tier.0) · \(Int(game.lastAccuracy * 100)) %")
             .font(.system(size: 18, weight: .bold, design: .monospaced))
@@ -424,7 +471,6 @@ struct GameView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
             .overlay(Brackets(len: 8).stroke(tier.1.opacity(0.8), lineWidth: 1.5))
-            .opacity(show ? 1 : 0)
             .padding(.top, 4)
     }
 
@@ -435,7 +481,6 @@ struct GameView: View {
             .foregroundStyle(dim)
             .padding(10)
             .background(panelBackground(cut: 8, edge: dim))
-            .opacity(game.hintShown && game.started && game.phase != .docked ? 1 : 0)
     }
 
     private func readout(_ key: String, _ value: String, _ unit: String) -> some View {
@@ -453,9 +498,9 @@ struct GameView: View {
             VStack(alignment: .leading, spacing: 4) {
                 label("TELEMETRIE").foregroundStyle(signal.opacity(0.8))
                 Rectangle().fill(signal.opacity(0.3)).frame(width: 110, height: 1)
-                readout("VEL", String(format: "%04d", Int(game.speed)), "M/S")
-                readout("ZIEL", String(format: "%05d", Int(game.targetDistance)), "KM")
-                readout("KURS", String(format: "%03d", game.headingDegrees), "GRD")
+                readout("VEL", String(format: "%04d", sample.speed), "M/S")
+                readout("ZIEL", String(format: "%05d", sample.distance), "KM")
+                readout("KURS", String(format: "%03d", sample.heading), "GRD")
                 readout("WAFFE", game.weapon.title, "\(Int(game.weaponCost))E")
                 readout("TECH", "+\(game.runParts)", "⚙")
                 if game.runShipParts > 0 { readout("SCHIFF", "+\(game.runShipParts)", "TEIL") }
@@ -814,6 +859,71 @@ struct Brackets: Shape {
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY - len))
         return p
+    }
+}
+
+/// Fortlaufende HUD-Zahlen, zweimal pro Sekunde übernommen: jede geänderte Zahl kostet ein neues Textlayout,
+/// und Tempo, Entfernung oder Energie änderten sich vorher in jedem Bild.
+final class HUDSample {
+    private var tick = -1
+    private(set) var energy = 0
+    private(set) var hull = 0
+    private(set) var charge = 0
+    private(set) var speed = 0
+    private(set) var distance = 0
+    private(set) var heading = 0
+
+    func update(_ game: Game) {
+        let t = Int(game.uiTime * 2)
+        guard t != tick else { return }
+        tick = t
+        energy = Int(ceil(game.energy))
+        hull = Int(ceil(game.hull))
+        charge = Int((game.chargeFraction ?? 0) * 100)
+        speed = Int(game.speed)
+        distance = Int(game.targetDistance)
+        heading = game.headingDegrees
+    }
+}
+
+/// Treibt Simulation und Abgleich der 3D-Welt mit jedem Bildschirmbild an, unabhängig davon, wann SwiftUI die
+/// Oberfläche neu auswertet. SceneKit zeichnet ohnehin jedes Bild; bekommt es keinen neuen Spielstand, steht
+/// die Welt für ein Bild still, und das sieht man vor allem bei der Kamerafahrt im Orbit als Ruckeln.
+final class GameLoop: NSObject {
+    private var link: CADisplayLink?
+    private weak var game: Game?
+    weak var world: World3D?
+    private var size: CGSize = .zero
+    private var insets = EdgeInsets()
+    private var paused = false
+
+    func start(_ game: Game) {
+        self.game = game
+        guard link == nil else { return }
+        let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    /// aus dem View-Body: Bildgröße, Ränder und ob ein Vollbild-Menü die Welt verdeckt
+    func configure(size: CGSize, insets: EdgeInsets, paused: Bool) {
+        self.size = size
+        self.insets = insets
+        self.paused = paused
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let game, !paused, size.width > 0 else { return }
+        let start = CACurrentMediaTime()
+        game.insets = insets
+        // Zeitpunkt, zu dem das Bild erscheint: gleichmäßigere Schritte als die Aufrufzeit
+        game.step(date: Date(timeIntervalSinceReferenceDate: link.targetTimestamp), size: size)
+        if let world {
+            game.project = world.project
+            world.sync(game, size: size)
+        }
+        PerfLog.frame(main: CACurrentMediaTime() - start, orbiting: game.phase == .orbiting)
     }
 }
 

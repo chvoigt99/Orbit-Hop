@@ -1,9 +1,81 @@
 import SwiftUI
+import QuartzCore
 #if canImport(UIKit)
 import UIKit
 #endif
 
 // MARK: - Haptik
+
+/// Bildraten-Messung für Tests auf dem Gerät (Startargument `-bot` oder `-perf`): schreibt alle 5 s eine Zeile
+/// `OHPERF` mit Simulationsschritten, SwiftUI- und SceneKit-Bildern pro Sekunde, langsamen Schritten (gesamt und
+/// im Orbit), Hängern des SceneKit-Renderers und Hauptthread-Zeit je Schritt.
+enum PerfLog {
+    static let enabled = Game.bot || ProcessInfo.processInfo.arguments.contains("-perf")
+    /// nur für Messungen: Canvas-Overlay (`-noCanvas`) oder HUD und Menüs (`-noHUD`) weglassen
+    static let noCanvas = ProcessInfo.processInfo.arguments.contains("-noCanvas")
+    static let noHUD = ProcessInfo.processInfo.arguments.contains("-noHUD")
+    /// vom SceneKit-Renderthread geschrieben (nur grobe Zählung für das Log)
+    static var sceneFrames = 0
+    private static var sceneLast: Double = 0
+    private static var sceneSlow = 0
+    private static var sceneWorst: Double = 0
+    /// SwiftUI-Auswertungen der Oberfläche
+    static var uiFrames = 0
+    private static var frames = 0
+    private static var slow = 0
+    private static var orbitSlow = 0
+    private static var worst: Double = 0
+    private static var mainSum: Double = 0
+    private static var mainMax: Double = 0
+    private static var last: Double = 0
+    private static var windowStart: Double = 0
+    private static var lastScene = 0
+
+    /// vom SceneKit-Renderthread nach jedem gezeichneten Bild
+    static func sceneFrame() {
+        let now = CACurrentMediaTime()
+        if sceneLast > 0 {
+            let dt = now - sceneLast
+            if dt > 1.0 / 45 { sceneSlow += 1 }
+            sceneWorst = max(sceneWorst, dt)
+        }
+        sceneLast = now
+        sceneFrames += 1
+    }
+
+    /// einmal pro Simulationsschritt aufrufen; `main` = Dauer von Simulation und Szenenabgleich
+    static func frame(main: Double, orbiting: Bool) {
+        guard enabled else { return }
+        let now = CACurrentMediaTime()
+        if last > 0 {
+            let dt = now - last
+            if dt > 1.0 / 45 {
+                slow += 1
+                if orbiting { orbitSlow += 1 }
+            }
+            worst = max(worst, dt)
+        } else {
+            windowStart = now
+        }
+        last = now
+        frames += 1
+        mainSum += main
+        mainMax = max(mainMax, main)
+        let span = now - windowStart
+        guard span >= 5 else { return }
+        let scene = sceneFrames - lastScene
+        lastScene = sceneFrames
+        print(String(format: "OHPERF sim=%.0ffps ui=%.0ffps scene=%.0ffps slow=%d orbitSlow=%d worst=%.0fms "
+                     + "sceneSlow=%d sceneWorst=%.0fms main=%.1f/%.1fms mem=%dMB thermal=%d",
+                     Double(frames) / span, Double(uiFrames) / span, Double(scene) / span, slow, orbitSlow, worst * 1000,
+                     sceneSlow, sceneWorst * 1000,
+                     mainSum / Double(max(1, frames)) * 1000, mainMax * 1000, Game.memoryMB(),
+                     ProcessInfo.processInfo.thermalState.rawValue))
+        frames = 0; slow = 0; orbitSlow = 0; worst = 0; mainSum = 0; mainMax = 0; uiFrames = 0
+        sceneSlow = 0; sceneWorst = 0
+        windowStart = now
+    }
+}
 
 enum Haptics {
     static func launch(_ accuracy: CGFloat) {
@@ -160,7 +232,7 @@ struct Popup {
     var age: CGFloat
 
     /// So lange bleibt der Text voll sichtbar, danach blendet er über `fade` aus.
-    static let hold: CGFloat = 2.0
+    static let hold: CGFloat = 1.4
     static let fade: CGFloat = 0.8
     static var lifetime: CGFloat { hold + fade }
 }
@@ -493,6 +565,18 @@ final class Game {
     /// läuft auch in Pause und Stationsmenü weiter (für Kamerafahrten im Menü)
     var uiTime: CGFloat = 0
     var lastTime: TimeInterval?
+    private var distanceTick = -1
+    private var distanceShown = 0
+    /// Zielentfernung für Ziel-Label und Pfeil, zweimal pro Sekunde übernommen: eine neue Zahl in jedem Bild
+    /// bedeutete in jedem Bild neues Textlayout
+    var shownDistance: Int {
+        let t = Int(uiTime * 2)
+        if t != distanceTick {
+            distanceTick = t
+            distanceShown = Int(targetDistance)
+        }
+        return distanceShown
+    }
     var overAt: CGFloat = 0
     var lastAccuracy: CGFloat = 0
     var lastLaunchTime: CGFloat = -10
@@ -676,6 +760,18 @@ final class Game {
     func blog(_ text: String) {
         guard Game.bot else { return }
         print("OHLOG \(String(format: "%.1f", time)) \(text)")
+    }
+
+    /// Speicherbedarf der App in MB, so wie iOS ihn für das Beenden wegen Speichermangels zählt (nur fürs Bot-Log)
+    static func memoryMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
     init() {
@@ -1355,7 +1451,7 @@ final class Game {
         }
         if time >= botNextTick {
             botNextTick = time + 5
-            blog("tick phase=\(phase) idx=\(currentIndex) score=\(score) energy=\(Int(energy)) speed=\(Int(speed)) shots=\(botShots) obstacles=\(asteroids.count)")
+            blog("tick phase=\(phase) idx=\(currentIndex) score=\(score) energy=\(Int(energy)) speed=\(Int(speed)) shots=\(botShots) obstacles=\(asteroids.count) mem=\(Game.memoryMB())MB")
         }
         switch phase {
         case .docked:
@@ -1513,7 +1609,7 @@ final class Game {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
-        popups.append(Popup(pos: p, text: kind.title, color: hsl(kind.hue, 0.85, 0.65), age: 0))
+        // keine Texteinblendung beim Einsammeln: Lichtblitz, Ton und HUD-Anzeige reichen
         Haptics.capture()
         SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
@@ -1764,7 +1860,6 @@ final class Game {
         while overflow >= 100 {
             overflow -= 100
             spawnTech(from: origin)
-            popups.append(Popup(pos: pos, text: "ÜBERSCHUSS → TECH", color: hsl(ItemKind.tech.hue, 0.85, 0.65), age: 0))
         }
     }
 
@@ -1819,7 +1914,6 @@ final class Game {
             waves.append(Wave(center: c, r0: 40, age: 0, maxAge: 0.9 + 0.15 * t, hue: ItemKind.superBomb.hue))
         }
         burst(at: pos, count: 60, hue: ItemKind.superBomb.hue, speed: 420, life: 1.2)
-        popups.append(Popup(pos: pos, text: "SUPERBOMBE", color: hsl(ItemKind.superBomb.hue, 0.85, 0.7), age: 0))
         shake = max(shake, 0.6)
         Haptics.launch(1)
         SoundFX.shared.play(.bigBlast)
@@ -1935,7 +2029,7 @@ final class Game {
 
         let pl = planets[index]
         shake = max(shake, 0.3)
-        Haptics.capture()
+        // kein Vibrieren beim Einfangen (Christian, 2026-10-03)
         SoundFX.shared.play(.capture, variant: index)
 
         // zurückgefallen statt weiter: Combo ist weg
@@ -1955,21 +2049,16 @@ final class Game {
                     bestCombo = combo
                     UserDefaults.standard.set(bestCombo, forKey: "orbitHopBestCombo")
                 }
-                if combo >= 2 {
-                    popups.append(Popup(pos: pos, text: "COMBO ×\(combo)", color: Color(red: 1, green: 0.62, blue: 0.95), age: 0))
-                }
+                // Combo zeigt die HUD-Leiste oben, keine zusätzliche Einblendung
                 // alle 5 in Folge ein Tech-Teil
                 if combo % 5 == 0 {
                     spawnTech(from: pl.center)
-                    popups.append(Popup(pos: pos, text: "COMBO-BONUS +1 TECH", color: hsl(ItemKind.tech.hue, 0.85, 0.65), age: 0))
                 }
             }
             // Stationen geben keine Energie ab, dort repariert man
             if pl.energyGain > 0 {
                 let gain = pl.energyGain * comboMultiplier
                 addEnergy(gain, from: pl.center)
-                popups.append(Popup(pos: pos, text: "+\(Int(gain.rounded()))",
-                                    color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
             }
             // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
             if pl.isStation { stationMenuAt = time + 2.0 }
