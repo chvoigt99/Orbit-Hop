@@ -41,20 +41,33 @@ struct GameView: View {
                     let frameDate = timeline.date
                     Canvas { context, size in
                         _ = frameDate
-                        game.draw(context, size: size)
+                        game.drawTracked(context, size: size)
                     }
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { game.tap() }
                 }
 
+                Canvas { context, size in
+                    game.drawStaticFrame(context, size: size)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
                 // HUD und Menüs: 30 Bilder pro Sekunde reichen für Zahlen und Leisten. Das Textlayout war der
                 // größte Posten auf dem Hauptthread und hat SwiftUI regelmäßig Bilder auslassen lassen.
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: worldCovered)) { _ in
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: worldCovered)) { hudTimeline in
+                    let hudDate = hudTimeline.date
                     let _ = (PerfLog.uiFrames += 1)
                     let loading = (world?.framesSynced ?? 0) < 3
                     ZStack {
                         if !PerfLog.noHUD {
+                            Canvas { context, size in
+                                _ = hudDate
+                                game.drawChrome(context, size: size)
+                            }
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
                             hud
                                 .allowsHitTesting(false)
                         }

@@ -8,13 +8,18 @@ extension Game {
     private var amber: Color { Color(red: 1, green: 0.78, blue: 0.4) }
     private var panel: Color { Color(red: 0.02, green: 0.07, blue: 0.11) }
 
-    /// Zeichnet nur noch die Bildschirm-Ebene über der 3D-Welt.
-    func draw(_ context: GraphicsContext, size: CGSize) {
+    /// Markierungen, die auf 3D-Objekten sitzen: laufen mit jedem Bild mit, sonst hinken sie hinterher
+    func drawTracked(_ context: GraphicsContext, size: CGSize) {
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
         if !stationOpen { drawPopups(context, size) }
-        drawScreenFrame(context, size)
+    }
+
+    /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild
+    /// auszuwerten, sprengte zusammen mit dem HUD das Zeitbudget des Hauptthreads.
+    func drawChrome(_ context: GraphicsContext, size: CGSize) {
+        drawScanBar(context, size)
         if !stationOpen { drawRadar(context, size) }
         drawOverlays(context, size)
     }
@@ -964,7 +969,8 @@ extension Game {
         c.stroke(plate, with: .color(accent.opacity(0.55 * alpha)), lineWidth: 1)
     }
 
-    private func drawScreenFrame(_ c: GraphicsContext, _ size: CGSize) {
+    /// Vignette und Scanlines ändern sich nie und werden nur bei neuer Bildgröße gezeichnet
+    func drawStaticFrame(_ c: GraphicsContext, size: CGSize) {
         let full = Path(CGRect(origin: .zero, size: size))
 
         // Vignette
@@ -974,7 +980,7 @@ extension Game {
             startRadius: min(size.width, size.height) * 0.45,
             endRadius: max(size.width, size.height) * 0.75))
 
-        // Scanlines und wandernder Abtastbalken
+        // Scanlines
         var scan = Path()
         var y: CGFloat = 0
         while y < size.height {
@@ -983,6 +989,9 @@ extension Game {
             y += 3
         }
         c.stroke(scan, with: .color(Color.white.opacity(0.018)), lineWidth: 1)
+    }
+
+    private func drawScanBar(_ c: GraphicsContext, _ size: CGSize) {
         let by = mod(time * 70, size.height + 240) - 120
         c.fill(Path(CGRect(x: 0, y: by, width: size.width, height: 120)),
                with: .linearGradient(Gradient(colors: [holo.opacity(0), holo.opacity(0.035), holo.opacity(0)]),
