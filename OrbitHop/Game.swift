@@ -1947,7 +1947,7 @@ final class Game {
 
         let pl = planets[index]
         shake = max(shake, 0.3)
-        Haptics.capture()
+        // kein Vibrieren beim Einfangen (Christian, 2026-10-03)
         SoundFX.shared.play(.capture, variant: index)
 
         // zurückgefallen statt weiter: Combo ist weg
