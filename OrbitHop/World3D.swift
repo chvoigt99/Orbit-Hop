@@ -1072,10 +1072,16 @@ final class World3D {
     private func rebuildOrbit(_ game: Game) {
         let p = game.planets[game.currentIndex]
         orbitRing.childNodes.forEach { $0.removeFromParentNode() }
-        let ring = SCNTorus(ringRadius: p.orbitRadius, pipeRadius: 1.2)
+        // Doppelstern: vor dem hellen Sonnenschein ginge eine schwache, additive Linie unter,
+        // daher kräftiger, deckend und obenauf
+        let bright = p.kind == .binary
+        let ring = SCNTorus(ringRadius: p.orbitRadius, pipeRadius: bright ? 2.4 : 1.2)
         ring.ringSegmentCount = 96
-        ring.materials = [glowMat(UIColor(red: 0.45, green: 0.75, blue: 1, alpha: 0.35))]
-        orbitRing.addChildNode(SCNNode(geometry: ring))
+        ring.materials = [bright ? glowMat(UIColor(red: 0.3, green: 0.6, blue: 1, alpha: 0.9), additive: false)
+                                 : glowMat(UIColor(red: 0.45, green: 0.75, blue: 1, alpha: 0.35))]
+        let ringNode = SCNNode(geometry: ring)
+        if bright { ringNode.renderingOrder = 20 }
+        orbitRing.addChildNode(ringNode)
         // Skala außen
         let ticks = UIBezierPath()
         for k in 0..<48 {

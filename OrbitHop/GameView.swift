@@ -358,6 +358,7 @@ struct GameView: View {
 
     private var effectsRow: some View {
         HStack(spacing: 6) {
+            if game.combo >= 2 { comboChip }
             if game.wideConeLaunches > 0 { chip("×\(game.wideConeLaunches)", .wideCone) }
             if game.superBombs > 0 { chip("×\(game.superBombs)", .superBomb) }
             if game.rescueCharges > 0 { chip("×\(game.rescueCharges)", .rescue) }
@@ -365,6 +366,24 @@ struct GameView: View {
             Spacer()
         }
         .frame(height: 20)
+    }
+
+    /// Combo-Anzeige: blinkt kurz auf, wenn sie wächst
+    private var comboChip: some View {
+        let col = Color(red: 1, green: 0.62, blue: 0.95)
+        let flash = max(0, 1 - (game.time - game.comboChangedAt) / 0.5)
+        return HStack(spacing: 4) {
+            Image(systemName: "flame.fill").font(.system(size: 9, weight: .bold))
+            label("COMBO ×\(game.combo) · +\(Int(((game.comboMultiplier - 1) * 100).rounded())) % ENERGIE")
+        }
+            .foregroundStyle(col)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Chamfer(cut: 5).fill(col.opacity(0.12 + 0.3 * Double(flash))))
+            .overlay(Chamfer(cut: 5).stroke(col.opacity(0.6 + 0.4 * Double(flash)), lineWidth: 1))
+            .scaleEffect(1 + 0.12 * flash)
     }
 
     private func chip(_ text: String, _ kind: ItemKind) -> some View {
@@ -612,6 +631,8 @@ struct GameView: View {
                 }
             }
             .foregroundStyle(.white)
+            label("BESTE COMBO ×\(game.runBestCombo) · REKORD ×\(game.bestCombo)")
+                .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.95))
             label("+\(game.runParts) TECH-TEILE · GESAMT ⚙ \(game.profile.parts)")
                 .foregroundStyle(gold)
             if game.runShipParts > 0 {

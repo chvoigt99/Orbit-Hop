@@ -529,6 +529,28 @@ final class Game {
     }
     var currentKind: PlanetKind { planets[currentIndex].kind }
 
+    // MARK: Combo
+    /// Neue Planeten in Folge, jeweils mit mindestens „SEHR GUT“ gestartet und ohne Kollision erreicht
+    private(set) var combo = 0
+    /// längste Combo in diesem Flug und insgesamt
+    private(set) var runBestCombo = 0
+    private(set) var bestCombo = UserDefaults.standard.integer(forKey: "orbitHopBestCombo")
+    /// Der laufende Flug zählt für die Combo (guter Start aus einem Orbit, noch keine Kollision)
+    private var comboFlight = false
+    static let comboAccuracy: CGFloat = 0.7
+    /// Energiebonus: je Combo-Stufe 10 % mehr Energie beim Erreichen eines Planeten, höchstens doppelt so viel
+    var comboMultiplier: CGFloat { 1 + 0.1 * CGFloat(min(combo, 10)) }
+    /// Zeitpunkt der letzten Combo-Änderung (für das Aufblinken im HUD)
+    private(set) var comboChangedAt: CGFloat = -10
+
+    private func breakCombo() {
+        if combo >= 2 {
+            popups.append(Popup(pos: pos, text: "COMBO VERLOREN", color: Color(red: 0.75, green: 0.7, blue: 0.7), age: 0))
+        }
+        if combo > 0 { comboChangedAt = time }
+        combo = 0
+    }
+
     /// Ladefortschritt 0...1 am aktuellen Planeten, nil wenn es dort nichts gibt.
     /// Lädt gerade ein Bonus-Item auf (kein Energieverbrauch)
     var isCharging: Bool { phase == .orbiting && chargeFraction != nil }
@@ -672,6 +694,9 @@ final class Game {
         bonusTaken = []
         solarPool = 0
         inHorizon = false
+        combo = 0
+        runBestCombo = 0
+        comboFlight = false
         wideConeLaunches = 0
         superBombs = 0
         rescueCharges = 0
@@ -1026,6 +1051,9 @@ final class Game {
             popups.append(Popup(pos: pos, text: "SCHLEUDERSTART", color: Color(red: 1, green: 0.7, blue: 0.35), age: 0))
         }
         inHorizon = false
+        // ein schwacher Start beendet die Combo sofort, ein guter hält sie bis zur Ankunft offen
+        comboFlight = phase == .orbiting && accuracy >= Game.comboAccuracy
+        if phase == .orbiting && !comboFlight { breakCombo() }
         techFocus = 0
         cameraLock = nil
         hintShown = false
@@ -1529,6 +1557,10 @@ final class Game {
         vel = CGVector(dx: vel.dx * keep, dy: vel.dy * keep)
         hull = max(0, hull - damage)
         brakeFlash = 1.2
+        if comboFlight {
+            comboFlight = false
+            breakCombo()
+        }
         burst(at: a.center, count: 30, hue: 30, speed: 260, life: 0.8)
         burst(at: a.center, count: 16, hue: 35, speed: 150, life: 1.1)
         popups.append(Popup(pos: pos, text: damage > 0 ? "PANZERUNG -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
@@ -1723,16 +1755,36 @@ final class Game {
         Haptics.capture()
         SoundFX.shared.play(.capture, variant: index)
 
+        // zurückgefallen statt weiter: Combo ist weg
+        if index <= score && comboFlight { breakCombo() }
         if index > score {
             score = index
             if index % 5 == 0 {
                 spawnTech(from: planets[index].center)
                 techFocus = .infinity    // bleibt nah dran bis zum nächsten Start
             }
+            if comboFlight {
+                combo += 1
+                comboChangedAt = time
+                runBestCombo = max(runBestCombo, combo)
+                if combo > bestCombo {
+                    bestCombo = combo
+                    UserDefaults.standard.set(bestCombo, forKey: "orbitHopBestCombo")
+                }
+                if combo >= 2 {
+                    popups.append(Popup(pos: pos, text: "COMBO ×\(combo)", color: Color(red: 1, green: 0.62, blue: 0.95), age: 0))
+                }
+                // alle 5 in Folge ein Tech-Teil
+                if combo % 5 == 0 {
+                    spawnTech(from: pl.center)
+                    popups.append(Popup(pos: pos, text: "COMBO-BONUS +1 TECH", color: hsl(ItemKind.tech.hue, 0.85, 0.65), age: 0))
+                }
+            }
             // Stationen geben keine Energie ab, dort repariert man
             if pl.energyGain > 0 {
-                addEnergy(pl.energyGain, from: pl.center)
-                popups.append(Popup(pos: pos, text: "+\(Int(pl.energyGain.rounded()))",
+                let gain = pl.energyGain * comboMultiplier
+                addEnergy(gain, from: pl.center)
+                popups.append(Popup(pos: pos, text: "+\(Int(gain.rounded()))",
                                     color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
             }
             // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
@@ -1746,6 +1798,7 @@ final class Game {
                 popups.append(Popup(pos: pos, text: "DOPPELSTERN", color: Color(red: 1, green: 0.88, blue: 0.5), age: 0))
             }
         }
+        comboFlight = false
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }
         asteroids.removeAll { $0.gap < index - 1 || ($0.kind == .comet && $0.gap <= index) }
