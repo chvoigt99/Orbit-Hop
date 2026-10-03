@@ -160,7 +160,7 @@ struct Popup {
     var age: CGFloat
 
     /// So lange bleibt der Text voll sichtbar, danach blendet er über `fade` aus.
-    static let hold: CGFloat = 2.0
+    static let hold: CGFloat = 1.4
     static let fade: CGFloat = 0.8
     static var lifetime: CGFloat { hold + fade }
 }
@@ -1525,7 +1525,7 @@ final class Game {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
-        popups.append(Popup(pos: p, text: kind.title, color: hsl(kind.hue, 0.85, 0.65), age: 0))
+        // keine Texteinblendung beim Einsammeln: Lichtblitz, Ton und HUD-Anzeige reichen
         Haptics.capture()
         SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
@@ -1776,7 +1776,6 @@ final class Game {
         while overflow >= 100 {
             overflow -= 100
             spawnTech(from: origin)
-            popups.append(Popup(pos: pos, text: "ÜBERSCHUSS → TECH", color: hsl(ItemKind.tech.hue, 0.85, 0.65), age: 0))
         }
     }
 
@@ -1831,7 +1830,6 @@ final class Game {
             waves.append(Wave(center: c, r0: 40, age: 0, maxAge: 0.9 + 0.15 * t, hue: ItemKind.superBomb.hue))
         }
         burst(at: pos, count: 60, hue: ItemKind.superBomb.hue, speed: 420, life: 1.2)
-        popups.append(Popup(pos: pos, text: "SUPERBOMBE", color: hsl(ItemKind.superBomb.hue, 0.85, 0.7), age: 0))
         shake = max(shake, 0.6)
         Haptics.launch(1)
         SoundFX.shared.play(.bigBlast)
@@ -1967,21 +1965,16 @@ final class Game {
                     bestCombo = combo
                     UserDefaults.standard.set(bestCombo, forKey: "orbitHopBestCombo")
                 }
-                if combo >= 2 {
-                    popups.append(Popup(pos: pos, text: "COMBO ×\(combo)", color: Color(red: 1, green: 0.62, blue: 0.95), age: 0))
-                }
+                // Combo zeigt die HUD-Leiste oben, keine zusätzliche Einblendung
                 // alle 5 in Folge ein Tech-Teil
                 if combo % 5 == 0 {
                     spawnTech(from: pl.center)
-                    popups.append(Popup(pos: pos, text: "COMBO-BONUS +1 TECH", color: hsl(ItemKind.tech.hue, 0.85, 0.65), age: 0))
                 }
             }
             // Stationen geben keine Energie ab, dort repariert man
             if pl.energyGain > 0 {
                 let gain = pl.energyGain * comboMultiplier
                 addEnergy(gain, from: pl.center)
-                popups.append(Popup(pos: pos, text: "+\(Int(gain.rounded()))",
-                                    color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
             }
             // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
             if pl.isStation { stationMenuAt = time + 2.0 }
