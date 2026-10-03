@@ -115,6 +115,13 @@ struct GameView: View {
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
         if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
+        if game.inHorizon { return ("EREIGNISHORIZONT · PANZERUNG REISST", warn) }
+        if let c = game.horizonCountdown {
+            return ("SCHWARZES LOCH · BAHN ZERFÄLLT · \(Int(c.rounded(.up))) S", Color(red: 1, green: 0.6, blue: 0.3))
+        }
+        if game.phase == .orbiting && game.currentKind == .binary && game.solarPool > 0 {
+            return ("DOPPELSTERN · SONNENENERGIE", gold)
+        }
         if let kind = game.chargingKind, let f = game.chargeFraction {
             return ("BONUS LADEN · \(Int(f * 100)) %", hsl(kind.hue, 0.85, 0.65))
         }

@@ -50,6 +50,15 @@ func hsl(_ h: Double, _ s: Double, _ l: Double, _ a: Double = 1) -> Color {
 
 // MARK: - Modelle
 
+/// Sonderplaneten mit eigener Spielmechanik
+enum PlanetKind {
+    case normal
+    /// Starke Schwerkraft, schnelle Bahn und Schleuderstart. Die Bahn zerfällt, am Ereignishorizont leidet die Panzerung.
+    case blackHole
+    /// Zwei Sonnen umkreisen sich. Ihr Licht lädt Energie auf, ihre Schwerkraft lässt die Bahn pendeln.
+    case binary
+}
+
 struct Planet {
     struct Band {
         let alpha: CGFloat
@@ -78,9 +87,18 @@ struct Planet {
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
+    var kind: PlanetKind = .normal
 
-    var mass: CGFloat { radius * radius }
-    var orbitRadius: CGFloat { radius + 90 }
+    /// Schwarze Löcher ziehen viel stärker, als ihre Größe vermuten lässt
+    var mass: CGFloat { radius * radius * (kind == .blackHole ? 3.2 : 1) }
+    /// Beim Schwarzen Loch liegt die Bahn außerhalb der Akkretionsscheibe
+    var orbitRadius: CGFloat { radius + (kind == .blackHole ? 150 : 90) }
+    /// Sichtbare Ausdehnung (Akkretionsscheibe zählt mit), für Zielerfassung und Ladering
+    var outerRadius: CGFloat { kind == .blackHole ? radius * 2.1 : radius }
+    /// Ab diesem Abstand beginnt die Zone, in der das Schwarze Loch die Panzerung zerreißt
+    var horizonDanger: CGFloat { radius + 70 }
+    /// Doppelstern: Winkel der Verbindungslinie beider Sonnen (sie umkreisen sich gleichmäßig)
+    func binaryAngle(at time: CGFloat) -> CGFloat { moonPhase + time * 0.55 }
     /// Kleine, schnell umkreiste Planeten geben mehr Energie ab.
     var energyGain: CGFloat { (20 + 15 * spin) * energyScale }
 
@@ -487,6 +505,29 @@ final class Game {
     var brakeFlash: CGFloat = 0           // kurz nach einem Asteroidentreffer
     var orbitCharge: CGFloat = 0          // umrundeter Winkel am aktuellen Planeten
     var bonusTaken: Set<Int> = []         // Planeten, die ihr Item schon abgegeben haben
+    /// Doppelstern: Sonnenenergie, die dieser Orbit noch abgeben kann (nur beim Erstbesuch)
+    var solarPool: CGFloat = 0
+    /// Schwarzes Loch: Zeitpunkt, ab dem die Bahn zu zerfallen beginnt
+    private var decayStart: CGFloat = 0
+    /// Schwarzes Loch: das Schiff ist in der Gefahrenzone am Ereignishorizont
+    private(set) var inHorizon = false
+    private var horizonPopupAt: CGFloat = -10
+
+    /// Sollradius der aktuellen Bahn. Am Schwarzen Loch schrumpft er nach kurzer Schonzeit stetig.
+    var orbitRingRadius: CGFloat {
+        let p = planets[currentIndex]
+        guard phase == .orbiting, p.kind == .blackHole else { return p.orbitRadius }
+        let shrink = max(0, time - decayStart) * Game.decayRate
+        return max(p.radius + 18, p.orbitRadius - shrink)
+    }
+    static let decayRate: CGFloat = 13
+    /// Schwarzes Loch: Sekunden bis die Gefahrenzone erreicht ist (nil, wenn nicht dort)
+    var horizonCountdown: CGFloat? {
+        let p = planets[currentIndex]
+        guard phase == .orbiting, p.kind == .blackHole else { return nil }
+        return max(0, (orbitRingRadius - p.horizonDanger) / Game.decayRate)
+    }
+    var currentKind: PlanetKind { planets[currentIndex].kind }
 
     /// Ladefortschritt 0...1 am aktuellen Planeten, nil wenn es dort nichts gibt.
     /// Lädt gerade ein Bonus-Item auf (kein Energieverbrauch)
@@ -545,6 +586,8 @@ final class Game {
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
     static let stationTest = false
+    /// Nur für Tests: Schwarzes Loch als zweites, Doppelstern als viertes Ziel (Start mit -planetTest)
+    static let planetTest = ProcessInfo.processInfo.arguments.contains("-planetTest")
 
     // MARK: Raumstation
     /// Index des nächsten Planeten, der eine Raumstation wird
@@ -627,6 +670,8 @@ final class Game {
         brakeFlash = 0
         orbitCharge = 0
         bonusTaken = []
+        solarPool = 0
+        inHorizon = false
         wideConeLaunches = 0
         superBombs = 0
         rescueCharges = 0
@@ -687,8 +732,23 @@ final class Game {
         let lvl = min(1, CGFloat(planets.count) / 40)
         let station = planets.count == nextStation
         if station { nextStation += stationGap(lvl) }
+        // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
+        var kind = PlanetKind.normal
+        if !station && planets.count >= 6 && prev.kind == .normal && !prev.isStation && planets.count + 1 != nextStation {
+            let roll = Double.random(in: 0...1)
+            if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
+            else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
+        }
+        if Game.planetTest && !station {
+            kind = planets.count == 2 ? .blackHole : (planets.count == 4 ? .binary : .normal)
+        }
         // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
-        let r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
+        let r: CGFloat
+        switch kind {
+        case .blackHole: r = CGFloat.random(in: 62...76)
+        case .binary: r = CGFloat.random(in: 120...150)
+        case .normal: r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
+        }
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl))
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
@@ -698,15 +758,24 @@ final class Game {
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
-        let spin = 150 / r * CGFloat.random(in: 0.9...1.2) * (1.1 + 0.5 * lvl)
-        // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches
-        let bonus: ItemKind? = !station && Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
-        let hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
+        // Das Schwarze Loch wird so schnell umkreist wie ein mittelgroßer Planet, nicht wie ein winziger
+        let spin = 150 / (kind == .blackHole ? 115 : r) * CGFloat.random(in: 0.9...1.2) * (1.1 + 0.5 * lvl)
+        // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches (Sonderplaneten nie)
+        let bonus: ItemKind? = !station && kind == .normal && Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
+        let hue: Double
+        switch kind {
+        case .blackHole: hue = 28
+        case .binary: hue = 45
+        case .normal: hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
+        }
+        // Energie: Schwarzes Loch als Belohnung für das Risiko mehr, Doppelstern lädt erst im Orbit nach
+        let kindEnergy: CGFloat = kind == .blackHole ? 1.6 : (kind == .binary ? 0.4 : 1)
         planets.append(Planet.make(center: c, radius: r, spin: spin,
-                                   hue: hue, allowRing: !station,
-                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1), bonus: bonus))
+                                   hue: hue, allowRing: !station && kind == .normal,
+                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * kindEnergy, bonus: bonus))
         planets[planets.count - 1].hardRoute = hasField || hasComet
         planets[planets.count - 1].isStation = station
+        planets[planets.count - 1].kind = kind
 
         guard planets.count >= 3 else { return }
         let gapIndex = planets.count - 1
@@ -917,7 +986,25 @@ final class Game {
 
     private func launchSpeed(accuracy: CGFloat) -> CGFloat {
         let p = planets[currentIndex]
-        return (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed
+        // Schwarzes Loch: Schleuderstart mit deutlich mehr Tempo
+        let sling: CGFloat = p.kind == .blackHole && phase == .orbiting ? 1.25 : 1
+        return (minSpeed + accuracy * (maxSpeed - minSpeed) + p.spin * orbitDist * spinBonus) * ship.speed * sling
+    }
+
+    /// Schwarzes Loch: Warnung beim Eintritt in die Gefahrenzone, dort nagt die Gezeitenkraft an der Panzerung
+    private func updateHorizon(_ p: Planet, _ dt: CGFloat) {
+        let danger = orbitDist < p.horizonDanger
+        if danger && !inHorizon && time - horizonPopupAt > 2 {
+            horizonPopupAt = time
+            popups.append(Popup(pos: pos, text: "EREIGNISHORIZONT", color: Color(red: 1, green: 0.45, blue: 0.3), age: 0))
+            Haptics.miss()
+        }
+        inHorizon = danger
+        guard danger else { return }
+        // je tiefer, desto schlimmer; Panzerung des Schiffs mildert wie bei Kollisionen
+        let depth = min(1, (p.horizonDanger - orbitDist) / 50)
+        hull = max(0, hull - (10 + 22 * depth) * (1 - 0.5 * ship.armor) * dt)
+        shake = max(shake, 0.12 + 0.15 * depth)
     }
 
     /// Katapult aus dem Orbit (oder aus dem Hangar) in Richtung der Bahntangente.
@@ -935,6 +1022,10 @@ final class Game {
         flightFrame = CGRect(x: tg.center.x - ext, y: tg.center.y - ext, width: ext * 2, height: ext * 2)
             .union(CGRect(x: pos.x - 90, y: pos.y - 90, width: 180, height: 180))
         if wideConeLaunches > 0 { wideConeLaunches -= 1 }
+        if planets[currentIndex].kind == .blackHole && phase == .orbiting {
+            popups.append(Popup(pos: pos, text: "SCHLEUDERSTART", color: Color(red: 1, green: 0.7, blue: 0.35), age: 0))
+        }
+        inHorizon = false
         techFocus = 0
         cameraLock = nil
         hintShown = false
@@ -1098,7 +1189,7 @@ final class Game {
     private func simulate(_ dt: CGFloat) {
         let before = pos
         // Beim Aufladen eines Bonus-Items kein Verbrauch
-        let charging = isCharging
+        let charging = isCharging || (phase == .orbiting && currentKind == .binary && solarPool > 0)
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
@@ -1135,7 +1226,22 @@ final class Game {
             // Eintrittstempo bleibt erhalten und sinkt nur langsam aufs Grundtempo des Planeten
             orbitPace += (p.spin - orbitPace) * min(1, dt * 0.15)
             orbitOmega += (orbitDir * orbitPace - orbitOmega) * min(1, dt * 2.5)
-            orbitVr += (30 * (p.orbitRadius - orbitDist) - 11 * orbitVr) * dt
+            var targetDist = orbitRingRadius
+            switch p.kind {
+            case .normal:
+                break
+            case .blackHole:
+                updateHorizon(p, dt)
+            case .binary:
+                // die beiden Sonnen drücken die Bahn im Takt ihres Umlaufs nach außen und innen
+                targetDist += 22 * cos(2 * (orbitAngle - p.binaryAngle(at: time)))
+                if solarPool > 0 {
+                    let gain = min(solarPool, 9 * dt)
+                    solarPool -= gain
+                    addEnergy(gain, from: p.center)
+                }
+            }
+            orbitVr += (30 * (targetDist - orbitDist) - 11 * orbitVr) * dt
             orbitDist = max(p.radius + 15, orbitDist + orbitVr * dt)
             orbitAngle += orbitOmega * dt
             pos = point(from: p.center, angle: orbitAngle, distance: orbitDist)
@@ -1582,7 +1688,9 @@ final class Game {
             let p = planets[i]
             let dx = pos.x - p.center.x
             let dy = pos.y - p.center.y
-            if hypot(dx, dy) < p.radius + captureMargin {
+            // Schwarzes Loch: Fang erst nah an der Bahn, die Scheibe ist kein Planetenkörper
+            let catchRadius = p.kind == .blackHole ? p.orbitRadius - 10 : p.radius + captureMargin
+            if hypot(dx, dy) < catchRadius {
                 capture(i, dx: dx, dy: dy)
                 return
             }
@@ -1590,7 +1698,7 @@ final class Game {
     }
 
     private func capture(_ index: Int, dx: CGFloat, dy: CGFloat) {
-        blog("capture idx=\(index) new=\(index > score) back=\(index == originIndex) flight=\(String(format: "%.1f", flightTime))s energy=\(Int(energy)) gain=\(Int(planets[index].energyGain))")
+        blog("capture idx=\(index) kind=\(planets[index].kind) new=\(index > score) back=\(index == originIndex) flight=\(String(format: "%.1f", flightTime))s energy=\(Int(energy)) gain=\(Int(planets[index].energyGain))")
         captureTime = time
         // Drehrichtung ergibt sich aus der Anflugseite, Tempo und Radius gleiten danach auf die Bahn
         let cd = max(1, hypot(dx, dy))
@@ -1605,6 +1713,10 @@ final class Game {
         orbitAngle = atan2(dy, dx)
         orbitDist = hypot(dx, dy)
         orbitCharge = 0
+        // Schwarzes Loch: kurze Schonzeit, dann zieht es die Bahn nach innen
+        decayStart = time + 1.5
+        inHorizon = false
+        solarPool = 0
 
         let pl = planets[index]
         shake = max(shake, 0.3)
@@ -1625,6 +1737,14 @@ final class Game {
             }
             // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
             if pl.isStation { stationMenuAt = time + 2.0 }
+            switch pl.kind {
+            case .normal: break
+            case .blackHole:
+                popups.append(Popup(pos: pos, text: "SCHWARZES LOCH", color: Color(red: 1, green: 0.6, blue: 0.3), age: 0))
+            case .binary:
+                solarPool = 45
+                popups.append(Popup(pos: pos, text: "DOPPELSTERN", color: Color(red: 1, green: 0.88, blue: 0.5), age: 0))
+            }
         }
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }

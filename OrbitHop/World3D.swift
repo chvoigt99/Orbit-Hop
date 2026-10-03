@@ -163,6 +163,84 @@ enum WorldTextures {
         }
     }
 
+    /// Photonenring des Schwarzen Lochs: dünner, heller Saum knapp außerhalb des Kerns
+    static let photonRing: UIImage = {
+        let size: CGFloat = 256
+        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            let c = CGPoint(x: size / 2, y: size / 2)
+            let colors = [UIColor(red: 1, green: 0.75, blue: 0.45, alpha: 0).cgColor,
+                          UIColor(red: 1, green: 0.93, blue: 0.8, alpha: 1).cgColor,
+                          UIColor(red: 1, green: 0.6, blue: 0.3, alpha: 0.35).cgColor,
+                          UIColor(red: 1, green: 0.5, blue: 0.2, alpha: 0).cgColor] as CFArray
+            // Kern belegt 1/2.7 des Bildes, der Ring sitzt direkt daran
+            let k = 1 / 2.7
+            let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors,
+                                  locations: [CGFloat(k * 0.97), CGFloat(k * 1.06), CGFloat(k * 1.3), 1])!
+            ctx.cgContext.drawRadialGradient(grad, startCenter: c, startRadius: 0, endCenter: c,
+                                             endRadius: size / 2, options: [])
+        }
+    }()
+
+    /// Akkretionsscheibe: innen weißglühend, außen dunkelrot, mit spiralförmigen Schlieren
+    static let accretionDisk: UIImage = {
+        var rng = SeededRNG("accretion")
+        let size: CGFloat = 512
+        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            let g = ctx.cgContext
+            let c = CGPoint(x: size / 2, y: size / 2)
+            let R = size / 2
+            // Kern = 1/2.1 des Scheibenradius (siehe Planet.outerRadius)
+            let inner = R / 2.1
+            let colors = [UIColor(white: 0, alpha: 0).cgColor,
+                          UIColor(red: 1, green: 0.95, blue: 0.85, alpha: 1).cgColor,
+                          UIColor(red: 1, green: 0.62, blue: 0.25, alpha: 0.85).cgColor,
+                          UIColor(red: 0.75, green: 0.18, blue: 0.08, alpha: 0.4).cgColor,
+                          UIColor(red: 0.4, green: 0.05, blue: 0.05, alpha: 0).cgColor] as CFArray
+            let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors,
+                                  locations: [inner / R * 0.98, inner / R * 1.08, 0.66, 0.85, 1])!
+            g.drawRadialGradient(grad, startCenter: c, startRadius: 0, endCenter: c, endRadius: R, options: [])
+            // Schlieren: kurze Spiralbögen in hellen und dunklen Tönen
+            for _ in 0..<160 {
+                let r0 = rng.c(inner * 1.05...R * 0.92)
+                let a0 = rng.c(0...(.pi * 2))
+                let len = rng.c(0.3...1.1)
+                let path = UIBezierPath()
+                for k in 0...12 {
+                    let t = CGFloat(k) / 12
+                    let a = a0 + len * t
+                    let rr = r0 * (1 + 0.06 * t)
+                    let pt = CGPoint(x: c.x + cos(a) * rr, y: c.y + sin(a) * rr)
+                    if k == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                }
+                path.lineWidth = rng.c(1...3.5)
+                let hot = 1 - (r0 - inner) / (R - inner)
+                (rng.chance(0.65) ? UIColor(red: 1, green: 0.8, blue: 0.55, alpha: 0.12 + 0.3 * hot)
+                                  : UIColor(white: 0, alpha: 0.25)).setStroke()
+                path.stroke()
+            }
+        }
+    }()
+
+    /// Sonnenoberfläche: Granulation und Flecken auf heller Grundfarbe
+    static func sunSurface(hue: Double, seed: String) -> UIImage {
+        var rng = SeededRNG(seed)
+        let w: CGFloat = 256, h: CGFloat = 128
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h)).image { ctx in
+            uic(hue, 0.95, 0.66).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            for _ in 0..<500 {
+                let x = rng.c(0...w), y = rng.c(0...h), r = rng.c(1.5...5)
+                (rng.chance(0.5) ? uic(hue + 8, 1, 0.85, 0.35) : uic(hue - 12, 0.9, 0.45, 0.25)).setFill()
+                UIBezierPath(ovalIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)).fill()
+            }
+            for _ in 0..<3 {
+                let x = rng.c(0...w), y = rng.c(h * 0.3...h * 0.7), r = rng.c(3...7)
+                uic(hue - 20, 0.8, 0.3, 0.6).setFill()
+                UIBezierPath(ovalIn: CGRect(x: x - r * 1.4, y: y - r, width: r * 2.8, height: r * 2)).fill()
+            }
+        }
+    }
+
     static func ring(hue: Double) -> UIImage {
         var rng = SeededRNG("ring\(Int(hue))")
         let s: CGFloat = 512
@@ -604,6 +682,15 @@ final class World3D {
             root.addChildNode(makeStation(p))
             return root
         }
+        switch p.kind {
+        case .normal: break
+        case .blackHole:
+            root.addChildNode(makeBlackHole(p))
+            return root
+        case .binary:
+            root.addChildNode(makeBinary(p, seed: "binary\(index)"))
+            return root
+        }
 
         let tilt = SCNNode()
         tilt.eulerAngles = SCNVector3(Float(p.tilt) * 0.6, 0, Float(p.tilt))
@@ -674,6 +761,112 @@ final class World3D {
             spin.addChildNode(mn)
             root.addChildNode(spin)
         }
+        return root
+    }
+
+    // MARK: Sonderplaneten
+
+    /// Schwarzes Loch: lichtloser Kern, heller Photonenring, rotierende Akkretionsscheibe und
+    /// ein zweiter, aufgerichteter Scheibenbogen als Andeutung der Lichtablenkung
+    private func makeBlackHole(_ p: Planet) -> SCNNode {
+        let root = SCNNode()
+        let r = p.radius
+
+        // Kern: absolut schwarz und deckend, verdeckt alles dahinter
+        let core = SCNSphere(radius: r)
+        core.segmentCount = 48
+        let cm = SCNMaterial()
+        cm.lightingModel = .constant
+        cm.diffuse.contents = UIColor.black
+        core.materials = [cm]
+        let coreNode = SCNNode(geometry: core)
+        coreNode.renderingOrder = 5
+        root.addChildNode(coreNode)
+
+        // Photonenring: schmaler, heller Saum, immer zur Kamera gedreht
+        let halo = SCNNode(geometry: SCNPlane(width: r * 2.7, height: r * 2.7))
+        halo.geometry?.materials = [spriteMat(WorldTextures.photonRing)]
+        halo.constraints = [SCNBillboardConstraint()]
+        halo.renderingOrder = 6
+        root.addChildNode(halo)
+
+        // weiter, schwacher Schein
+        let glow = SCNNode(geometry: SCNPlane(width: r * 6, height: r * 6))
+        let gm = spriteMat(WorldTextures.soft)
+        gm.multiply.contents = uic(p.hue, 0.9, 0.5, 0.35)
+        glow.geometry?.materials = [gm]
+        glow.constraints = [SCNBillboardConstraint()]
+        root.addChildNode(glow)
+
+        // Akkretionsscheibe: leicht gekippt, dreht sich innen sichtbar schnell
+        let tilt = SCNNode()
+        tilt.eulerAngles = SCNVector3(Float(p.tilt) * 0.5, 0, Float(p.tilt) * 0.35)
+        root.addChildNode(tilt)
+        let diskSize = p.outerRadius * 2
+        let disk = SCNNode(geometry: SCNPlane(width: diskSize, height: diskSize))
+        disk.geometry?.materials = [spriteMat(WorldTextures.accretionDisk)]
+        disk.eulerAngles.x = -.pi / 2
+        disk.renderingOrder = 7
+        let spinner = SCNNode()
+        spinner.addChildNode(disk)
+        spinner.runAction(.repeatForever(.rotateBy(x: 0, y: -.pi * 2, z: 0, duration: 7)))
+        tilt.addChildNode(spinner)
+        // Lichtablenkung: die Rückseite der Scheibe erscheint als Bogen über dem Kern
+        let lens = SCNNode(geometry: SCNPlane(width: diskSize * 0.62, height: diskSize * 0.62))
+        let lm = spriteMat(WorldTextures.accretionDisk)
+        lm.multiply.contents = UIColor(white: 0.55, alpha: 1)
+        lens.geometry?.materials = [lm]
+        lens.constraints = [SCNBillboardConstraint()]
+        lens.renderingOrder = 4
+        root.addChildNode(lens)
+        return root
+    }
+
+    /// Doppelstern: zwei Sonnen umkreisen den gemeinsamen Schwerpunkt. Der Winkel kommt aus dem Spiel,
+    /// damit das Pendeln der Bahn zur sichtbaren Stellung der Sonnen passt.
+    private func makeBinary(_ p: Planet, seed: String) -> SCNNode {
+        let root = SCNNode()
+        let pair = SCNNode()
+        pair.name = "binary"
+        root.addChildNode(pair)
+        let suns: [(hue: Double, size: CGFloat, dist: CGFloat)] = [(42, 0.42, 0.52), (205, 0.3, 0.68)]
+        for (k, sun) in suns.enumerated() {
+            let r = p.radius * sun.size
+            let holder = SCNNode()
+            // erste Sonne auf dem Winkel, zweite gegenüber; die kleinere läuft weiter außen (gemeinsamer Schwerpunkt)
+            let side: Float = k == 0 ? 1 : -1
+            holder.position = SCNVector3(side * Float(p.radius * sun.dist), 0, 0)
+            pair.addChildNode(holder)
+
+            let sphere = SCNSphere(radius: r)
+            sphere.segmentCount = 48
+            let m = SCNMaterial()
+            m.lightingModel = .constant
+            let tex = WorldTextures.sunSurface(hue: sun.hue, seed: "\(seed)-\(k)")
+            m.diffuse.contents = tex
+            m.emission.contents = tex
+            sphere.materials = [m]
+            let body = SCNNode(geometry: sphere)
+            body.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 18 + Double(k) * 6)))
+            holder.addChildNode(body)
+
+            // Korona: mehrere weiche Lichthöfe in der Sonnenfarbe
+            for (scale, alpha) in [(2.6, 0.75), (4.6, 0.32)] as [(CGFloat, Double)] {
+                let g = SCNNode(geometry: SCNPlane(width: r * scale, height: r * scale))
+                let gm = spriteMat(WorldTextures.soft)
+                gm.multiply.contents = uic(sun.hue, 0.95, 0.62, alpha)
+                g.geometry?.materials = [gm]
+                g.constraints = [SCNBillboardConstraint()]
+                holder.addChildNode(g)
+            }
+        }
+        // Materiebrücke zwischen den Sonnen
+        let bridge = SCNNode(geometry: SCNPlane(width: p.radius * 1.3, height: p.radius * 0.32))
+        let bm = spriteMat(WorldTextures.soft)
+        bm.multiply.contents = uic(30, 0.9, 0.6, 0.35)
+        bridge.geometry?.materials = [bm]
+        bridge.eulerAngles.x = -.pi / 2
+        pair.addChildNode(bridge)
         return root
     }
 
@@ -952,6 +1145,8 @@ final class World3D {
     }
 
     private func rebuildLock(_ p: Planet) {
+        // Klammern und Bögen um die sichtbare Ausdehnung (beim Schwarzen Loch samt Scheibe)
+        let R = p.outerRadius
         lockArcs.childNodes.forEach { $0.removeFromParentNode() }
         lockTicks.childNodes.forEach { $0.removeFromParentNode() }
         lockHolo.childNodes.forEach { $0.removeFromParentNode() }
@@ -961,19 +1156,19 @@ final class World3D {
         let amber = UIColor(red: 1, green: 0.78, blue: 0.4, alpha: 1)
         for k in 0..<3 {
             let a0 = CGFloat(k) * 2 * .pi / 3
-            lockArcs.addChildNode(flatShape(arcPath(radius: p.radius + 30, width: 3, from: a0, to: a0 + 1.4), glowMat(holo), depth: 0.4))
+            lockArcs.addChildNode(flatShape(arcPath(radius: R + 30, width: 3, from: a0, to: a0 + 1.4), glowMat(holo), depth: 0.4))
         }
         let ticks = UIBezierPath()
         for k in 0..<36 {
             let a = CGFloat(k) / 36 * .pi * 2
-            let t = UIBezierPath(rect: CGRect(x: p.radius + 44, y: -0.6, width: k % 3 == 0 ? 9 : 4, height: 1.2))
+            let t = UIBezierPath(rect: CGRect(x: R + 44, y: -0.6, width: k % 3 == 0 ? 9 : 4, height: 1.2))
             t.apply(CGAffineTransform(rotationAngle: a))
             ticks.append(t)
         }
         lockTicks.addChildNode(flatShape(ticks, glowMat(holo.withAlphaComponent(0.5)), depth: 0.2))
 
         // Holo-Gitter um den Zielplaneten (bei Stationen nicht, es würde das Modell verdecken)
-        if !p.isStation {
+        if !p.isStation && p.kind == .normal {
             let grid = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 256)).image { ctx in
                 let g = ctx.cgContext
                 g.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
@@ -991,7 +1186,7 @@ final class World3D {
         }
 
         // Klammern
-        let h = p.radius + 62
+        let h = R + 62
         let len = h * 0.28
         for (sx, sy) in [(-1, -1), (1, -1), (1, 1), (-1, 1)] as [(CGFloat, CGFloat)] {
             let path = UIBezierPath()
@@ -1458,6 +1653,11 @@ final class World3D {
             planetNodes[i] = n
         }
 
+        // Doppelsterne: Stellung der Sonnen kommt aus dem Spiel (bestimmt das Pendeln der Bahn)
+        for (i, n) in planetNodes where game.planets.indices.contains(i) && game.planets[i].kind == .binary {
+            n.childNode(withName: "binary", recursively: true)?.eulerAngles.y = Float(-game.planets[i].binaryAngle(at: game.time))
+        }
+
         // Ladering für Bonus-Items
         for (i, r) in bonusRings where i < first || game.bonusTaken.contains(i) {
             r.node.removeFromParentNode()
@@ -1527,6 +1727,13 @@ final class World3D {
             rebuildOrbit(game)
         }
         orbitGroup.position = v3(p.center)
+        // Schwarzes Loch: die Bahnanzeige schrumpft mit der zerfallenden Bahn
+        let ringScale = Float(game.orbitRingRadius / p.orbitRadius)
+        orbitRing.scale = SCNVector3(ringScale, 1, ringScale)
+        for (q, holder) in arrowSpinner.childNodes.enumerated() {
+            let a = CGFloat(q) / 6 * .pi * 2
+            holder.position = SCNVector3(Float(cos(a) * game.orbitRingRadius), 0, Float(sin(a) * game.orbitRingRadius))
+        }
         arrowSpinner.eulerAngles.y = Float(-game.orbitDir * game.time * 0.5)
         arrowSpinner.childNodes.forEach { $0.childNodes.first?.eulerAngles.x = Float(game.orbitDir > 0 ? Float.pi / 2 : -Float.pi / 2) }
 
@@ -1535,7 +1742,7 @@ final class World3D {
             coneKey = key
             rebuildCone(game)
         }
-        let apex = point(from: p.center, angle: game.coneApexAngle, distance: p.orbitRadius)
+        let apex = point(from: p.center, angle: game.coneApexAngle, distance: game.orbitRingRadius)
         coneNode.position = SCNVector3(Float(apex.x - p.center.x), 0, Float(apex.y - p.center.y))
         coneNode.eulerAngles.y = Float(-game.coneDirection)
         coneHeat = smoothApproach(coneHeat, game.inCone ? 1 : 0, rate: 14, dt: dt)
