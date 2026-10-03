@@ -987,45 +987,6 @@ extension Game {
         c.fill(Path(CGRect(x: 0, y: by, width: size.width, height: 120)),
                with: .linearGradient(Gradient(colors: [holo.opacity(0), holo.opacity(0.035), holo.opacity(0)]),
                                      startPoint: CGPoint(x: 0, y: by), endPoint: CGPoint(x: 0, y: by + 120)))
-
-        // Seitenskalen, laufen mit der Kamera
-        let top = insets.top + 160
-        let bottom = size.height - insets.bottom - 140
-        guard bottom > top else { return }
-        let spacing: CGFloat = 16
-        drawScale(c, x: 6, dir: 1, top: top, bottom: bottom, shift: cam.y * camScale * 0.6, spacing: spacing)
-        drawScale(c, x: size.width - 6, dir: -1, top: top, bottom: bottom, shift: cam.x * camScale * 0.6, spacing: spacing)
-    }
-
-    private func drawScale(_ c: GraphicsContext, x: CGFloat, dir: CGFloat, top: CGFloat, bottom: CGFloat,
-                           shift: CGFloat, spacing: CGFloat) {
-        let base = Int(floor(shift / spacing))
-        let off = shift - CGFloat(base) * spacing
-        var ticks = Path()
-        var k = 0
-        var y = top + spacing - off
-        while y < bottom {
-            let long = ((k + base) % 5 + 5) % 5 == 0
-            ticks.move(to: CGPoint(x: x, y: y))
-            ticks.addLine(to: CGPoint(x: x + dir * (long ? 10 : 4), y: y))
-            y += spacing
-            k += 1
-        }
-        let fade = Gradient(stops: [
-            .init(color: holo.opacity(0), location: 0),
-            .init(color: holo.opacity(0.45), location: 0.3),
-            .init(color: holo.opacity(0.45), location: 0.7),
-            .init(color: holo.opacity(0), location: 1)
-        ])
-        c.stroke(ticks, with: .linearGradient(fade, startPoint: CGPoint(x: x, y: top), endPoint: CGPoint(x: x, y: bottom)),
-                 lineWidth: 1)
-        let mid = (top + bottom) / 2
-        var marker = Path()
-        marker.move(to: CGPoint(x: x + dir * 14, y: mid))
-        marker.addLine(to: CGPoint(x: x + dir * 21, y: mid - 5))
-        marker.addLine(to: CGPoint(x: x + dir * 21, y: mid + 5))
-        marker.closeSubpath()
-        c.fill(marker, with: .color(signal.opacity(0.8)))
     }
 
     private func drawRadar(_ c: GraphicsContext, _ size: CGSize) {
