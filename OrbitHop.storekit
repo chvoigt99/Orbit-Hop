@@ -8,8 +8,8 @@
       "internalID": "50A2E1817",
       "localizations": [
         {
-          "description": "1 Schiffsteil(e) zum Freischalten neuer Schiffe",
-          "displayName": "1 Schiffsteil",
+          "description": "Ein Schiffsteil zum Freischalten neuer Schiffe",
+          "displayName": "Schiffsteil",
           "locale": "de"
         }
       ],
@@ -23,7 +23,7 @@
       "internalID": "4C16CE5AC",
       "localizations": [
         {
-          "description": "10 Schiffsteil(e) zum Freischalten neuer Schiffe",
+          "description": "Zehn Schiffsteile zum Freischalten neuer Schiffe",
           "displayName": "10 Schiffsteile",
           "locale": "de"
         }
