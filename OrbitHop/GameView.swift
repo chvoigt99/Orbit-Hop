@@ -488,8 +488,7 @@ struct GameView: View {
                 label("⚙ \(game.profile.parts) TECH-TEILE · \(game.profile.shipParts) SCHIFFSTEILE")
                     .foregroundStyle(dim)
                     .padding(.bottom, 8)
-                // Reparatur füllt Panzerung und Energie auf, das soll der Knopf auch sagen
-                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "PANZERUNG + ENERGIE · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
+                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "REPARIEREN · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
                            "wrench.and.screwdriver.fill", canRepair ? signal : dim) {
                     game.repair()
                 }
