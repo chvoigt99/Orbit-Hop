@@ -1,9 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
     @State private var showMissions = false
+    /// Tastatur (Mac und iPad mit Tastatur): Leertaste tippt, Escape pausiert
+    @FocusState private var keyFocus: Bool
     @State private var world: World3D?
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
@@ -70,7 +73,31 @@ struct GameView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .focusable()
+        .focusEffectDisabled()
+        .focused($keyFocus)
+        .onKeyPress(.space) {
+            game.tap()
+            return .handled
+        }
+        .onKeyPress(.return) {
+            game.tap()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            guard game.started, game.phase != .over, !game.stationOpen else { return .ignored }
+            game.paused.toggle()
+            return .handled
+        }
         .onAppear {
+            keyFocus = true
+            #if targetEnvironment(macCatalyst)
+            // Mac: Hochformat-Fenster, damit das Spiel wie auf dem iPhone aussieht
+            for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                scene.sizeRestrictions?.minimumSize = CGSize(width: 420, height: 760)
+                scene.sizeRestrictions?.maximumSize = CGSize(width: 900, height: 1400)
+            }
+            #endif
             SoundFX.shared.prepare()
             // Nur für Tests: Missionsübersicht direkt öffnen
             if ProcessInfo.processInfo.arguments.contains("-missions") { showMissions = true }
