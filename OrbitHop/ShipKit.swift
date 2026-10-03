@@ -5,9 +5,10 @@ import simd
 
 /// Bildrenderer für Texturen: ein Pixel pro Punkt. Ohne festes Format nimmt UIKit die Bildschirm-Skalierung
 /// (3× auf aktuellen iPhones) und jede Textur bräuchte neunmal so viel Speicher.
-func textureRenderer(_ size: CGSize) -> UIGraphicsImageRenderer {
+/// `scale` nur dort erhöhen, wo feine Details (Sternenhimmel) sonst verwischen.
+func textureRenderer(_ size: CGSize, scale: CGFloat = 1) -> UIGraphicsImageRenderer {
     let f = UIGraphicsImageRendererFormat()
-    f.scale = 1
+    f.scale = scale
     return UIGraphicsImageRenderer(size: size, format: f)
 }
 
@@ -44,6 +45,12 @@ enum WornPaint {
         m.setValue(NSNumber(value: 0.02), forKey: "tpBump")
         cache[id] = m
         return m
+    }
+
+    /// Bei Speicherwarnung: Zwischenspeicher leeren. Lacke, die gerade auf einem Modell sitzen, bleiben dort erhalten.
+    static func purge() {
+        cache.removeAll()
+        order.removeAll()
     }
 
     /// Dreiachsige Projektion (Triplanar) im Modellraum plus Relief aus der Höhenkarte über Bildschirm-Ableitungen.

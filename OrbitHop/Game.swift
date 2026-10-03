@@ -678,6 +678,18 @@ final class Game {
         print("OHLOG \(String(format: "%.1f", time)) \(text)")
     }
 
+    /// Speicherbedarf der App in MB, so wie iOS ihn für das Beenden wegen Speichermangels zählt (nur fürs Bot-Log)
+    static func memoryMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+
     init() {
         ship = profile.selected
         reset()
@@ -1355,7 +1367,7 @@ final class Game {
         }
         if time >= botNextTick {
             botNextTick = time + 5
-            blog("tick phase=\(phase) idx=\(currentIndex) score=\(score) energy=\(Int(energy)) speed=\(Int(speed)) shots=\(botShots) obstacles=\(asteroids.count)")
+            blog("tick phase=\(phase) idx=\(currentIndex) score=\(score) energy=\(Int(energy)) speed=\(Int(speed)) shots=\(botShots) obstacles=\(asteroids.count) mem=\(Game.memoryMB())MB")
         }
         switch phase {
         case .docked:

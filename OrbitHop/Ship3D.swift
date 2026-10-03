@@ -311,6 +311,15 @@ enum Ship3D {
         return s
     }
 
+    /// Bei Speicherwarnung alle zwischengespeicherten Szenen und Texturen freigeben; sie entstehen bei Bedarf neu.
+    static func purgeCaches() {
+        sceneCache.removeAll()
+        sceneOrder.removeAll()
+        spriteCache.removeAll()
+        textureCache.removeAll()
+        WornPaint.purge()
+    }
+
     /// Draufsicht des Modells für das Spiel, Nase zeigt nach rechts.
     static func sprite(for m: ShipModel) -> UIImage? {
         if let img = spriteCache[m.id] { return img }
@@ -583,19 +592,27 @@ enum Ship3D {
 
 struct ShipModelView: UIViewRepresentable {
     let model: ShipModel
+    /// Nur die gerade gezeigte Seite der Werft dreht und zeichnet laufend; die Nachbarseiten, die das
+    /// Blättern schon bereithält, bleiben stehen (Schatten und Umgebungsverdeckung sind teuer).
+    var active = true
 
     func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
         v.backgroundColor = .clear
         v.antialiasingMode = .multisampling2X
-        v.isPlaying = true
-        v.rendersContinuously = true
         configure(v)
+        apply(active, to: v)
         return v
     }
 
     func updateUIView(_ v: SCNView, context: Context) {
         if v.scene !== Ship3D.scene(for: model) { configure(v) }
+        if v.isPlaying != active { apply(active, to: v) }
+    }
+
+    private func apply(_ active: Bool, to v: SCNView) {
+        v.isPlaying = active
+        v.rendersContinuously = active
     }
 
     private func configure(_ v: SCNView) {

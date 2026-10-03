@@ -20,7 +20,9 @@ struct GameView: View {
             let full = CGSize(width: geo.size.width + insets.leading + insets.trailing,
                               height: geo.size.height + insets.top + insets.bottom)
 
-            TimelineView(.animation) { timeline in
+            // Werft und Missionen liegen als Vollbild darüber: dann steht die Welt still, statt unsichtbar
+            // weiterzurechnen und neben der Werft-Vorschau eine zweite 3D-Szene zu zeichnen
+            TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
                 let _ = (game.insets = insets)
                 let _ = game.step(date: timeline.date, size: full)
                 let _ = world.map { w in
@@ -31,7 +33,7 @@ struct GameView: View {
                 let frameDate = timeline.date
                 ZStack {
                     if let world {
-                        WorldView(world: world)
+                        WorldView(world: world, paused: worldCovered)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
@@ -82,6 +84,11 @@ struct GameView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            // iOS beendet speicherhungrige Apps ohne Absturzbericht; vorher alles abgeben, was sich neu erzeugen lässt
+            Ship3D.purgeCaches()
+            WorldTextures.purge()
+        }
         .task {
             // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
             Store.shared.onCredit = { game.profile.addShipParts($0) }
@@ -102,6 +109,8 @@ struct GameView: View {
     }
 
     // MARK: Hilfen
+
+    private var worldCovered: Bool { showShop || showMissions }
 
     private func label(_ text: String) -> Text {
         Text(text)

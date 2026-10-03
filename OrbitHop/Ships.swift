@@ -402,7 +402,7 @@ struct ShipShopView: View {
             header
             TabView(selection: $page) {
                 ForEach(Array(ShipModel.all.enumerated()), id: \.offset) { i, m in
-                    shipPage(m).tag(i)
+                    shipPage(m, visible: i == page).tag(i)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -508,7 +508,7 @@ struct ShipShopView: View {
 
     private func norm(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { max(0.05, min(1, (v - lo) / (hi - lo))) }
 
-    private func shipPage(_ m: ShipModel) -> some View {
+    private func shipPage(_ m: ShipModel, visible: Bool) -> some View {
         let ship = profile.ship(m)
         let owned = profile.isOwned(m)
         let active = profile.selectedID == m.id
@@ -531,7 +531,7 @@ struct ShipShopView: View {
             .padding(.horizontal, 20)
 
             ZStack {
-                ShipModelView(model: m)
+                ShipModelView(model: m, active: visible)
                     .opacity(owned ? 1 : 0.55)
                     .saturation(owned ? 1 : 0.3)
                 if !owned {
