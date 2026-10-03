@@ -565,6 +565,18 @@ final class Game {
     /// läuft auch in Pause und Stationsmenü weiter (für Kamerafahrten im Menü)
     var uiTime: CGFloat = 0
     var lastTime: TimeInterval?
+    private var distanceTick = -1
+    private var distanceShown = 0
+    /// Zielentfernung für Ziel-Label und Pfeil, zweimal pro Sekunde übernommen: eine neue Zahl in jedem Bild
+    /// bedeutete in jedem Bild neues Textlayout
+    var shownDistance: Int {
+        let t = Int(uiTime * 2)
+        if t != distanceTick {
+            distanceTick = t
+            distanceShown = Int(targetDistance)
+        }
+        return distanceShown
+    }
     var overAt: CGFloat = 0
     var lastAccuracy: CGFloat = 0
     var lastLaunchTime: CGFloat = -10

@@ -686,10 +686,9 @@ extension Game {
         let sp = screenPoint(t.center, size)
         let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
         let h = max(16, hypot(edge.x - sp.x, edge.y - sp.y))
-        // dunkler Schatten unter der Schrift, damit sie auch vor hellen Planeten lesbar bleibt
+        // kein Schattenfilter mehr: er kostete in jedem Bild einen eigenen Renderdurchgang, die dunkle Platte
+        // hinter der Schrift hält sie auch vor hellen Planeten lesbar
         let plain = c
-        var c = c
-        c.addFilter(.shadow(color: .black.opacity(0.9), radius: 2.5))
         let flip: CGFloat = sp.x + h + 110 > size.width ? -1 : 1
         let corner = CGPoint(x: sp.x + h * flip, y: sp.y - h)
         guard corner.x > 8, corner.x < size.width - 8,
@@ -710,7 +709,7 @@ extension Game {
         let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(amber))
-        let info = c.resolve(Text("\(Int(targetDistance)) km · +\(Int(t.energyGain.rounded())) E")
+        let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(amber.opacity(0.85)))
         let s1 = title.measure(in: size), s2 = info.measure(in: size)
@@ -925,7 +924,7 @@ extension Game {
         ar.fill(arrow, with: .color(col))
 
         let ty: CGFloat = iy > cy ? -32 : 32
-        c.draw(Text("\(Int(targetDistance)) km")
+        c.draw(Text("\(shownDistance) km")
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                 .foregroundColor(col),
                at: CGPoint(x: min(max(ix, 40), size.width - 40), y: iy + ty))
