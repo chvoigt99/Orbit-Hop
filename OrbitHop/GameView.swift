@@ -169,9 +169,16 @@ struct GameView: View {
             topBar
             statusLine
             effectsRow
-            precisionBadge
+            // unsichtbare Texte nicht jedes Bild neu setzen lassen (Textlayout ist der größte Posten im Profil)
+            if game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch {
+                precisionBadge
+            } else {
+                Color.clear.frame(height: 42)
+            }
             Spacer()
-            hint
+            if game.hintShown && game.started && game.phase != .docked {
+                hint
+            }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
             bottomBar.opacity(game.stationOpen ? 0 : 1)
         }
@@ -426,7 +433,6 @@ struct GameView: View {
     }
 
     private var precisionBadge: some View {
-        let show = game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch
         let tier = precisionTier(game.lastAccuracy)
         return Text("\(tier.0) · \(Int(game.lastAccuracy * 100)) %")
             .font(.system(size: 18, weight: .bold, design: .monospaced))
@@ -436,7 +442,6 @@ struct GameView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
             .overlay(Brackets(len: 8).stroke(tier.1.opacity(0.8), lineWidth: 1.5))
-            .opacity(show ? 1 : 0)
             .padding(.top, 4)
     }
 
@@ -447,7 +452,6 @@ struct GameView: View {
             .foregroundStyle(dim)
             .padding(10)
             .background(panelBackground(cut: 8, edge: dim))
-            .opacity(game.hintShown && game.started && game.phase != .docked ? 1 : 0)
     }
 
     private func readout(_ key: String, _ value: String, _ unit: String) -> some View {

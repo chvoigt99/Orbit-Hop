@@ -257,16 +257,23 @@ enum WorldTextures {
 
     /// Ringtextur je Farbton nur einmal erzeugen (gleicher Farbton ergibt ohnehin dasselbe Bild)
     static func ring(hue: Double) -> UIImage {
-        let key = Int(hue)
-        if let img = ringCache[key] { return img }
-        // kleiner Vorrat genügt, es sind immer nur wenige Planeten gleichzeitig in der Szene
-        if ringCache.count > 8 { ringCache.removeAll() }
+        if let img = cachedRing(hue: hue) { return img }
         let img = makeRing(hue: hue)
-        ringCache[key] = img
+        storeRing(img, hue: hue)
         return img
     }
 
-    private static func makeRing(hue: Double) -> UIImage {
+    /// Zugriff auf den Vorrat nur vom Hauptthread
+    static func cachedRing(hue: Double) -> UIImage? { ringCache[Int(hue)] }
+
+    static func storeRing(_ img: UIImage, hue: Double) {
+        // kleiner Vorrat genügt, es sind immer nur wenige Planeten gleichzeitig in der Szene
+        if ringCache.count > 8 { ringCache.removeAll() }
+        ringCache[Int(hue)] = img
+    }
+
+    /// darf auf jedem Thread laufen
+    static func makeRing(hue: Double) -> UIImage {
         var rng = SeededRNG("ring\(Int(hue))")
         let s: CGFloat = 512
         return textureRenderer(CGSize(width: s, height: s), scale: 2).image { ctx in
@@ -522,6 +529,11 @@ final class World3D {
         scene.rootNode.addChildNode(lockGroup)
         buildOrbitParts()
         buildDock()
+        // Stationslacke schon während des Ladebildschirms erzeugen, sonst hakt es beim Auftauchen der ersten Station
+        for (key, c) in [("station", UIColor(white: 0.66, alpha: 1)), ("station-dark", UIColor(white: 0.22, alpha: 1)),
+                         ("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))] {
+            _ = WornPaint.material(key, base: c)
+        }
         scene.rootNode.addChildNode(dockNode)
     }
 
@@ -711,7 +723,12 @@ final class World3D {
 
     // MARK: Planeten
 
-    private func makePlanet(_ p: Planet, index: Int) -> SCNNode {
+    /// Planeten- und Ringtexturen entstehen im Hintergrund: ein Planet braucht dafür um 50 ms, auf dem
+    /// Hauptthread war das jedes Mal ein spürbarer Hänger. Neue Planeten liegen weit voraus, bis sie ins Bild
+    /// kommen, ist die Textur längst da.
+    private static let textureQueue = DispatchQueue(label: "orbix.textures", qos: .userInitiated)
+
+    private func makePlanet(_ p: Planet, index: Int, immediate: Bool) -> SCNNode {
         let root = SCNNode()
         root.position = v3(p.center)
         // Raumstation statt Planet: eigenes Modell, kein Planetenkörper
@@ -737,7 +754,17 @@ final class World3D {
         sphere.segmentCount = 64
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
-        m.diffuse.contents = WorldTextures.planet(p, seed: "planet\(index)")
+        let seed = "planet\(index)"
+        if immediate {
+            m.diffuse.contents = WorldTextures.planet(p, seed: seed)
+        } else {
+            // Grundfarbe als Platzhalter, bis die Textur fertig ist
+            m.diffuse.contents = uic(p.hue, 0.55, 0.45)
+            Self.textureQueue.async {
+                let img = WorldTextures.planet(p, seed: seed)
+                DispatchQueue.main.async { m.diffuse.contents = img }
+            }
+        }
         m.roughness.contents = 0.85
         m.metalness.contents = 0
         sphere.materials = [m]
@@ -774,7 +801,22 @@ final class World3D {
             path.usesEvenOddFillRule = true
             let rm = SCNMaterial()
             rm.lightingModel = .lambert
-            rm.diffuse.contents = WorldTextures.ring(hue: p.hue)
+            if let img = WorldTextures.cachedRing(hue: p.hue) {
+                rm.diffuse.contents = img
+            } else if immediate {
+                rm.diffuse.contents = WorldTextures.ring(hue: p.hue)
+            } else {
+                // unsichtbar, bis die Ringtextur im Hintergrund fertig ist
+                rm.diffuse.contents = UIColor.clear
+                let hue = p.hue
+                Self.textureQueue.async {
+                    let img = WorldTextures.makeRing(hue: hue)
+                    DispatchQueue.main.async {
+                        WorldTextures.storeRing(img, hue: hue)
+                        rm.diffuse.contents = img
+                    }
+                }
+            }
             rm.isDoubleSided = true
             rm.writesToDepthBuffer = true
             rm.transparencyMode = .aOne
@@ -1418,7 +1460,17 @@ final class World3D {
     private func makeWreck(_ a: Asteroid) -> SCNNode {
         let root = SCNNode()
         root.position = v3(a.center, CGFloat((a.uid * 37) % 30 - 15))
-        let hull = Ship3D.simplified(ShipDesigns.build(ShipModel.all[a.variant % ShipModel.all.count]))
+        // Schiffsmodell je Typ nur einmal bauen (Lacke, Geometrie verschmelzen) und danach klonen;
+        // der Klon teilt Geometrie und Materialien
+        let variant = a.variant % ShipModel.all.count
+        let model: SCNNode
+        if let m = wreckModels[variant] {
+            model = m
+        } else {
+            model = Ship3D.simplified(ShipDesigns.build(ShipModel.all[variant]))
+            wreckModels[variant] = model
+        }
+        let hull = model.clone()
         let s = a.radius / 3.2
         hull.scale = SCNVector3(Float(s), Float(s), Float(s))
         hull.eulerAngles = SCNVector3(Float(a.phase), Float(a.phase * 1.7), 0.5)
@@ -1595,6 +1647,7 @@ final class World3D {
     }
 
     private var activeBeams: [(node: SCNNode, angle: CGFloat, len: CGFloat)] = []
+    private var wreckModels: [Int: SCNNode] = [:]
 
     private func spawnBeam(_ b: Beam, px: CGFloat) {
         let dx = b.to.x - b.from.x, dy = b.to.y - b.from.y
@@ -1775,7 +1828,8 @@ final class World3D {
             planetNodes[i] = nil
         }
         for i in first..<game.planets.count where planetNodes[i] == nil {
-            let n = makePlanet(game.planets[i], index: i + game.generation * 1000)
+            // Start- und Zielplanet sofort fertig, alles weiter voraus mit Textur aus dem Hintergrund
+            let n = makePlanet(game.planets[i], index: i + game.generation * 1000, immediate: i <= game.currentIndex + 1)
             scene.rootNode.addChildNode(n)
             planetNodes[i] = n
         }
