@@ -11,6 +11,9 @@ import UIKit
 /// im Orbit), Hängern des SceneKit-Renderers und Hauptthread-Zeit je Schritt.
 enum PerfLog {
     static let enabled = Game.bot || ProcessInfo.processInfo.arguments.contains("-perf")
+    /// nur für Messungen: Canvas-Overlay (`-noCanvas`) oder HUD und Menüs (`-noHUD`) weglassen
+    static let noCanvas = ProcessInfo.processInfo.arguments.contains("-noCanvas")
+    static let noHUD = ProcessInfo.processInfo.arguments.contains("-noHUD")
     /// vom SceneKit-Renderthread geschrieben (nur grobe Zählung für das Log)
     static var sceneFrames = 0
     private static var sceneLast: Double = 0

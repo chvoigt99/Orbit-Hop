@@ -534,6 +534,11 @@ final class World3D {
                          ("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))] {
             _ = WornPaint.material(key, base: c)
         }
+        // Texturen des Schwarzen Lochs entstehen beim ersten Zugriff; das im Hintergrund erledigen
+        Self.textureQueue.async {
+            _ = WorldTextures.accretionDisk
+            _ = WorldTextures.photonRing
+        }
         scene.rootNode.addChildNode(dockNode)
     }
 
@@ -749,7 +754,7 @@ final class World3D {
             root.addChildNode(makeBlackHole(p))
             return root
         case .binary:
-            root.addChildNode(makeBinary(p, seed: "binary\(index)"))
+            root.addChildNode(makeBinary(p, seed: "binary\(index)", immediate: immediate))
             return root
         }
 
@@ -919,7 +924,7 @@ final class World3D {
 
     /// Doppelstern: zwei Sonnen umkreisen den gemeinsamen Schwerpunkt. Der Winkel kommt aus dem Spiel,
     /// damit das Pendeln der Bahn zur sichtbaren Stellung der Sonnen passt.
-    private func makeBinary(_ p: Planet, seed: String) -> SCNNode {
+    private func makeBinary(_ p: Planet, seed: String, immediate: Bool) -> SCNNode {
         let root = SCNNode()
         let pair = SCNNode()
         pair.name = "binary"
@@ -937,9 +942,26 @@ final class World3D {
             sphere.segmentCount = 48
             let m = SCNMaterial()
             m.lightingModel = .constant
-            let tex = WorldTextures.sunSurface(hue: sun.hue, seed: "\(seed)-\(k)")
-            m.diffuse.contents = tex
-            m.emission.contents = tex
+            let sunSeed = "\(seed)-\(k)"
+            if immediate {
+                let tex = WorldTextures.sunSurface(hue: sun.hue, seed: sunSeed)
+                m.diffuse.contents = tex
+                m.emission.contents = tex
+            } else {
+                // zwei Sonnentexturen kosteten zusammen bis 90 ms auf dem Hauptthread; bis sie fertig sind, Grundfarbe
+                let base = uic(sun.hue, 0.95, 0.6)
+                m.diffuse.contents = base
+                m.emission.contents = base
+                Self.textureQueue.async { [weak self] in
+                    let tex = WorldTextures.sunSurface(hue: sun.hue, seed: sunSeed)
+                    DispatchQueue.main.async {
+                        let ready = m.copy() as! SCNMaterial
+                        ready.diffuse.contents = tex
+                        ready.emission.contents = tex
+                        self?.upload(ready) { sphere.materials = [ready] }
+                    }
+                }
+            }
             sphere.materials = [m]
             let body = SCNNode(geometry: sphere)
             body.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 18 + Double(k) * 6)))

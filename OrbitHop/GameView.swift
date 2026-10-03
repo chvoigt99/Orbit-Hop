@@ -37,7 +37,7 @@ struct GameView: View {
                 // Markierungen und Ziel-Labels sitzen auf 3D-Objekten und laufen deshalb mit jedem Bild mit.
                 // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
                 // für unverändert und zeichnet ihn nie neu.
-                TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
+                TimelineView(.animation(minimumInterval: nil, paused: worldCovered || PerfLog.noCanvas)) { timeline in
                     let frameDate = timeline.date
                     Canvas { context, size in
                         _ = frameDate
@@ -54,8 +54,10 @@ struct GameView: View {
                     let _ = (PerfLog.uiFrames += 1)
                     let loading = (world?.framesSynced ?? 0) < 3
                     ZStack {
-                        hud
-                            .allowsHitTesting(false)
+                        if !PerfLog.noHUD {
+                            hud
+                                .allowsHitTesting(false)
+                        }
                         if !game.started {
                             titleView
                         }
