@@ -27,19 +27,18 @@ struct GameView: View {
             let _ = loop.configure(size: full, insets: insets, paused: worldCovered)
             // Werft und Missionen liegen als Vollbild darüber: dann steht die Welt still, statt unsichtbar
             // weiterzurechnen und neben der Werft-Vorschau eine zweite 3D-Szene zu zeichnen
-            TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
-                let _ = (PerfLog.uiFrames += 1)
-                let loading = (world?.framesSynced ?? 0) < 3
-                let frameDate = timeline.date
-                ZStack {
-                    if let world {
-                        WorldView(world: world, paused: worldCovered)
-                            .ignoresSafeArea()
-                            .allowsHitTesting(false)
-                    }
+            ZStack {
+                if let world {
+                    WorldView(world: world, paused: worldCovered)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
 
-                    // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
-                    // für unverändert und zeichnet ihn nie neu.
+                // Markierungen und Ziel-Labels sitzen auf 3D-Objekten und laufen deshalb mit jedem Bild mit.
+                // frameDate muss im Closure stehen, sonst hält SwiftUI den Canvas
+                // für unverändert und zeichnet ihn nie neu.
+                TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
+                    let frameDate = timeline.date
                     Canvas { context, size in
                         _ = frameDate
                         game.draw(context, size: size)
@@ -47,26 +46,34 @@ struct GameView: View {
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { game.tap() }
+                }
 
-                    hud
-                        .allowsHitTesting(false)
-                    if !game.started {
-                        titleView
-                    }
-                    if game.started && game.phase != .over && !game.paused && !game.stationOpen {
-                        pauseButton
-                    }
-                    if game.paused {
-                        pauseMenu
-                    }
-                    if game.stationOpen {
-                        stationMenu
-                    }
-                    if game.phase == .over {
-                        gameOverView
-                    }
-                    if loading {
-                        loadingView
+                // HUD und Menüs: 30 Bilder pro Sekunde reichen für Zahlen und Leisten. Das Textlayout war der
+                // größte Posten auf dem Hauptthread und hat SwiftUI regelmäßig Bilder auslassen lassen.
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: worldCovered)) { _ in
+                    let _ = (PerfLog.uiFrames += 1)
+                    let loading = (world?.framesSynced ?? 0) < 3
+                    ZStack {
+                        hud
+                            .allowsHitTesting(false)
+                        if !game.started {
+                            titleView
+                        }
+                        if game.started && game.phase != .over && !game.paused && !game.stationOpen {
+                            pauseButton
+                        }
+                        if game.paused {
+                            pauseMenu
+                        }
+                        if game.stationOpen {
+                            stationMenu
+                        }
+                        if game.phase == .over {
+                            gameOverView
+                        }
+                        if loading {
+                            loadingView
+                        }
                     }
                 }
             }
