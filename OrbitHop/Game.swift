@@ -705,6 +705,7 @@ final class Game {
         inHorizon = false
         combo = 0
         runBestCombo = 0
+        runPerfects = 0
         comboFlight = false
         wideConeLaunches = 0
         superBombs = 0
@@ -968,6 +969,22 @@ final class Game {
 
     // MARK: Eingabe
 
+    // MARK: Missionen und Erfolge
+
+    let missions = MissionLog()
+    /// perfekte Starts in diesem Flug
+    private(set) var runPerfects = 0
+
+    /// Ereignis melden; erfüllte Missionen und neue Erfolge zahlen sofort Tech-Teile aus
+    private func track(_ event: MissionEvent) {
+        for r in missions.record(event) {
+            profile.addParts(r.parts)
+            runParts += r.parts
+            popups.append(Popup(pos: pos, text: r.text, color: Color(red: 0.55, green: 1, blue: 0.75), age: 0))
+            Haptics.bonus()
+        }
+    }
+
     // MARK: Tägliche Herausforderung
 
     /// Tagesmodus: feste Strecke des Tages, eigener Bestwert und Bestenliste
@@ -995,6 +1012,7 @@ final class Game {
         runRecorded = true
         if dailyMode {
             dailyNewBest = DailyChallenge.record(score: score, day: dailyDay)
+            if score > 0 { track(.dailyDone) }
             dailyBest = DailyChallenge.best(for: dailyDay)
             GameCenter.shared.submitDaily(score)
         } else if score > best {
@@ -1091,6 +1109,11 @@ final class Game {
         if wideConeLaunches > 0 { wideConeLaunches -= 1 }
         if planets[currentIndex].kind == .blackHole && phase == .orbiting {
             popups.append(Popup(pos: pos, text: "SCHLEUDERSTART", color: Color(red: 1, green: 0.7, blue: 0.35), age: 0))
+            track(.blackHoleEscape)
+        }
+        if phase == .orbiting && accuracy >= 0.9 {
+            runPerfects += 1
+            track(.perfect(inRun: runPerfects))
         }
         inHorizon = false
         // ein schwacher Start beendet die Combo sofort, ein guter hält sie bis zur Ankunft offen
@@ -1357,6 +1380,7 @@ final class Game {
 
     private func apply(_ kind: ItemKind, at p: CGPoint) {
         blog("item \(kind) energy=\(Int(energy))")
+        if kind != .tech && kind != .shipPart { track(.bonus) }
         switch kind {
         case .energy:
             addEnergy(35, from: p)
@@ -1550,6 +1574,7 @@ final class Game {
     private func destroyAsteroid(_ i: Int, blast: Bool) {
         let a = asteroids.remove(at: i)
         blog("destroy kind=\(a.kind)")
+        track(a.kind == .comet ? .comet : .obstacle)
         let techChance: Double
         switch a.kind {
         case .rock: techChance = 0.08
@@ -1806,6 +1831,7 @@ final class Game {
                 combo += 1
                 comboChangedAt = time
                 runBestCombo = max(runBestCombo, combo)
+                track(.combo(combo))
                 if combo > bestCombo {
                     bestCombo = combo
                     UserDefaults.standard.set(bestCombo, forKey: "orbitHopBestCombo")
@@ -1828,12 +1854,15 @@ final class Game {
             }
             // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
             if pl.isStation { stationMenuAt = time + 2.0 }
+            track(.planet(index))
+            if pl.isStation { track(.station) }
             switch pl.kind {
             case .normal: break
             case .blackHole:
                 popups.append(Popup(pos: pos, text: "SCHWARZES LOCH", color: Color(red: 1, green: 0.6, blue: 0.3), age: 0))
             case .binary:
                 solarPool = 45
+                track(.binary)
                 popups.append(Popup(pos: pos, text: "DOPPELSTERN", color: Color(red: 1, green: 0.88, blue: 0.5), age: 0))
             }
         }

@@ -3,6 +3,7 @@ import SwiftUI
 struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
+    @State private var showMissions = false
     @State private var world: World3D?
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
@@ -82,6 +83,9 @@ struct GameView: View {
         .task {
             // gekaufte Schiffsteile gutschreiben (auch Käufe, die erst später bestätigt werden)
             Store.shared.onCredit = { game.profile.addShipParts($0) }
+        }
+        .fullScreenCover(isPresented: $showMissions) {
+            MissionsView(log: game.missions, parts: game.profile.parts) { showMissions = false }
         }
         .fullScreenCover(isPresented: $showShop) {
             ShipShopView(profile: game.profile) {
@@ -533,6 +537,35 @@ struct GameView: View {
         .buttonStyle(.plain)
     }
 
+    /// Missionen und Erfolge; zeigt, wie nah die nächste Mission ist
+    private var missionsButton: some View {
+        let closest = game.missions.missions.map(\.fraction).max() ?? 0
+        return Button {
+            showMissions = true
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 14, weight: .bold))
+                label("\(game.missions.unlocked.count)/\(Achievement.all.count)")
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(signal.opacity(0.2))
+                        Rectangle().fill(signal).frame(width: g.size.width * closest)
+                    }
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 10)
+            }
+            .foregroundStyle(signal)
+            .frame(width: 56, height: 48)
+            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+            .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.7), lineWidth: 1.2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Missionen und Erfolge")
+    }
+
     /// Tagesflug ein- oder ausschalten, im Tagesflug zusätzlich die Bestenliste
     private var dailyRow: some View {
         HStack(spacing: 10) {
@@ -605,6 +638,7 @@ struct GameView: View {
                 .allowsHitTesting(false)
             HStack(spacing: 10) {
                 shipsButton
+                missionsButton
                 if SoundFX.available { soundButton }
             }
             dailyRow
@@ -656,7 +690,10 @@ struct GameView: View {
             VStack(spacing: 18) {
                 gameOverPanel
                     .allowsHitTesting(false)
-                shipsButton
+                HStack(spacing: 10) {
+                    shipsButton
+                    missionsButton
+                }
                 dailyRow
             }
         }
