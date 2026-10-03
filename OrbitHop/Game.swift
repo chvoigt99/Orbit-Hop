@@ -40,9 +40,10 @@ enum PerfLog {
         guard span >= 5 else { return }
         let scene = sceneFrames - lastScene
         lastScene = sceneFrames
-        print(String(format: "OHPERF ui=%.0ffps scene=%.0ffps slow=%d worst=%.0fms main=%.1f/%.1fms mem=%dMB",
+        print(String(format: "OHPERF ui=%.0ffps scene=%.0ffps slow=%d worst=%.0fms main=%.1f/%.1fms mem=%dMB thermal=%d",
                      Double(frames) / span, Double(scene) / span, slow, worst * 1000,
-                     mainSum / Double(max(1, frames)) * 1000, mainMax * 1000, Game.memoryMB()))
+                     mainSum / Double(max(1, frames)) * 1000, mainMax * 1000, Game.memoryMB(),
+                     ProcessInfo.processInfo.thermalState.rawValue))
         frames = 0; slow = 0; worst = 0; mainSum = 0; mainMax = 0
         windowStart = now
     }

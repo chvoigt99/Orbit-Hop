@@ -1460,22 +1460,18 @@ final class World3D {
     private func makeWreck(_ a: Asteroid) -> SCNNode {
         let root = SCNNode()
         root.position = v3(a.center, CGFloat((a.uid * 37) % 30 - 15))
-        // Schiffsmodell je Typ nur einmal bauen (Lacke, Geometrie verschmelzen) und danach klonen;
-        // der Klon teilt Geometrie und Materialien
-        let variant = a.variant % ShipModel.all.count
-        let model: SCNNode
-        if let m = wreckModels[variant] {
-            model = m
-        } else {
-            model = Ship3D.simplified(ShipDesigns.build(ShipModel.all[variant]))
-            wreckModels[variant] = model
-        }
-        let hull = model.clone()
+        // Schiffsmodell je Typ nur einmal bauen und danach klonen (der Klon teilt Geometrie und Materialien).
+        // Der Bau mit neuen Lacken dauert pro Typ bis 100 ms, deshalb im Hintergrund; das Wrack liegt weit
+        // voraus und bekommt seinen Rumpf, sobald das Modell fertig ist
         let s = a.radius / 3.2
-        hull.scale = SCNVector3(Float(s), Float(s), Float(s))
-        hull.eulerAngles = SCNVector3(Float(a.phase), Float(a.phase * 1.7), 0.5)
-        hull.runAction(.repeatForever(.rotate(by: .pi * 2, around: SCNVector3(0.3, 1, 0.2), duration: 22)))
-        root.addChildNode(hull)
+        let phase = a.phase
+        withWreckModel(a.variant % ShipModel.all.count) { model in
+            let hull = model.clone()
+            hull.scale = SCNVector3(Float(s), Float(s), Float(s))
+            hull.eulerAngles = SCNVector3(Float(phase), Float(phase * 1.7), 0.5)
+            hull.runAction(.repeatForever(.rotate(by: .pi * 2, around: SCNVector3(0.3, 1, 0.2), duration: 22)))
+            root.addChildNode(hull)
+        }
         let fire = SCNNode(geometry: SCNPlane(width: a.radius * 1.4, height: a.radius * 1.4))
         let fm = spriteMat(WorldTextures.soft)
         fm.multiply.contents = UIColor(red: 1, green: 0.35, blue: 0.08, alpha: 1)
@@ -1648,6 +1644,26 @@ final class World3D {
 
     private var activeBeams: [(node: SCNNode, angle: CGFloat, len: CGFloat)] = []
     private var wreckModels: [Int: SCNNode] = [:]
+    private var wreckWaiting: [Int: [(SCNNode) -> Void]] = [:]
+
+    /// liefert das Wrack-Modell eines Schiffstyps, sofort oder (beim ersten Mal) nach dem Bau im Hintergrund
+    private func withWreckModel(_ variant: Int, _ use: @escaping (SCNNode) -> Void) {
+        if let m = wreckModels[variant] { use(m); return }
+        if wreckWaiting[variant] != nil {
+            wreckWaiting[variant]?.append(use)
+            return
+        }
+        wreckWaiting[variant] = [use]
+        Self.textureQueue.async { [weak self] in
+            let model = Ship3D.simplified(ShipDesigns.build(ShipModel.all[variant]))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.wreckModels[variant] = model
+                let waiting = self.wreckWaiting.removeValue(forKey: variant) ?? []
+                waiting.forEach { $0(model) }
+            }
+        }
+    }
 
     private func spawnBeam(_ b: Beam, px: CGFloat) {
         let dx = b.to.x - b.from.x, dy = b.to.y - b.from.y
@@ -2018,6 +2034,10 @@ final class World3D {
         for (id, n) in asteroidNodes where !alive.contains(id) {
             n.removeFromParentNode()
             asteroidNodes[id] = nil
+        }
+        // Wrack-Modelle nur vorhalten, solange ein Wrackfeld in der Nähe ist (je Typ etwa 10 MB Lacktexturen)
+        if !wreckModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .wreck }) {
+            wreckModels.removeAll()
         }
 
         // Nebel

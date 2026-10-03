@@ -21,7 +21,12 @@ enum WornPaint {
     /// Obergrenze für zwischengespeicherte Lacke (je Schiff etwa fünf), damit der Speicher nicht mit jedem Schiff wächst
     private static let cacheLimit = 24
 
+    /// Wrack-Modelle entstehen im Hintergrund, der Zwischenspeicher wird deshalb abgesichert
+    private static let lock = NSRecursiveLock()
+
     static func material(_ key: String, base: UIColor, stripe: UIColor? = nil, marking: String? = nil) -> SCNMaterial {
+        lock.lock()
+        defer { lock.unlock() }
         let id = "\(key)-\(marking ?? "")"
         order.removeAll { $0 == id }
         order.append(id)
@@ -49,6 +54,8 @@ enum WornPaint {
 
     /// Bei Speicherwarnung: Zwischenspeicher leeren. Lacke, die gerade auf einem Modell sitzen, bleiben dort erhalten.
     static func purge() {
+        lock.lock()
+        defer { lock.unlock() }
         cache.removeAll()
         order.removeAll()
     }
