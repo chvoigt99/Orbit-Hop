@@ -435,8 +435,7 @@ final class World3D {
     private struct BonusRing {
         let node: SCNNode
         let progress: SCNNode
-        /// Bögen des Fortschritts (Schein, Kern, heller Strich); nur ihre Geometrie wird beim Laden ersetzt
-        let arcs: [SCNNode]
+        /// Materialien der Fortschrittsbögen (Schein, Kern, heller Strich); ihr Shader blendet den Rest des Rings aus
         let arcMats: [SCNMaterial]
         let head: SCNNode
         let radius: CGFloat
@@ -1071,19 +1070,21 @@ final class World3D {
         root.addChildNode(flatShape(base, glowMat(col.withAlphaComponent(0.4)), depth: 0.5))
         let progress = SCNNode()
         root.addChildNode(progress)
-        // Materialien und Knoten einmal anlegen, beim Laden wechselt nur die Bogenform
+        // Fortschritt: drei volle Ringe, einmal gebaut; der Shader zeigt nur den geladenen Anteil.
+        // Früher entstanden beim Laden bis zu 360 neue SCNShape-Geometrien je Bonus.
         let arcMats = [glowMat(col.withAlphaComponent(0.45)), glowMat(col), glowMat(UIColor.white.withAlphaComponent(0.85))]
-        let arcs = arcMats.map { _ in
-            let n = SCNNode()
-            n.eulerAngles.x = .pi / 2
-            n.isHidden = true
-            progress.addChildNode(n)
-            return n
+        for (m, (width, depth)) in zip(arcMats, [(34, 0.4), (13, 0.8), (4, 1.0)] as [(CGFloat, CGFloat)]) {
+            m.shaderModifiers = [.fragment: Self.progressShader]
+            m.setValue(NSNumber(value: 0), forKey: "pgProgress")
+            let path = UIBezierPath(ovalIn: CGRect(x: -rr - width / 2, y: -rr - width / 2, width: rr * 2 + width, height: rr * 2 + width))
+            path.append(UIBezierPath(ovalIn: CGRect(x: -rr + width / 2, y: -rr + width / 2, width: rr * 2 - width, height: rr * 2 - width)))
+            path.usesEvenOddFillRule = true
+            progress.addChildNode(flatShape(path, m, depth: depth))
         }
         let head = SCNNode(geometry: SCNSphere(radius: 11))
         head.geometry?.materials = [glowMat(UIColor.white)]
-        head.isHidden = true
         progress.addChildNode(head)
+        progress.isHidden = true
         let badge = SCNNode(geometry: SCNPlane(width: 1, height: 1))
         // immer obenauf, damit der Planet das Symbol nicht verdeckt
         let bm = spriteMat(WorldTextures.badge(kind))
@@ -1094,29 +1095,32 @@ final class World3D {
         badge.name = "badge"
         badge.position = SCNVector3(0, Float(p.radius * 0.35), Float(-rr - 12))
         root.addChildNode(badge)
-        return BonusRing(node: root, progress: progress, arcs: arcs, arcMats: arcMats, head: head, radius: rr)
+        return BonusRing(node: root, progress: progress, arcMats: arcMats, head: head, radius: rr)
     }
 
     private func updateProgress(_ r: inout BonusRing, fraction: CGFloat) {
         let step = Int(fraction * 120)
         guard step != r.step else { return }
         r.step = step
-        let show = step > 0
-        r.arcs.forEach { $0.isHidden = !show }
-        r.head.isHidden = !show
-        guard show else { return }
-        let a0 = -CGFloat.pi / 2
-        let a1 = a0 + .pi * 2 * CGFloat(step) / 120
-        // breiter Schein, kräftiger Kern und ein heller Punkt an der Spitze des Fortschritts
-        let sizes: [(width: CGFloat, depth: CGFloat)] = [(34, 0.4), (13, 0.8), (4, 1.0)]
-        for i in r.arcs.indices {
-            let shape = SCNShape(path: arcPath(radius: r.radius, width: sizes[i].width, from: a0, to: a1),
-                                 extrusionDepth: sizes[i].depth)
-            shape.materials = [r.arcMats[i]]
-            r.arcs[i].geometry = shape
-        }
+        let f = CGFloat(step) / 120
+        r.progress.isHidden = step <= 0
+        r.arcMats.forEach { $0.setValue(NSNumber(value: Float(f)), forKey: "pgProgress") }
+        // heller Punkt an der Spitze des Fortschritts
+        let a1 = -CGFloat.pi / 2 + .pi * 2 * f
         r.head.position = SCNVector3(Float(cos(a1) * r.radius), 1, Float(sin(a1) * r.radius))
     }
+
+    /// Zeigt von einem vollen Ring nur den Bogen ab 12 Uhr bis `pgProgress` (0…1). Die Materialien mischen additiv,
+    /// Schwarz ist daher unsichtbar. Winkel im Modellraum der Ringform (Pfadebene), wie bei arcPath.
+    private static let progressShader = """
+    #pragma arguments
+    float pgProgress;
+
+    #pragma body
+    float3 pgPos = (scn_node.inverseModelViewTransform * float4(_surface.position, 1.0)).xyz;
+    float pgT = fract((atan2(pgPos.y, pgPos.x) + 1.5707963) / 6.2831853);
+    if (pgT > pgProgress) { _output.color = float4(0.0); }
+    """
 
     // MARK: Bahn, Kegel, Zielerfassung
 
