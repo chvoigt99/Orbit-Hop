@@ -106,21 +106,21 @@ struct Planet {
                      energyScale: CGFloat = 1, bonus: ItemKind? = nil) -> Planet {
         let bandCount = 5 + Int(radius / 14)
         let bands = (0..<bandCount).map { _ in
-            Band(alpha: CGFloat.random(in: 0.2...1), dark: Bool.random())
+            Band(alpha: CGFloat.random(in: 0.2...1, using: &Dice.rng), dark: Bool.random(using: &Dice.rng))
         }
         let craters = (0..<4).map { _ in
-            Crater(angle: CGFloat.random(in: 0...(CGFloat.pi * 2)),
-                   dist: CGFloat.random(in: 0.15...0.75),
-                   size: CGFloat.random(in: 0.06...0.16))
+            Crater(angle: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
+                   dist: CGFloat.random(in: 0.15...0.75, using: &Dice.rng),
+                   size: CGFloat.random(in: 0.06...0.16, using: &Dice.rng))
         }
         return Planet(center: center, radius: radius, spin: spin, hue: hue,
-                      hasRing: allowRing && Double.random(in: 0...1) < 0.35,
-                      tilt: CGFloat.random(in: -0.45...0.45),
+                      hasRing: allowRing && Double.random(in: 0...1, using: &Dice.rng) < 0.35,
+                      tilt: CGFloat.random(in: -0.45...0.45, using: &Dice.rng),
                       bands: bands, craters: craters,
-                      hue2: hue + Double.random(in: -50...50),
-                      hasStorm: radius > 70 && Bool.random(),
-                      hasMoon: Double.random(in: 0...1) < 0.45,
-                      moonPhase: CGFloat.random(in: 0...(CGFloat.pi * 2)),
+                      hue2: hue + Double.random(in: -50...50, using: &Dice.rng),
+                      hasStorm: radius > 70 && Bool.random(using: &Dice.rng),
+                      hasMoon: Double.random(in: 0...1, using: &Dice.rng) < 0.45,
+                      moonPhase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
                       energyScale: energyScale,
                       bonus: bonus)
     }
@@ -234,7 +234,7 @@ enum ItemKind: CaseIterable {
 
     /// Gewichtete Zufallsauswahl, der Nachbrenner ist selten.
     static func random() -> ItemKind {
-        let r = Double.random(in: 0...1)
+        let r = Double.random(in: 0...1, using: &Dice.rng)
         if r < 0.42 { return .energy }
         if r < 0.64 { return .wideCone }
         if r < 0.86 { return .superBomb }
@@ -621,7 +621,7 @@ final class Game {
     var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
 
     /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
-    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8) }
+    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8, using: &Dice.rng) }
 
     /// Panzerung: Kollisionen zehren daran, bei null explodiert das Schiff. Nur an Stationen reparierbar.
     static let maxHull: CGFloat = 100
@@ -676,6 +676,15 @@ final class Game {
 
     func reset() {
         generation += 1
+        runRecorded = false
+        // Tagesmodus: Welt aus dem Datum, damit alle dieselbe Strecke fliegen
+        if dailyMode {
+            dailyDay = DailyChallenge.today
+            dailyBest = DailyChallenge.best(for: dailyDay)
+            Dice.rng = WorldRNG(seeded: DailyChallenge.seed(for: dailyDay))
+        } else {
+            Dice.rng = WorldRNG()
+        }
         lastWarnTime = -10
         bursts = []
         ship = profile.selected
@@ -704,7 +713,7 @@ final class Game {
         stationOpen = false
         stationMenuAt = nil
         // ZUM TESTEN: erste Station schon als zweites Ziel; im fertigen Spiel Int.random(in: 30...36)
-        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36)
+        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36, using: &Dice.rng)
         planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
@@ -713,7 +722,7 @@ final class Game {
         score = 0
         energy = maxEnergy
         orbitAngle = CGFloat.random(in: 0...(CGFloat.pi * 2))
-        orbitDir = Bool.random() ? 1 : -1
+        orbitDir = Bool.random(using: &Dice.rng) ? 1 : -1
         orbitDist = planets[0].orbitRadius
         orbitVr = 0
         orbitOmega = orbitDir * planets[0].spin
@@ -760,7 +769,7 @@ final class Game {
         // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
         var kind = PlanetKind.normal
         if !station && planets.count >= 6 && prev.kind == .normal && !prev.isStation && planets.count + 1 != nextStation {
-            let roll = Double.random(in: 0...1)
+            let roll = Double.random(in: 0...1, using: &Dice.rng)
             if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
             else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
         }
@@ -770,28 +779,28 @@ final class Game {
         // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
         let r: CGFloat
         switch kind {
-        case .blackHole: r = CGFloat.random(in: 62...76)
-        case .binary: r = CGFloat.random(in: 120...150)
-        case .normal: r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl))
+        case .blackHole: r = CGFloat.random(in: 62...76, using: &Dice.rng)
+        case .binary: r = CGFloat.random(in: 120...150, using: &Dice.rng)
+        case .normal: r = station ? 160 : CGFloat.random(in: (85 - 15 * lvl)...(240 - 70 * lvl), using: &Dice.rng)
         }
-        let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl))
+        let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl), using: &Dice.rng)
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1) < Double(0.07 + 0.08 * lvl)
-        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1) < Double(0.45 + 0.4 * lvl)
-        let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl))
+        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
+        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
         // Das Schwarze Loch wird so schnell umkreist wie ein mittelgroßer Planet, nicht wie ein winziger
-        let spin = 150 / (kind == .blackHole ? 115 : r) * CGFloat.random(in: 0.9...1.2) * (1.1 + 0.5 * lvl)
+        let spin = 150 / (kind == .blackHole ? 115 : r) * CGFloat.random(in: 0.9...1.2, using: &Dice.rng) * (1.1 + 0.5 * lvl)
         // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches (Sonderplaneten nie)
-        let bonus: ItemKind? = !station && kind == .normal && Double.random(in: 0...1) < 0.75 ? ItemKind.random() : nil
+        let bonus: ItemKind? = !station && kind == .normal && Double.random(in: 0...1, using: &Dice.rng) < 0.75 ? ItemKind.random() : nil
         let hue: Double
         switch kind {
         case .blackHole: hue = 28
         case .binary: hue = 45
-        case .normal: hue = station ? 165 : bonus?.planetHue ?? (Bool.random() ? Double.random(in: 40...80) : Double.random(in: 315...350))
+        case .normal: hue = station ? 165 : bonus?.planetHue ?? (Bool.random(using: &Dice.rng) ? Double.random(in: 40...80, using: &Dice.rng) : Double.random(in: 315...350, using: &Dice.rng))
         }
         // Energie: Schwarzes Loch als Belohnung für das Risiko mehr, Doppelstern lädt erst im Orbit nach
         let kindEnergy: CGFloat = kind == .blackHole ? 1.6 : (kind == .binary ? 0.4 : 1)
@@ -809,21 +818,21 @@ final class Game {
         if hasComet { spawnComet(from: prev, to: planets[gapIndex], gap: gapIndex, lvl: lvl) }
 
         // Gelegentlich ein Gasnebel (nur Optik)
-        if Double.random(in: 0...1) < 0.2 {
-            let t = CGFloat.random(in: 0.3...0.7)
+        if Double.random(in: 0...1, using: &Dice.rng) < 0.2 {
+            let t = CGFloat.random(in: 0.3...0.7, using: &Dice.rng)
             let mid = CGPoint(x: prev.center.x + (c.x - prev.center.x) * t,
                               y: prev.center.y + (c.y - prev.center.y) * t)
-            let cc = point(from: mid, angle: angle + CGFloat.pi / 2, distance: CGFloat.random(in: -250...250))
-            let R = CGFloat.random(in: 260...420)
-            let hue = Double.random(in: 0...360)
+            let cc = point(from: mid, angle: angle + CGFloat.pi / 2, distance: CGFloat.random(in: -250...250, using: &Dice.rng))
+            let R = CGFloat.random(in: 260...420, using: &Dice.rng)
+            let hue = Double.random(in: 0...360, using: &Dice.rng)
             let blobs = (0..<7).map { _ in
-                GasCloud.Blob(off: CGPoint(x: CGFloat.random(in: -0.5...0.5) * R, y: CGFloat.random(in: -0.5...0.5) * R),
-                              r: R * CGFloat.random(in: 0.35...0.7),
-                              hue: hue + Double.random(in: -45...45),
-                              speed: CGFloat.random(in: -0.12...0.12))
+                GasCloud.Blob(off: CGPoint(x: CGFloat.random(in: -0.5...0.5, using: &Dice.rng) * R, y: CGFloat.random(in: -0.5...0.5, using: &Dice.rng) * R),
+                              r: R * CGFloat.random(in: 0.35...0.7, using: &Dice.rng),
+                              hue: hue + Double.random(in: -45...45, using: &Dice.rng),
+                              speed: CGFloat.random(in: -0.12...0.12, using: &Dice.rng))
             }
             let sparkles = (0..<14).map { _ in
-                point(from: cc, angle: CGFloat.random(in: 0...(CGFloat.pi * 2)), distance: CGFloat.random(in: 0...(R * 0.7)))
+                point(from: cc, angle: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), distance: CGFloat.random(in: 0...(R * 0.7), using: &Dice.rng))
             }
             clouds.append(GasCloud(center: cc, radius: R, blobs: blobs, sparkles: sparkles, gap: gapIndex))
         }
@@ -833,39 +842,39 @@ final class Game {
 
     /// Feld aus Gestein, Satellitentrümmern oder Schiffswracks auf der Strecke
     private func spawnField(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
-        let roll = Double.random(in: 0...1)
+        let roll = Double.random(in: 0...1, using: &Dice.rng)
         let kind: ObstacleKind = gap >= 5 && roll < 0.15 ? .wreck : (gap >= 3 && roll < 0.4 ? .debris : .rock)
         let count: Int
         switch kind {
-        case .rock: count = Int.random(in: 8...(12 + Int(6 * lvl)))
-        case .debris: count = Int.random(in: 10...(15 + Int(5 * lvl)))
-        case .wreck: count = Int.random(in: 3...4)
+        case .rock: count = Int.random(in: 8...(12 + Int(6 * lvl)), using: &Dice.rng)
+        case .debris: count = Int.random(in: 10...(15 + Int(5 * lvl)), using: &Dice.rng)
+        case .wreck: count = Int.random(in: 3...4, using: &Dice.rng)
         case .comet: count = 0
         }
         for _ in 0..<count {
             // über die ganze Strecke verteilt, seitlich gestreut
-            let t = CGFloat.random(in: 0.32...0.8)
+            let t = CGFloat.random(in: 0.32...0.8, using: &Dice.rng)
             let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
-            let p = point(from: along, angle: CGFloat.random(in: 0...(CGFloat.pi * 2)), distance: CGFloat.random(in: 0...280))
+            let p = point(from: along, angle: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), distance: CGFloat.random(in: 0...280, using: &Dice.rng))
             if hypot(p.x - a.center.x, p.y - a.center.y) < a.orbitRadius + 70 { continue }
             if hypot(p.x - b.center.x, p.y - b.center.y) < b.orbitRadius + 70 { continue }
-            var o = Asteroid(center: p, radius: CGFloat.random(in: 16...40),
-                             shape: (0..<9).map { _ in CGFloat.random(in: 0.7...1.15) },
-                             spin: CGFloat.random(in: -0.8...0.8),
-                             phase: CGFloat.random(in: 0...(CGFloat.pi * 2)),
-                             tone: Double.random(in: 0.35...0.5), gap: gap)
+            var o = Asteroid(center: p, radius: CGFloat.random(in: 16...40, using: &Dice.rng),
+                             shape: (0..<9).map { _ in CGFloat.random(in: 0.7...1.15, using: &Dice.rng) },
+                             spin: CGFloat.random(in: -0.8...0.8, using: &Dice.rng),
+                             phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
+                             tone: Double.random(in: 0.35...0.5, using: &Dice.rng), gap: gap)
             o.kind = kind
             switch kind {
             case .debris:
-                o = Asteroid(center: p, radius: CGFloat.random(in: 12...24), shape: o.shape, spin: o.spin * 2,
+                o = Asteroid(center: p, radius: CGFloat.random(in: 12...24, using: &Dice.rng), shape: o.shape, spin: o.spin * 2,
                              phase: o.phase, tone: o.tone, gap: gap, kind: .debris,
-                             vel: CGVector(dx: CGFloat.random(in: -12...12), dy: CGFloat.random(in: -12...12)),
-                             variant: Int.random(in: 0...2))
+                             vel: CGVector(dx: CGFloat.random(in: -12...12, using: &Dice.rng), dy: CGFloat.random(in: -12...12, using: &Dice.rng)),
+                             variant: Int.random(in: 0...2, using: &Dice.rng))
             case .wreck:
-                o = Asteroid(center: p, radius: CGFloat.random(in: 30...38), shape: o.shape, spin: o.spin * 0.3,
+                o = Asteroid(center: p, radius: CGFloat.random(in: 30...38, using: &Dice.rng), shape: o.shape, spin: o.spin * 0.3,
                              phase: o.phase, tone: o.tone, gap: gap, kind: .wreck, hp: 3, maxHP: 3,
-                             vel: CGVector(dx: CGFloat.random(in: -18...18), dy: CGFloat.random(in: -18...18)),
-                             variant: Int.random(in: 0..<ShipModel.all.count))
+                             vel: CGVector(dx: CGFloat.random(in: -18...18, using: &Dice.rng), dy: CGFloat.random(in: -18...18, using: &Dice.rng)),
+                             variant: Int.random(in: 0..<ShipModel.all.count, using: &Dice.rng))
             default:
                 break
             }
@@ -881,8 +890,8 @@ final class Game {
         let start = CGPoint(x: a.center.x + dx * 0.3, y: a.center.y + dy * 0.3)
         let end = CGPoint(x: a.center.x + dx * 0.85, y: a.center.y + dy * 0.85)
         let hp = 8 + Int(4 * lvl)
-        asteroids.append(Asteroid(center: start, radius: 52, shape: (0..<9).map { _ in CGFloat.random(in: 0.8...1.1) },
-                                  spin: 0.3, phase: CGFloat.random(in: 0...(CGFloat.pi * 2)), tone: 0.8, gap: gap,
+        asteroids.append(Asteroid(center: start, radius: 52, shape: (0..<9).map { _ in CGFloat.random(in: 0.8...1.1, using: &Dice.rng) },
+                                  spin: 0.3, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), tone: 0.8, gap: gap,
                                   kind: .comet, hp: hp, maxHP: hp,
                                   vel: CGVector(dx: dir.dx * 105, dy: dir.dy * 105), end: end))
     }
@@ -959,12 +968,48 @@ final class Game {
 
     // MARK: Eingabe
 
+    // MARK: Tägliche Herausforderung
+
+    /// Tagesmodus: feste Strecke des Tages, eigener Bestwert und Bestenliste
+    private(set) var dailyMode = ProcessInfo.processInfo.arguments.contains("-daily")
+    /// Tag der laufenden Herausforderung (bleibt über Mitternacht hinweg für den laufenden Versuch gleich)
+    private(set) var dailyDay = DailyChallenge.today
+    private(set) var dailyBest = 0
+    /// Letzter Versuch brachte einen neuen Tagesbestwert
+    private(set) var dailyNewBest = false
+    /// Ergebnis dieses Laufs ist schon gespeichert (Spielende, Abbruch und Neustart melden nur einmal)
+    private var runRecorded = false
+
+    /// Zwischen freiem Spiel und Tagesherausforderung wechseln; baut die Welt neu auf
+    func setDaily(_ on: Bool) {
+        finishRun()
+        dailyMode = on
+        paused = false
+        reset()
+    }
+
+    /// Ergebnis des Laufs festhalten: Rekord im freien Spiel, Tagesbestwert und Bestenliste im Tagesmodus
+    private func finishRun() {
+        // noch nicht losgeflogen: kein Versuch
+        guard started, !runRecorded, score > 0 || phase != .docked else { return }
+        runRecorded = true
+        if dailyMode {
+            dailyNewBest = DailyChallenge.record(score: score, day: dailyDay)
+            dailyBest = DailyChallenge.best(for: dailyDay)
+            GameCenter.shared.submitDaily(score)
+        } else if score > best {
+            best = score
+            UserDefaults.standard.set(best, forKey: "orbitHopBest")
+        }
+    }
+
     // MARK: Pause
 
     var paused = false
     private var lastWarnTime: CGFloat = -10
 
     func restart() {
+        finishRun()
         paused = false
         reset()
         started = true
@@ -973,10 +1018,7 @@ final class Game {
 
     /// Lauf abbrechen und zurück zum Titel
     func abort() {
-        if score > best {
-            best = score
-            UserDefaults.standard.set(best, forKey: "orbitHopBest")
-        }
+        finishRun()
         paused = false
         reset()
         started = false
@@ -1236,10 +1278,7 @@ final class Game {
             overAt = time
             burst(at: pos, count: 50, hue: 12, speed: 300, life: 1.2)
             shake = 0.5
-            if score > best {
-                best = score
-                UserDefaults.standard.set(best, forKey: "orbitHopBest")
-            }
+            finishRun()
             Haptics.gameOver()
             SoundFX.shared.play(.gameOver)
             return

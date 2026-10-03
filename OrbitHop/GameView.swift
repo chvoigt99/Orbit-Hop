@@ -11,6 +11,7 @@ struct GameView: View {
     private let gold = Color(red: 1, green: 0.85, blue: 0.42)
     private let dim = Color(red: 0.55, green: 0.6, blue: 0.72)
     private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
+    private let daily = Color(red: 0.72, green: 0.6, blue: 1)
 
     var body: some View {
         GeometryReader { geo in
@@ -178,8 +179,13 @@ struct GameView: View {
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.7), radius: 8)
-                label("REKORD \(String(format: "%03d", game.best))")
-                    .foregroundStyle(signal.opacity(0.8))
+                if game.dailyMode {
+                    label("HEUTE \(String(format: "%03d", game.dailyBest))")
+                        .foregroundStyle(daily)
+                } else {
+                    label("REKORD \(String(format: "%03d", game.best))")
+                        .foregroundStyle(signal.opacity(0.8))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -527,6 +533,52 @@ struct GameView: View {
         .buttonStyle(.plain)
     }
 
+    /// Tagesflug ein- oder ausschalten, im Tagesflug zusätzlich die Bestenliste
+    private var dailyRow: some View {
+        HStack(spacing: 10) {
+            Button {
+                let on = !game.dailyMode
+                game.setDaily(on)
+                if on { GameCenter.shared.authenticate() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: game.dailyMode ? "infinity" : "calendar")
+                        .font(.system(size: 12, weight: .bold))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(game.dailyMode ? "FREIES SPIEL" : "TAGESFLUG \(DailyChallenge.todayLabel)")
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .tracking(2)
+                        label(game.dailyMode ? "ZUFÄLLIGE STRECKE · REKORD \(game.best)"
+                                             : "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))")
+                            .foregroundStyle(dim)
+                    }
+                }
+                .foregroundStyle(game.dailyMode ? signal : daily)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                .overlay(Chamfer(cut: 8).stroke((game.dailyMode ? signal : daily).opacity(0.7), lineWidth: 1.2))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if game.dailyMode {
+                Button {
+                    GameCenter.shared.showDailyLeaderboard()
+                } label: {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(daily)
+                        .frame(width: 48, height: 48)
+                        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                        .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Bestenliste des Tages")
+            }
+        }
+    }
+
     private var soundButton: some View {
         Button {
             soundOn.toggle()
@@ -555,6 +607,7 @@ struct GameView: View {
                 shipsButton
                 if SoundFX.available { soundButton }
             }
+            dailyRow
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -565,7 +618,7 @@ struct GameView: View {
     private var tapPrompt: some View {
         let pulse = 0.75 + 0.25 * sin(Double(game.time) * 4)
         // dunkles Feld dahinter, damit der Text auch auf der hellen Startplattform lesbar bleibt
-        return Text("TIPPEN ZUM STARTEN")
+        return Text(game.dailyMode ? "TIPPEN ZUM STARTEN · TAGESFLUG" : "TIPPEN ZUM STARTEN")
             .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .tracking(3)
             .foregroundStyle(signal)
@@ -604,6 +657,7 @@ struct GameView: View {
                 gameOverPanel
                     .allowsHitTesting(false)
                 shipsButton
+                dailyRow
             }
         }
     }
@@ -624,13 +678,18 @@ struct GameView: View {
                     label("PLANETEN").foregroundStyle(dim)
                 }
                 VStack(spacing: 3) {
-                    Text(String(format: "%03d", game.best))
+                    Text(String(format: "%03d", game.dailyMode ? game.dailyBest : game.best))
                         .font(.system(size: 32, weight: .bold, design: .monospaced))
-                        .foregroundStyle(gold)
-                    label("REKORD").foregroundStyle(dim)
+                        .foregroundStyle(game.dailyMode ? daily : gold)
+                    label(game.dailyMode ? "HEUTE BESTER" : "REKORD").foregroundStyle(dim)
                 }
             }
             .foregroundStyle(.white)
+            if game.dailyMode {
+                label(game.dailyNewBest ? "TAGESFLUG \(DailyChallenge.todayLabel) · NEUER TAGESBESTWERT"
+                                        : "TAGESFLUG \(DailyChallenge.todayLabel) · VERSUCH \(DailyChallenge.tries(for: game.dailyDay))")
+                    .foregroundStyle(daily)
+            }
             label("BESTE COMBO ×\(game.runBestCombo) · REKORD ×\(game.bestCombo)")
                 .foregroundStyle(Color(red: 1, green: 0.62, blue: 0.95))
             label("+\(game.runParts) TECH-TEILE · GESAMT ⚙ \(game.profile.parts)")
