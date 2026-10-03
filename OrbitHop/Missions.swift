@@ -236,7 +236,9 @@ struct MissionsView: View {
                     label("ERFOLGE · \(log.unlocked.count)/\(Achievement.all.count)")
                         .foregroundStyle(signal.opacity(0.8))
                         .padding(.top, 10)
-                    ForEach(Achievement.all) { achievementRow($0) }
+                    // freigeschaltete zuerst, damit sie ohne Scrollen zu sehen sind
+                    ForEach(Achievement.all.filter { log.unlocked.contains($0.id) }) { achievementRow($0) }
+                    ForEach(Achievement.all.filter { !log.unlocked.contains($0.id) }) { achievementRow($0) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 20)
