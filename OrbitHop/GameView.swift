@@ -72,6 +72,8 @@ struct GameView: View {
         .background(Color.black.ignoresSafeArea())
         .onAppear {
             SoundFX.shared.prepare()
+            // Nur für Tests: Missionsübersicht direkt öffnen
+            if ProcessInfo.processInfo.arguments.contains("-missions") { showMissions = true }
             if ProcessInfo.processInfo.arguments.contains("-renderShips") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
             }
