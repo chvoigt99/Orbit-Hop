@@ -1794,7 +1794,9 @@ final class World3D {
         let px = normalPx + (parkedPx - normalPx) * ka
         lastPx = px
 
+        let t0 = CACurrentMediaTime()
         syncPlanets(game, px: px)
+        let t1 = CACurrentMediaTime()
         // Im Hangar die Planeten voraus ausblenden, sie lägen je nach Level hinter dem Titel
         for (i, n) in planetNodes where i > game.currentIndex {
             n.opacity = 1 - kh
@@ -1803,8 +1805,15 @@ final class World3D {
             r.node.opacity = 1 - kh
         }
         syncOrbit(game, px: px, dt: dt)
+        let t2 = CACurrentMediaTime()
         syncShip(game, px: normalPx, k: k, ka: ka, kh: kh)
         syncObjects(game, px: px)
+        let t3 = CACurrentMediaTime()
+        // Messung: einzelne langsame Abgleiche benennen
+        if PerfLog.enabled && t3 - t0 > 0.012 {
+            print(String(format: "OHSPIKE planets=%.1fms orbit=%.1fms objects=%.1fms idx=%d",
+                         (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000, game.currentIndex))
+        }
         // ebenso Hindernisse, Nebel und Items auf der Strecke (nur solange der Hangar-Übergang läuft)
         if kh > 0 || lastHangarFade > 0 {
             for n in [asteroidNodes, cloudNodes, itemNodes].flatMap({ $0.values }) {
