@@ -6,6 +6,7 @@ struct GameView: View {
     @State private var showShop = false
     @State private var showMissions = false
     @State private var world: World3D?
+    @State private var loop = GameLoop()
     @AppStorage(SoundFX.enabledKey) private var soundOn = true
 
     private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
@@ -21,17 +22,13 @@ struct GameView: View {
             let full = CGSize(width: geo.size.width + insets.leading + insets.trailing,
                               height: geo.size.height + insets.top + insets.bottom)
 
+            // Simulation und 3D-Welt laufen im Bildschirmtakt (GameLoop). Früher hingen sie an der TimelineView,
+            // und jedes Bild, das SwiftUI ausließ, stand die Welt still, obwohl SceneKit weiterzeichnete: Ruckeln.
+            let _ = loop.configure(size: full, insets: insets, paused: worldCovered)
             // Werft und Missionen liegen als Vollbild darüber: dann steht die Welt still, statt unsichtbar
             // weiterzurechnen und neben der Werft-Vorschau eine zweite 3D-Szene zu zeichnen
             TimelineView(.animation(minimumInterval: nil, paused: worldCovered)) { timeline in
-                let perfStart = CACurrentMediaTime()
-                let _ = (game.insets = insets)
-                let _ = game.step(date: timeline.date, size: full)
-                let _ = world.map { w in
-                    game.project = w.project
-                    w.sync(game, size: full)
-                }
-                let _ = PerfLog.frame(main: CACurrentMediaTime() - perfStart)
+                let _ = (PerfLog.uiFrames += 1)
                 let loading = (world?.framesSynced ?? 0) < 3
                 let frameDate = timeline.date
                 ZStack {
@@ -83,8 +80,13 @@ struct GameView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
             }
             // Welt erst nach dem ersten Bild aufbauen, damit der Ladebildschirm sichtbar ist
+            loop.start(game)
             if world == nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { world = World3D() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    let w = World3D()
+                    world = w
+                    loop.world = w
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
@@ -830,6 +832,47 @@ struct Brackets: Shape {
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
         p.addLine(to: CGPoint(x: r.minX, y: r.maxY - len))
         return p
+    }
+}
+
+/// Treibt Simulation und Abgleich der 3D-Welt mit jedem Bildschirmbild an, unabhängig davon, wann SwiftUI die
+/// Oberfläche neu auswertet. SceneKit zeichnet ohnehin jedes Bild; bekommt es keinen neuen Spielstand, steht
+/// die Welt für ein Bild still, und das sieht man vor allem bei der Kamerafahrt im Orbit als Ruckeln.
+final class GameLoop: NSObject {
+    private var link: CADisplayLink?
+    private weak var game: Game?
+    weak var world: World3D?
+    private var size: CGSize = .zero
+    private var insets = EdgeInsets()
+    private var paused = false
+
+    func start(_ game: Game) {
+        self.game = game
+        guard link == nil else { return }
+        let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    /// aus dem View-Body: Bildgröße, Ränder und ob ein Vollbild-Menü die Welt verdeckt
+    func configure(size: CGSize, insets: EdgeInsets, paused: Bool) {
+        self.size = size
+        self.insets = insets
+        self.paused = paused
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let game, !paused, size.width > 0 else { return }
+        let start = CACurrentMediaTime()
+        game.insets = insets
+        // Zeitpunkt, zu dem das Bild erscheint: gleichmäßigere Schritte als die Aufrufzeit
+        game.step(date: Date(timeIntervalSinceReferenceDate: link.targetTimestamp), size: size)
+        if let world {
+            game.project = world.project
+            world.sync(game, size: size)
+        }
+        PerfLog.frame(main: CACurrentMediaTime() - start, orbiting: game.phase == .orbiting)
     }
 }
 

@@ -728,6 +728,13 @@ final class World3D {
     /// kommen, ist die Textur längst da.
     private static let textureQueue = DispatchQueue(label: "orbix.textures", qos: .userInitiated)
 
+    /// Lädt Texturen und Shader eines Materials oder Knotens vorab auf die GPU und ruft dann `then` auf dem
+    /// Hauptthread auf. Ohne das erledigt SceneKit es im ersten Bild, in dem das Objekt auftaucht, und dieses Bild hängt.
+    private func upload(_ object: Any, then: @escaping () -> Void) {
+        guard let view else { then(); return }
+        view.prepare([object]) { _ in DispatchQueue.main.async(execute: then) }
+    }
+
     private func makePlanet(_ p: Planet, index: Int, immediate: Bool) -> SCNNode {
         let root = SCNNode()
         root.position = v3(p.center)
@@ -760,9 +767,13 @@ final class World3D {
         } else {
             // Grundfarbe als Platzhalter, bis die Textur fertig ist
             m.diffuse.contents = uic(p.hue, 0.55, 0.45)
-            Self.textureQueue.async {
+            Self.textureQueue.async { [weak self] in
                 let img = WorldTextures.planet(p, seed: seed)
-                DispatchQueue.main.async { m.diffuse.contents = img }
+                DispatchQueue.main.async {
+                    let ready = m.copy() as! SCNMaterial
+                    ready.diffuse.contents = img
+                    self?.upload(ready) { sphere.materials = [ready] }
+                }
             }
         }
         m.roughness.contents = 0.85
@@ -800,6 +811,8 @@ final class World3D {
             path.append(UIBezierPath(ovalIn: CGRect(x: -p.radius * 1.25, y: -p.radius * 1.25, width: p.radius * 2.5, height: p.radius * 2.5)))
             path.usesEvenOddFillRule = true
             let rm = SCNMaterial()
+            // Form entsteht erst unten; die Textur kann frühestens im nächsten Durchlauf des Hauptthreads kommen
+            weak var shape: SCNGeometry?
             rm.lightingModel = .lambert
             if let img = WorldTextures.cachedRing(hue: p.hue) {
                 rm.diffuse.contents = img
@@ -809,11 +822,13 @@ final class World3D {
                 // unsichtbar, bis die Ringtextur im Hintergrund fertig ist
                 rm.diffuse.contents = UIColor.clear
                 let hue = p.hue
-                Self.textureQueue.async {
+                Self.textureQueue.async { [weak self] in
                     let img = WorldTextures.makeRing(hue: hue)
                     DispatchQueue.main.async {
                         WorldTextures.storeRing(img, hue: hue)
-                        rm.diffuse.contents = img
+                        let ready = rm.copy() as! SCNMaterial
+                        ready.diffuse.contents = img
+                        self?.upload(ready) { shape?.materials = [ready] }
                     }
                 }
             }
@@ -821,6 +836,7 @@ final class World3D {
             rm.writesToDepthBuffer = true
             rm.transparencyMode = .aOne
             let ring = flatShape(path, rm, depth: 0.5)
+            shape = ring.geometry
             tilt.addChildNode(ring)
         }
 
@@ -1658,9 +1674,13 @@ final class World3D {
             let model = Ship3D.simplified(ShipDesigns.build(ShipModel.all[variant]))
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.wreckModels[variant] = model
-                let waiting = self.wreckWaiting.removeValue(forKey: variant) ?? []
-                waiting.forEach { $0(model) }
+                // Klone teilen Geometrie und Lacke, einmal hochladen reicht für alle Wracks dieses Typs
+                self.upload(model) { [weak self] in
+                    guard let self else { return }
+                    self.wreckModels[variant] = model
+                    let waiting = self.wreckWaiting.removeValue(forKey: variant) ?? []
+                    waiting.forEach { $0(model) }
+                }
             }
         }
     }
@@ -1874,6 +1894,8 @@ final class World3D {
             if bonusRings[i] == nil {
                 let r = makeBonusRing(game.planets[i], kind: kind)
                 scene.rootNode.addChildNode(r.node)
+                // Ladeshader schon jetzt übersetzen, nicht erst beim ersten Laden im Orbit
+                view?.prepare([r.node], completionHandler: nil)
                 bonusRings[i] = r
             }
             guard var r = bonusRings[i] else { continue }
@@ -2364,7 +2386,7 @@ struct WorldView: UIViewRepresentable {
     /// zählt fertig gezeichnete SceneKit-Bilder für die Bildraten-Messung
     final class FrameCounter: NSObject, SCNSceneRendererDelegate {
         func renderer(_ renderer: SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
-            PerfLog.sceneFrames += 1
+            PerfLog.sceneFrame()
         }
     }
 

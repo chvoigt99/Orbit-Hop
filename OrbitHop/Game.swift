@@ -7,13 +7,20 @@ import UIKit
 // MARK: - Haptik
 
 /// Bildraten-Messung für Tests auf dem Gerät (Startargument `-bot` oder `-perf`): schreibt alle 5 s eine Zeile
-/// `OHPERF` mit Bildern pro Sekunde (SwiftUI und SceneKit), Anzahl langsamer Bilder und Hauptthread-Zeit je Bild.
+/// `OHPERF` mit Simulationsschritten, SwiftUI- und SceneKit-Bildern pro Sekunde, langsamen Schritten (gesamt und
+/// im Orbit), Hängern des SceneKit-Renderers und Hauptthread-Zeit je Schritt.
 enum PerfLog {
     static let enabled = Game.bot || ProcessInfo.processInfo.arguments.contains("-perf")
-    /// vom SceneKit-Renderthread hochgezählt
+    /// vom SceneKit-Renderthread geschrieben (nur grobe Zählung für das Log)
     static var sceneFrames = 0
+    private static var sceneLast: Double = 0
+    private static var sceneSlow = 0
+    private static var sceneWorst: Double = 0
+    /// SwiftUI-Auswertungen der Oberfläche
+    static var uiFrames = 0
     private static var frames = 0
     private static var slow = 0
+    private static var orbitSlow = 0
     private static var worst: Double = 0
     private static var mainSum: Double = 0
     private static var mainMax: Double = 0
@@ -21,13 +28,28 @@ enum PerfLog {
     private static var windowStart: Double = 0
     private static var lastScene = 0
 
-    /// einmal pro SwiftUI-Bild aufrufen; `main` = Dauer von Simulation und Szenenabgleich
-    static func frame(main: Double) {
+    /// vom SceneKit-Renderthread nach jedem gezeichneten Bild
+    static func sceneFrame() {
+        let now = CACurrentMediaTime()
+        if sceneLast > 0 {
+            let dt = now - sceneLast
+            if dt > 1.0 / 45 { sceneSlow += 1 }
+            sceneWorst = max(sceneWorst, dt)
+        }
+        sceneLast = now
+        sceneFrames += 1
+    }
+
+    /// einmal pro Simulationsschritt aufrufen; `main` = Dauer von Simulation und Szenenabgleich
+    static func frame(main: Double, orbiting: Bool) {
         guard enabled else { return }
         let now = CACurrentMediaTime()
         if last > 0 {
             let dt = now - last
-            if dt > 1.0 / 45 { slow += 1 }
+            if dt > 1.0 / 45 {
+                slow += 1
+                if orbiting { orbitSlow += 1 }
+            }
             worst = max(worst, dt)
         } else {
             windowStart = now
@@ -40,11 +62,14 @@ enum PerfLog {
         guard span >= 5 else { return }
         let scene = sceneFrames - lastScene
         lastScene = sceneFrames
-        print(String(format: "OHPERF ui=%.0ffps scene=%.0ffps slow=%d worst=%.0fms main=%.1f/%.1fms mem=%dMB thermal=%d",
-                     Double(frames) / span, Double(scene) / span, slow, worst * 1000,
+        print(String(format: "OHPERF sim=%.0ffps ui=%.0ffps scene=%.0ffps slow=%d orbitSlow=%d worst=%.0fms "
+                     + "sceneSlow=%d sceneWorst=%.0fms main=%.1f/%.1fms mem=%dMB thermal=%d",
+                     Double(frames) / span, Double(uiFrames) / span, Double(scene) / span, slow, orbitSlow, worst * 1000,
+                     sceneSlow, sceneWorst * 1000,
                      mainSum / Double(max(1, frames)) * 1000, mainMax * 1000, Game.memoryMB(),
                      ProcessInfo.processInfo.thermalState.rawValue))
-        frames = 0; slow = 0; worst = 0; mainSum = 0; mainMax = 0
+        frames = 0; slow = 0; orbitSlow = 0; worst = 0; mainSum = 0; mainMax = 0; uiFrames = 0
+        sceneSlow = 0; sceneWorst = 0
         windowStart = now
     }
 }
