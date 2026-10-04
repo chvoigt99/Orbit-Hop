@@ -96,7 +96,7 @@ struct GameView: View {
                         if game.stationOpen {
                             stationMenu
                         }
-                        if game.phase == .over {
+                        if game.overPanelShown {
                             gameOverView
                         }
                         if loading {

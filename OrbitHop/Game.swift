@@ -606,6 +606,9 @@ final class Game {
         return distanceShown
     }
     var overAt: CGFloat = 0
+    /// Die Ende-Tafel kommt erst, wenn man das Ausgleiten bzw. die Explosion gesehen hat
+    var overPanelDelay: CGFloat { destroyed ? 1.6 : 2.2 }
+    var overPanelShown: Bool { phase == .over && time - overAt >= overPanelDelay }
     var lastAccuracy: CGFloat = 0
     var lastLaunchTime: CGFloat = -10
 
@@ -1510,7 +1513,7 @@ final class Game {
             // beim Anflug auf eine Station und im Stationsmenü startet ein Tipp nichts
             if arriveAt == nil { depart() }
         case .over:
-            if time - overAt > 0.6 { reset() }
+            if overPanelShown && time - overAt > overPanelDelay + 0.4 { reset() }
         case .flying:
             fire()
         case .orbiting:
