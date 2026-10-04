@@ -746,7 +746,7 @@ struct GameView: View {
             // im oberen Drittel, direkt unter dem Titel
             tapPrompt
                 .allowsHitTesting(false)
-                .padding(.top, 18)
+                .padding(.top, 8)
             Spacer()
             // alle Zeilen gleich breit
             HStack(spacing: 10) {
@@ -762,7 +762,7 @@ struct GameView: View {
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 150)
+        .padding(.top, 70)
         .padding(.bottom, 178)
     }
 
