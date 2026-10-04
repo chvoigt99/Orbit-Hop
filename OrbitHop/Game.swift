@@ -2004,8 +2004,27 @@ final class Game {
         energy -= cost
         weaponCooldown = weapon.cooldown
         let muzzle = point(from: pos, angle: heading, distance: 30)
+        // Jeder Strahl bekommt ein Ziel im Bogen (etwas Rand dazu): Drohnen zuerst, dann die nächsten Hindernisse.
+        // Gibt es weniger Ziele als Strahlen, gehen die übrigen Strahlen reihum auf dieselben Ziele.
+        let margin: CGFloat = 0.15
+        let inArc = asteroids.filter { o in
+            let d = hypot(o.center.x - muzzle.x, o.center.y - muzzle.y)
+            guard d < Game.railRange else { return false }
+            let ang = atan2(o.center.y - muzzle.y, o.center.x - muzzle.x)
+            return abs(wrap(ang - mid)) < span / 2 + margin
+        }
+        let ranked = inArc.sorted { a, b in
+            if (a.kind == .drone) != (b.kind == .drone) { return a.kind == .drone }
+            return hypot(a.center.x - pos.x, a.center.y - pos.y) < hypot(b.center.x - pos.x, b.center.y - pos.y)
+        }
+        let picked = Array(ranked.prefix(Game.fanBeams))
+            .sorted { wrap(atan2($0.center.y - muzzle.y, $0.center.x - muzzle.x) - mid) < wrap(atan2($1.center.y - muzzle.y, $1.center.x - muzzle.x) - mid) }
         for k in 0..<Game.fanBeams {
-            let ang = mid - span / 2 + span * CGFloat(k) / CGFloat(Game.fanBeams - 1)
+            var ang = mid - span / 2 + span * CGFloat(k) / CGFloat(Game.fanBeams - 1)
+            if !picked.isEmpty {
+                let t = picked[k % picked.count]
+                ang = atan2(t.center.y - muzzle.y, t.center.x - muzzle.x)
+            }
             let dir = CGVector(dx: cos(ang), dy: sin(ang))
             let to = CGPoint(x: muzzle.x + dir.dx * Game.railRange, y: muzzle.y + dir.dy * Game.railRange)
             beams.append(Beam(from: muzzle, to: to))
