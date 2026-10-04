@@ -1816,7 +1816,7 @@ final class World3D {
         let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
         // Anflug auf eine Station: weich in die Plattform-Nahaufnahme, statt hart zu schneiden
         if holdHangar && game.arriveAt != nil {
-            hangar = min(1, hangar + dt / 1.6)
+            hangar = min(1, hangar + dt / 0.6)
         } else {
             hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
         }
@@ -2309,8 +2309,18 @@ final class World3D {
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
             // weit genug hinten, dass beide Pylonen des Tors im Bild sind
-            let hangarPos = SCNVector3(Float(dp.x - fx * 110 + lx * 30), 26, Float(dp.y - fz * 110 + lz * 30))
-            let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
+            var hangarPos = SCNVector3(Float(dp.x - fx * 110 + lx * 30), 26, Float(dp.y - fz * 110 + lz * 30))
+            var hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
+            // Anflug auf eine Station: dieselbe Nahansicht, aber so weit zurückgezogen und zwischen Schiff und
+            // Plattform ausgerichtet, dass beide im Bild sind; beim Näherkommen läuft sie in die feste Einstellung
+            if game.dockArriving {
+                let sx = game.pos.x - dp.x, sz = game.pos.y - dp.y
+                let gap = hypot(sx, sz)
+                let mx = dp.x + sx * 0.5, mz = dp.y + sz * 0.5
+                let back = 110 + gap * 0.7
+                hangarPos = SCNVector3(Float(mx - fx * back + lx * (30 + gap * 0.2)), Float(26 + gap * 0.35), Float(mz - fz * back + lz * (30 + gap * 0.2)))
+                hangarLook = SCNVector3(Float(mx + fx * 22), 7, Float(mz + fz * 22))
+            }
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)
