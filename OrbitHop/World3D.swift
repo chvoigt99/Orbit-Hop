@@ -2152,7 +2152,8 @@ final class World3D {
             shipModelNode = n
 
         }
-        shipHolder.isHidden = game.phase == .over
+        // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
+        shipHolder.isHidden = game.phase == .over && game.destroyed
         shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
         let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : game.dodgeBank * 0.6

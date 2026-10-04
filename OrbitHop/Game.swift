@@ -812,6 +812,8 @@ final class Game {
     var hull: CGFloat = Game.maxHull
     /// Flug endete durch zerstörte Panzerung statt leerer Energie
     private(set) var destroyed = false
+    /// Bewegung im letzten Schritt (für das Ausgleiten ohne Energie)
+    private var lastStepVel = CGVector.zero
 
     /// Tech-Teile für eine volle Reparatur: etwa 1 je 10 % Panzerung und 1 je 25 Energie, mindestens 1
     var repairCost: Int {
@@ -1652,7 +1654,7 @@ final class Game {
                 popups.append(Popup(pos: pos, text: t, color: hsl(h, 0.85, 0.65), age: 0))
             }
         }
-        if phase != .over { simulate(simDt) }
+        if phase != .over { simulate(simDt) } else { coast(simDt) }
         if let t = stationMenuAt, time >= t {
             stationMenuAt = nil
             if atStation { stationOpen = true }
@@ -1735,6 +1737,15 @@ final class Game {
         }
     }
 
+    /// Spielende ohne Energie: Triebwerke aus, das Schiff gleitet mit dem letzten Schwung weiter und bremst ab
+    private func coast(_ dt: CGFloat) {
+        guard !destroyed else { return }
+        let k = exp(-0.75 * dt)
+        vel = CGVector(dx: vel.dx * k, dy: vel.dy * k)
+        pos.x += vel.dx * dt
+        pos.y += vel.dy * dt
+    }
+
     private func simulate(_ dt: CGFloat) {
         let before = pos
         // Beim Aufladen eines Bonus-Items kein Verbrauch
@@ -1753,10 +1764,19 @@ final class Game {
             destroyed = hull <= 0
             blog("over score=\(score) t=\(Int(missionTime)) phase=\(phase) idx=\(currentIndex) flight=\(String(format: "%.1f", flightTime)) parts=\(runParts)")
             energy = 0
+            // ohne Energie: Triebwerke aus, das Schiff gleitet mit seinem letzten Schwung aus und bremst ab
+            // Panzerung zerstört: Explosion
+            vel = phase == .docked ? .zero : lastStepVel
             phase = .over
             overAt = time
-            burst(at: pos, count: 50, hue: 12, speed: 300, life: 1.2)
-            shake = 0.5
+            if destroyed {
+                burst(at: pos, count: 70, hue: 12, speed: 340, life: 1.3)
+                burst(at: pos, count: 40, hue: 38, speed: 180, life: 1.6)
+                waves.append(Wave(center: pos, r0: 20, age: 0, maxAge: 0.8, hue: 20))
+                shake = 0.6
+            } else {
+                shake = 0.15
+            }
             finishRun()
             Haptics.gameOver()
             SoundFX.shared.play(.gameOver)
@@ -1820,6 +1840,9 @@ final class Game {
         trail.append(pos)
         if trail.count > 80 { trail.removeFirst(trail.count - 80) }
 
+        if dt > 0 && phase != .over {
+            lastStepVel = CGVector(dx: (pos.x - before.x) / dt, dy: (pos.y - before.y) / dt)
+        }
         collectItems()
     }
 
@@ -2524,7 +2547,14 @@ final class Game {
     /// Die Kamera rahmt den aktuellen und den nächsten Planeten gemeinsam ein. So bleibt der Ausschnitt
     /// beim Start und im Flug ruhig und wechselt nur einmal weich, wenn ein neuer Planet erreicht ist.
     private func updateCamera(_ dt: CGFloat, _ size: CGSize) {
-        guard size.width > 0, phase != .over else { return }
+        guard size.width > 0 else { return }
+        // Spielende: Kamera steht, nur ein ausgleitendes Schiff (ohne Energie) behält sie im Blick
+        if phase == .over {
+            guard !destroyed else { return }
+            cam.x = camSpringX.update(to: pos.x, smoothTime: 1.2, dt: dt)
+            cam.y = camSpringY.update(to: pos.y, smoothTime: 1.2, dt: dt)
+            return
+        }
         // Orbit-Ansicht: genau auf den Planeten zentriert, groß genug für Bahn und ein Stück Startkegel
         let lockedIndex = cameraLock.map { min($0, planets.count - 1) }
         let frameIndex = lockedIndex ?? (phase == .flying ? min(currentIndex + 1, planets.count - 1) : currentIndex)
