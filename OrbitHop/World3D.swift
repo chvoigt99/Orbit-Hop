@@ -2236,7 +2236,9 @@ final class World3D {
         }
         // ein einziger Übergang in den vorab berechneten Orbit-Ausschnitt, noch vor dem Orbiteintritt
         if arrivalActive && game.time < arrivalHold
-            && (game.phase == .orbiting || distT < tgt.orbitRadius + 450) {
+            && (game.phase == .orbiting || distT < tgt.orbitRadius + 450
+                // fliegt das Schiff nicht mehr aufs Ziel zu (abgelenkt oder vorbei), nicht weiter stehen bleiben
+                || game.vel.dx * (tgt.center.x - game.pos.x) + game.vel.dy * (tgt.center.y - game.pos.y) < 0) {
             arrivalHold = game.time
         }
         let want: CGFloat = arrivalActive && game.time < arrivalHold ? 1 : 0
