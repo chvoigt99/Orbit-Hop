@@ -688,22 +688,22 @@ struct GameView: View {
                     game.setDaily(true)
                     GameCenter.shared.authenticate()
                 }
-                if game.dailyMode {
-                    Button {
-                        GameCenter.shared.showDailyLeaderboard()
-                    } label: {
-                        Image(systemName: "list.number")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(daily)
-                            .frame(width: 48)
-                            .frame(maxHeight: .infinity)
-                            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-                            .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Bestenliste des Tages")
+                // Bestenliste steht immer da (Knöpfe behalten beim Umschalten ihren Platz), außerhalb des Tagesflugs gedimmt
+                Button {
+                    GameCenter.shared.showDailyLeaderboard()
+                } label: {
+                    let tint = game.dailyMode ? daily : dim.opacity(0.55)
+                    Image(systemName: "list.number")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(tint)
+                        .frame(width: 48)
+                        .frame(maxHeight: .infinity)
+                        .background(Chamfer(cut: 8).fill(panel.opacity(game.dailyMode ? 0.85 : 0.6)))
+                        .overlay(Chamfer(cut: 8).stroke(tint.opacity(0.7), lineWidth: 1.2))
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Bestenliste des Tages")
             }
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -772,7 +772,13 @@ struct GameView: View {
                 if SoundFX.available { soundButton }
             }
             .frame(width: Self.menuRowWidth)
-            if !game.dailyMode && game.profile.stationsReached > 0 { startRow.frame(width: Self.menuRowWidth) }
+            // Startauswahl nur im freien Spiel; im Tagesflug bleibt ihr Platz frei, damit nichts verrutscht
+            if game.profile.stationsReached > 0 {
+                startRow.frame(width: Self.menuRowWidth)
+                    .opacity(game.dailyMode ? 0 : 1)
+                    .allowsHitTesting(!game.dailyMode)
+                    .animation(.easeInOut(duration: 0.2), value: game.dailyMode)
+            }
             // Tagesflug ist ein eigener Spielmodus: mit Abstand abgesetzt
             dailyRow.frame(width: Self.menuRowWidth)
                 .padding(.top, 18)
