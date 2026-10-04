@@ -743,10 +743,11 @@ struct GameView: View {
         VStack(spacing: 14) {
             titleTexts
                 .allowsHitTesting(false)
-            Spacer()
-            // unter dem Startplaneten
+            // im oberen Drittel, direkt unter dem Titel
             tapPrompt
                 .allowsHitTesting(false)
+                .padding(.top, 18)
+            Spacer()
             // alle Zeilen gleich breit
             HStack(spacing: 10) {
                 shipsButton
@@ -769,12 +770,14 @@ struct GameView: View {
         let pulse = 0.75 + 0.25 * sin(Double(game.time) * 4)
         // dunkles Feld dahinter, damit der Text auch auf der hellen Startplattform lesbar bleibt
         return Text(game.dailyMode ? "TIPPEN ZUM STARTEN · TAGESFLUG" : "TIPPEN ZUM STARTEN")
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .font(.system(size: 17, weight: .bold, design: .monospaced))
             .tracking(3)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
             .foregroundStyle(signal)
             .opacity(pulse)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
             .background(Chamfer(cut: 6).fill(panel.opacity(0.8)))
             .overlay(Brackets(len: 8).stroke(signal.opacity(pulse), lineWidth: 1.5))
     }
