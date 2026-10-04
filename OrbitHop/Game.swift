@@ -527,7 +527,7 @@ final class Game {
             // Anflug knapp über der Plattform, erst nach der Drehung weich aufsetzen
             let u = min(1, max(0, (time - t0) / arriveDuration))
             func ease(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * (3 - 2 * c) }
-            return 7 * ease(u / 0.3) * (1 - ease((u - 0.8) / 0.2))
+            return 7 * ease(u / 0.35) * (1 - ease((u - 0.72) / 0.28))
         }
         guard let t0 = departAt else { return 0 }
         let t = time - t0
@@ -540,10 +540,13 @@ final class Game {
     /// Anflug auf eine Raumstation: Startzeit, Dauer und Bogen um die Station bis zur Plattform
     private(set) var arriveAt: CGFloat?
     private var arriveDuration: CGFloat = 2.5
-    private var arriveFrom = CGPoint.zero
-    /// Hilfspunkt der Anflugkurve: liegt auf der Strecke, außer die Station steht im Weg
-    private var arriveControl = CGPoint.zero
-    private var arriveHeading: CGFloat = 0
+    /// Anflugbahn: kubische Bézierkurve vom Schiff zur Plattform und ihre Längentabelle
+    private var arrivePath: [CGPoint] = []
+    private var arriveLengths: [CGFloat] = []
+    /// Anfangstempo als Anteil (Steigung des Wegprofils), damit der Übergang aus dem Flug ohne Ruck ist
+    private var arriveSlope: CGFloat = 1
+    /// Ab diesem Abstand zur Plattform übernimmt der Anflug
+    static let dockApproachRange: CGFloat = 620
     /// Das Schiff fliegt gerade die Andockplattform einer Station an
     var dockArriving: Bool {
         guard phase == .docked, departAt == nil, let t0 = arriveAt else { return false }
@@ -812,38 +815,57 @@ final class Game {
         if phase == .docked { depart() }
     }
 
-    /// Anflug auf die Station in der Nahansicht: auf direktem Kurs zur Andockplattform, bremsen,
-    /// unterwegs auf die Startrichtung drehen und erst danach aufsetzen. Dann öffnet sich das Stationsmenü.
+    /// Anflug auf die Station in der Nahansicht. Die Bahn ist eine weiche Kurve vom Schiff zur Plattform:
+    /// Sie beginnt in der aktuellen Flugrichtung und mit dem aktuellen Tempo, endet in Startrichtung der
+    /// Plattform und bremst bis zum Stillstand. Die Nase folgt der Bahn, die Drehung steckt also in der
+    /// Bewegung. Liegt die Station im Weg, wird die Kurve außen herumgebogen.
     private func beginDocking(_ index: Int) {
         guard let d = stationDock(index) else { return }
         let c = planets[index].center
-        let st = planets[index]
-        arriveFrom = pos
-        arriveHeading = heading
-        // Direkter Kurs; nur wenn die Station dazwischen liegt, biegt die Kurve außen um sie herum
-        let mid = CGPoint(x: (pos.x + d.pos.x) / 2, y: (pos.y + d.pos.y) / 2)
-        let clear = st.radius + 50
-        if distanceToSegment(c, pos, d.pos) < clear {
-            var ox = mid.x - c.x, oy = mid.y - c.y
-            var ol = hypot(ox, oy)
-            if ol < 1 {
-                // genau gegenüber: seitlich ausweichen
-                ox = -(d.pos.y - pos.y); oy = d.pos.x - pos.x
-                ol = max(1, hypot(ox, oy))
-            }
-            // Kontrollpunkt so weit außen, dass die Kurvenmitte frei an der Station vorbeiführt
-            // (Kurvenmitte = halber Weg zwischen Streckenmitte und Kontrollpunkt)
-            let reach = 2 * (clear + 40) - (hypot(mid.x - c.x, mid.y - c.y) < 1 ? 0 : ol)
-            arriveControl = CGPoint(x: c.x + ox / ol * reach, y: c.y + oy / ol * reach)
-        } else {
-            arriveControl = mid
+        let p0 = pos, p3 = d.pos
+        let v = hypot(vel.dx, vel.dy)
+        let speed = max(120, v)
+        let vdir = v > 1 ? CGVector(dx: vel.dx / v, dy: vel.dy / v) : CGVector(dx: cos(heading), dy: sin(heading))
+        let chord = max(60, hypot(p3.x - p0.x, p3.y - p0.y))
+        var p1 = CGPoint(x: p0.x + vdir.dx * chord * 0.4, y: p0.y + vdir.dy * chord * 0.4)
+        // letztes Stück gerade in Startrichtung auf die Plattform
+        var p2 = CGPoint(x: p3.x - cos(d.heading) * chord * 0.45, y: p3.y - sin(d.heading) * chord * 0.45)
+        let clear = planets[index].radius + 45
+        func bez(_ t: CGFloat) -> CGPoint {
+            let a = (1 - t) * (1 - t) * (1 - t), b = 3 * (1 - t) * (1 - t) * t, cc = 3 * (1 - t) * t * t, e = t * t * t
+            return CGPoint(x: a * p0.x + b * p1.x + cc * p2.x + e * p3.x, y: a * p0.y + b * p1.y + cc * p2.y + e * p3.y)
         }
-        let len = hypot(arriveControl.x - pos.x, arriveControl.y - pos.y) + hypot(d.pos.x - arriveControl.x, d.pos.y - arriveControl.y)
-        arriveDuration = min(3.8, max(2.2, 1.4 + len / 320))
+        // Station im Weg: die beiden Hilfspunkte schrittweise nach außen schieben
+        for _ in 0..<12 {
+            var closest: CGFloat = .infinity
+            for k in 1..<24 {
+                let q = bez(CGFloat(k) / 24)
+                closest = min(closest, hypot(q.x - c.x, q.y - c.y))
+            }
+            guard closest < clear else { break }
+            for i in 0..<2 {
+                let q = i == 0 ? p1 : p2
+                let ox = q.x - c.x, oy = q.y - c.y
+                let ol = max(1, hypot(ox, oy))
+                let moved = CGPoint(x: q.x + ox / ol * 70, y: q.y + oy / ol * 70)
+                if i == 0 { p1 = moved } else { p2 = moved }
+            }
+        }
+        // Längentabelle für gleichmäßiges Abfahren nach Weg statt nach Kurvenparameter
+        arrivePath = (0...48).map { bez(CGFloat($0) / 48) }
+        var lengths: [CGFloat] = [0]
+        for k in 1..<arrivePath.count {
+            lengths.append(lengths[k - 1] + hypot(arrivePath[k].x - arrivePath[k - 1].x, arrivePath[k].y - arrivePath[k - 1].y))
+        }
+        arriveLengths = lengths
+        let total = max(1, lengths.last ?? 1)
+        // mittleres Tempo etwa zwei Drittel des Eintrittstempos, dann bremst das Wegprofil bis null
+        arriveDuration = min(4.2, max(2.2, total / (speed * 0.6)))
+        arriveSlope = min(2.6, speed * arriveDuration / total)
         arriveAt = time
         orbitDir = 1
         orbitAngle = d.angle
-        orbitDist = st.orbitRadius
+        orbitDist = planets[index].orbitRadius
         orbitOmega = 0
         orbitVr = 0
         dockPos = d.pos
@@ -852,26 +874,31 @@ final class Game {
         dockLaunch = false
         vel = .zero
         phase = .docked
-        stationMenuAt = time + arriveDuration + 0.3
+        stationMenuAt = time + arriveDuration + 0.4
     }
 
-    /// Anflugkurve abfahren: zügig herein, weich abbremsen. Die Nase dreht über die ganze Strecke
-    /// gleichmäßig von der Anflugrichtung in die Startrichtung und steht vor dem Aufsetzen gerade.
+    /// Punkt und Richtung auf der Anflugbahn nach zurückgelegtem Weg
+    private func arrivePoint(at dist: CGFloat) -> (CGPoint, CGFloat) {
+        guard arrivePath.count > 1 else { return (dockPos, dockHeading) }
+        var k = 1
+        while k < arriveLengths.count - 1 && arriveLengths[k] < dist { k += 1 }
+        let a = arrivePath[k - 1], b = arrivePath[k]
+        let seg = max(0.001, arriveLengths[k] - arriveLengths[k - 1])
+        let f = min(1, max(0, (dist - arriveLengths[k - 1]) / seg))
+        let p = CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+        return (p, atan2(b.y - a.y, b.x - a.x))
+    }
+
+    /// Anflug abfahren: Wegprofil mit Eintrittstempo am Anfang und Stillstand am Ende (kubisch, ohne Überschwingen)
     private func updateDocking() {
-        guard let t0 = arriveAt else { return }
+        guard let t0 = arriveAt, let total = arriveLengths.last else { return }
         let u = min(1, max(0, (time - t0) / arriveDuration))
-        let e = 1 - (1 - u) * (1 - u) * (1 - u)
-        let a = (1 - e) * (1 - e), b = 2 * (1 - e) * e, c = e * e
-        pos = CGPoint(x: a * arriveFrom.x + b * arriveControl.x + c * dockPos.x,
-                      y: a * arriveFrom.y + b * arriveControl.y + c * dockPos.y)
-        // Drehung bis 80 % der Anflugzeit abgeschlossen (smootherstep: ruhiger Anfang und ruhiges Ende)
-        let r = min(1, u / 0.8)
-        let k = r * r * r * (r * (r * 6 - 15) + 10)
-        heading = arriveHeading + wrap(dockHeading - arriveHeading) * k
-        if u >= 1 {
-            pos = dockPos
-            heading = dockHeading
-        }
+        let m = arriveSlope
+        let f = m * (u * u * u - 2 * u * u + u) + (-2 * u * u * u + 3 * u * u)
+        let (p, dir) = arrivePoint(at: min(1, max(0, f)) * total)
+        pos = p
+        // Die Nase folgt der Bahn; das letzte Stück liegt in Startrichtung, dort kommt sie genau an
+        heading = u >= 1 ? dockHeading : dir
     }
     var botThreshold: CGFloat = -1
     var botSkip = false
@@ -1710,7 +1737,9 @@ final class Game {
             break
         }
 
-        if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 {
+        // Kurs aus der Bewegung, außer beim Anflug auf eine Station: dort setzt updateDocking die Nase selbst
+        // (früher überschrieb diese Zeile die Drehung, und am Ende sprang die Nase hart in die Startrichtung)
+        if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 && !(phase == .docked && departAt == nil) {
             heading = atan2(pos.y - before.y, pos.x - before.x)
         }
         trail.append(pos)
@@ -2155,7 +2184,10 @@ final class Game {
             let dy = pos.y - p.center.y
             // Schwarzes Loch: Fang erst nah an der Bahn, die Scheibe ist kein Planetenkörper
             let catchRadius = p.kind == .blackHole ? p.orbitRadius - 10 : p.radius + captureMargin
-            if hypot(dx, dy) < catchRadius {
+            // Station: der Anflug auf die Plattform beginnt schon ein gutes Stück vorher, damit er Platz hat
+            let dockNear = p.isStation && i != originIndex
+                && (stationDock(i).map { hypot(pos.x - $0.pos.x, pos.y - $0.pos.y) < Game.dockApproachRange } ?? false)
+            if hypot(dx, dy) < catchRadius || dockNear {
                 capture(i, dx: dx, dy: dy)
                 return
             }
