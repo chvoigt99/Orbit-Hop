@@ -453,8 +453,20 @@ enum Ship3D {
     static func simplified(_ ship: SCNNode) -> SCNNode {
         let markers = outlets(of: ship).map { $0.0 }
         markers.forEach { $0.removeFromParentNode() }
+        // Düsenglut nicht mitverschmelzen: flattenedClone verliert die Materialnamen, World3D findet sie sonst nicht
+        var fires: [SCNNode] = []
+        ship.enumerateHierarchy { n, _ in
+            if n.geometry?.materials.contains(where: { $0.name == "engineFire" }) == true { fires.append(n) }
+        }
+        let fireCopies = fires.map { n -> SCNNode in
+            let c = n.clone()
+            c.transform = ship.convertTransform(n.transform, from: n.parent)
+            n.removeFromParentNode()
+            return c
+        }
         let flat = ship.flattenedClone()
         markers.forEach { flat.addChildNode($0) }
+        fireCopies.forEach { flat.addChildNode($0) }
         return flat
     }
 
