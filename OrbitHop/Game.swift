@@ -2033,6 +2033,7 @@ final class Game {
         }.prefix(Game.fanBeams))
         guard !picked.isEmpty else {
             Haptics.miss()
+            popups.append(Popup(pos: pos, text: "KEIN ZIEL IN REICHWEITE", color: Color(red: 0.75, green: 0.8, blue: 0.9), age: 0))
             return
         }
         let cost = weaponCost * 0.3 * CGFloat(picked.count)
