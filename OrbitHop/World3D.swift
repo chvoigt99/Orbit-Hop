@@ -2155,7 +2155,7 @@ final class World3D {
         shipHolder.isHidden = game.phase == .over
         shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
-        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : 0
+        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : game.dodgeBank * 0.6
         shipHolder.eulerAngles.y = Float(-game.heading)
         bankNode.eulerAngles.x = Float(bank)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten

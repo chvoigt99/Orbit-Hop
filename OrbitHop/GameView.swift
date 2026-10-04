@@ -82,6 +82,9 @@ struct GameView: View {
                         if game.started && game.phase != .over && !game.paused && !game.stationOpen {
                             pauseButton
                         }
+                        if game.dodgeAvailable {
+                            dodgeButtons
+                        }
                         if game.paused {
                             pauseMenu
                         }
@@ -327,6 +330,21 @@ struct GameView: View {
     }
 
     // MARK: Pause
+
+    /// Ausweichknöpfe links und rechts, nur in der Hindernispassage
+    private var dodgeButtons: some View {
+        VStack {
+            Spacer(minLength: 0)
+            HStack {
+                DodgeButton(side: -1, color: signal, fill: panel) { game.dodge(-1) }
+                Spacer()
+                DodgeButton(side: 1, color: signal, fill: panel) { game.dodge(1) }
+            }
+            .padding(.horizontal, 14)
+            Spacer().frame(height: 250)
+        }
+        .transition(.opacity)
+    }
 
     private var pauseButton: some View {
         VStack {
@@ -957,4 +975,32 @@ final class GameLoop: NSObject {
 #Preview {
     GameView()
         .preferredColorScheme(.dark)
+}
+
+
+/// Ausweichknopf: löst schon beim Berühren aus, nicht erst beim Loslassen
+private struct DodgeButton: View {
+    let side: CGFloat
+    let color: Color
+    let fill: Color
+    let action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: side < 0 ? "chevron.left.2" : "chevron.right.2")
+            .font(.system(size: 22, weight: .heavy))
+            .foregroundStyle(color)
+            .frame(width: 64, height: 64)
+            .background(Chamfer(cut: 10).fill(fill.opacity(pressed ? 0.95 : 0.7)))
+            .overlay(Chamfer(cut: 10).stroke(color.opacity(pressed ? 1 : 0.6), lineWidth: pressed ? 2 : 1))
+            .scaleEffect(pressed ? 0.92 : 1)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed else { return }
+                    pressed = true
+                    action()
+                }
+                .onEnded { _ in pressed = false })
+    }
 }

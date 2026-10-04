@@ -620,6 +620,9 @@ final class Game {
     var items: [Item] = []
     var wideConeLaunches = 0              // so viele Starts mit breitem Kegel
     var superBombs = 0                    // zündet beim nächsten Hindernis in der Flugbahn
+    /// Ausweichen: Startzeit und Seite (-1 links, +1 rechts, aus Sicht des Piloten)
+    private(set) var dodgeStart: CGFloat = -10
+    private var dodgeSide: CGFloat = 0
     var rescueCharges = 0                 // eingesammelte Nachbrenner
     var boostTime: CGFloat = 0            // Nachbrenner-Effekt läuft
     var weaponCooldown: CGFloat = 0
@@ -979,6 +982,7 @@ final class Game {
         comboFlight = false
         wideConeLaunches = 0
         superBombs = 0
+        dodgeStart = -10
         rescueCharges = 0
         boostTime = 0
         stationOpen = false
@@ -1907,6 +1911,34 @@ final class Game {
         }
     }
 
+    // MARK: Ausweichen
+
+    static let dodgeTime: CGFloat = 0.38
+    static let dodgeDistance: CGFloat = 120
+
+    /// Ausweichknöpfe gibt es nur in der Hindernispassage (und kurz davor)
+    var dodgeAvailable: Bool {
+        guard started, !paused, phase == .flying else { return false }
+        let gap = min(originIndex + 1, planets.count - 1)
+        guard planets[gap].hardRoute, let at = progress(pos, gap: gap) else { return false }
+        return at > planets[gap].passageFrom - 500 && at < planets[gap].passageTo
+    }
+
+    /// Seitwärts ausweichen: -1 links, +1 rechts
+    func dodge(_ side: CGFloat) {
+        guard dodgeAvailable, time - dodgeStart > Game.dodgeTime + 0.1 else { return }
+        dodgeStart = time
+        dodgeSide = side
+        Haptics.launch(0.25)
+    }
+
+    /// Schräglage des Schiffs beim Ausweichen (-1 bis 1)
+    var dodgeBank: CGFloat {
+        let u = (time - dodgeStart) / Game.dodgeTime
+        guard u >= 0 && u < 1 else { return 0 }
+        return dodgeSide * sin(u * .pi)
+    }
+
     /// Railgun: Reichweite und halbe Breite des Strahls am Ende (gleicht die lange Ladezeit aus)
     static let railRange: CGFloat = 3600
     static let railWidth: CGFloat = 60
@@ -2233,6 +2265,14 @@ final class Game {
 
         pos.x += vel.dx * h
         pos.y += vel.dy * h
+        // Ausweichen: seitlicher Versatz quer zur Flugrichtung, weich an- und auslaufend (Sinusprofil)
+        let du = (time - dodgeStart) / Game.dodgeTime
+        if du >= 0 && du < 1 {
+            let sp = max(1, hypot(vel.dx, vel.dy))
+            let side = Game.dodgeDistance * .pi / 2 * sin(du * .pi) / Game.dodgeTime * h * dodgeSide
+            pos.x += -vel.dy / sp * side
+            pos.y += vel.dx / sp * side
+        }
 
         for i in asteroids.indices.reversed() {
             let a = asteroids[i]
