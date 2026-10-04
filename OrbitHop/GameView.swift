@@ -755,7 +755,9 @@ struct GameView: View {
             }
             .frame(width: Self.menuRowWidth)
             if !game.dailyMode && game.profile.stationsReached > 0 { startRow.frame(width: Self.menuRowWidth) }
+            // Tagesflug ist ein eigener Spielmodus: mit Abstand abgesetzt
             dailyRow.frame(width: Self.menuRowWidth)
+                .padding(.top, 18)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -810,6 +812,7 @@ struct GameView: View {
                 }
                 .frame(width: Self.menuRowWidth)
                 dailyRow.frame(width: Self.menuRowWidth)
+                    .padding(.top, 18)
             }
         }
     }
