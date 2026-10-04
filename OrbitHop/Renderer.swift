@@ -46,7 +46,8 @@ extension Game {
     /// auszuwerten, sprengte zusammen mit dem HUD das Zeitbudget des Hauptthreads.
     func drawChrome(_ context: GraphicsContext, size: CGSize) {
         drawScanBar(context, size)
-        if !stationOpen { drawRadar(context, size) }
+        // in der Hindernispassage sitzen dort die Ausweichknöpfe
+        if !stationOpen && !dodgeAvailable { drawRadar(context, size) }
         drawOverlays(context, size)
     }
 

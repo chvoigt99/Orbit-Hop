@@ -213,7 +213,8 @@ struct GameView: View {
                 hint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
-            bottomBar.opacity(game.stationOpen ? 0 : 1)
+            // in der Hindernispassage sitzen dort die Ausweichknöpfe
+            bottomBar.opacity(game.stationOpen || game.dodgeAvailable ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -340,8 +341,9 @@ struct GameView: View {
                 Spacer()
                 DodgeButton(side: 1, color: signal, fill: panel) { game.dodge(1) }
             }
-            .padding(.horizontal, 14)
-            Spacer().frame(height: 250)
+            .padding(.horizontal, 18)
+            // an der Stelle von Telemetrie und Radar
+            Spacer().frame(height: 14)
         }
         .transition(.opacity)
     }
@@ -988,9 +990,9 @@ private struct DodgeButton: View {
 
     var body: some View {
         Image(systemName: side < 0 ? "chevron.left.2" : "chevron.right.2")
-            .font(.system(size: 22, weight: .heavy))
+            .font(.system(size: 28, weight: .heavy))
             .foregroundStyle(color)
-            .frame(width: 64, height: 64)
+            .frame(width: 84, height: 84)
             .background(Circle().fill(fill.opacity(pressed ? 0.95 : 0.7)))
             .overlay(Circle().stroke(color.opacity(pressed ? 1 : 0.6), lineWidth: pressed ? 2 : 1))
             .scaleEffect(pressed ? 0.92 : 1)
