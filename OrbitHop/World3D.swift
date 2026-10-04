@@ -545,38 +545,64 @@ final class World3D {
 
     // MARK: Hangar
 
-    /// Startplattform mit Leuchtkanten und einem Tor aus zwei Pylonen und einer Brücke.
-    /// Lokal zeigt +x in Flugrichtung, die Plattform liegt knapp unter dem Schiff.
+    /// Startplattform im Stil der Schiffe: gleicher Baukasten (ShipKit) mit abgenutztem Lack, Panzerplatten,
+    /// facettierten Trägern, Leitungen und Kleinteilen. Gebaut in Schiffseinheiten und wie das Schiff im
+    /// Hangar fünffach skaliert. Lokal zeigt +x in Flugrichtung, das Deck liegt knapp unter dem Schiff.
     private func buildDock() {
-        let metal = WornPaint.material("dock", base: UIColor(white: 0.34, alpha: 1))
-        let dark = WornPaint.material("dock-dark", base: UIColor(white: 0.2, alpha: 1))
-        let edge = glowMat(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
-        let lamp = glowMat(UIColor(red: 1, green: 0.78, blue: 0.4, alpha: 1))
+        let k = ShipKit(seed: "dock", base: ShipDesigns.bone, accent: ShipDesigns.red, second: ShipDesigns.gunmetal,
+                        weaponHue: 165, marking: "PAD")
+        let edge = ShipKit.glow(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
+        let amber = ShipKit.glow(UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 1))
 
-        func box(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, _ x: Float, _ y: Float, _ z: Float) {
-            let g = SCNBox(width: w, height: h, length: l, chamferRadius: min(w, h, l) * 0.08)
-            g.materials = [m]
-            let n = SCNNode(geometry: g)
-            n.position = SCNVector3(x, y, z)
-            dockNode.addChildNode(n)
-        }
+        // Deck: gekantetes Achteck wie die Flügel, darunter ein dunkler Rahmen
+        let deck: [(CGFloat, CGFloat)] = [(5, -3), (5, 3), (3.8, 4.2), (-3.8, 4.2), (-5, 3), (-5, -3), (-3.8, -4.2), (3.8, -4.2)]
+        k.plate(deck, y: -0.15, thick: 0.3, k.paint, mirror: false)
+        k.plate(deck.map { ($0.0 * 1.05, $0.1 * 1.05) }, y: -0.42, thick: 0.3, k.dark, mirror: false)
+        // Panzerplatten mit Nähten quer über das Deck
+        k.plates(x0: -4.4, x1: 4.0, y: -0.02, width: 6.4, count: 7)
+        // Warnstreifen an Vorder- und Hinterkante
+        k.box(4.7, 0.06, 0, 0.45, 0.1, 5.6, k.stripe, chamfer: 0.03, mirror: false)
+        k.box(-4.7, 0.06, 0, 0.45, 0.1, 5.6, k.stripe, chamfer: 0.03, mirror: false)
 
-        // Plattform
-        box(48, 2, 40, metal, 0, -1.2, 0)
-        box(54, 1.2, 46, dark, -2, -2.8, 0)
-        // Leuchtkanten links und rechts, vorn eine Startlinie
-        box(46, 0.5, 0.8, edge, 0, 0.1, 19.6)
-        box(46, 0.5, 0.8, edge, 0, 0.1, -19.6)
-        for i in 0..<4 { box(1.2, 0.5, 6, edge, 23.5, 0.1, Float(i - 2) * 9 + 4.5) }
-        // Tor vorn: zwei Pylonen mit Brücke und Lampen, das Schiff startet hindurch
-        for z: Float in [-23, 23] {
-            box(3.2, 24, 3.2, dark, 22, 10, z)
-            let s = SCNNode(geometry: SCNSphere(radius: 1.3))
-            s.geometry?.materials = [lamp]
-            s.position = SCNVector3(22, 23, z)
-            dockNode.addChildNode(s)
+        // Landekreis mit Leuchtring und Lampen
+        let ring = SCNTube(innerRadius: 1.55, outerRadius: 1.7, height: 0.04)
+        ring.radialSegmentCount = 64
+        k.addNode(ring, edge, SCNVector3(0, 0.15, 0))
+        let disc = SCNCylinder(radius: 1.5, height: 0.06)
+        disc.radialSegmentCount = 48
+        k.addNode(disc, k.second, SCNVector3(0, 0.12, 0))
+        for i in 0..<8 {
+            let a = Float(i) / 8 * .pi * 2
+            k.box(cos(a) * 2.05, 0.15, sin(a) * 2.05, 0.18, 0.06, 0.18, amber, chamfer: 0.01, mirror: false)
         }
-        box(3, 2.6, 49, metal, 22, 21, 0)
+        // Leuchtkanten an den Seiten und eine gestrichelte Startlinie vorn
+        k.box(0, 0.12, 4.05, 7.4, 0.06, 0.1, edge, chamfer: 0.01)
+        for i in 0..<4 { k.box(4.35, 0.12, Float(i) * 1.6 - 2.4, 0.1, 0.06, 0.9, edge, chamfer: 0.01, mirror: false) }
+
+        // Seitenträger: facettiert wie die Rümpfe, mit Leitungen und Seitenpaneelen
+        k.hull([ShipKit.Sec(-4.6, 0.25, 0.32, 0.3), ShipKit.Sec(-3.8, 0.3, 0.38, 0.36),
+                ShipKit.Sec(3.6, 0.3, 0.38, 0.36), ShipKit.Sec(4.4, 0.25, 0.32, 0.3)], z: 4.65, k.second)
+        k.pipes(x0: -4.2, x1: 3.8, y: 0.2, z: 4.25)
+        k.sidePanels(x0: -3.6, x1: 3.4, y: 0.2, z: 5.05, count: 5)
+
+        // Tor vorn: zwei gepanzerte Pylonen mit Brücke, das Schiff startet hindurch
+        k.box(4.4, 2.3, 4.6, 0.75, 4.6, 0.75, k.paint, chamfer: 0.12)
+        k.box(4.4, 1.0, 4.6, 0.85, 0.5, 0.85, k.stripe, chamfer: 0.06)
+        k.box(4.4, 3.4, 4.6, 0.85, 0.35, 0.85, k.dark, chamfer: 0.06)
+        k.intake(4.4, 2.2, 4.2, h: 0.6, w: 0.3)
+        k.lamp(4.4, 4.75, 4.6, size: 0.3)
+        k.box(4.4, 4.3, 0, 0.7, 0.5, 9.9, k.accent, chamfer: 0.1, mirror: false)
+        k.box(4.4, 4.0, 0, 0.5, 0.2, 9.4, k.dark, chamfer: 0.04, mirror: false)
+        for z: Float in [-3, -1, 1, 3] { k.lamp(4.75, 4.3, z, size: 0.14) }
+
+        // Heck: Lufteinlässe, Kleinteile und Antennen
+        k.intake(-4.55, 0.35, 2.6, h: 0.45, w: 0.7)
+        k.greeble(x0: -4.8, x1: -3.6, y: 0.05, zMax: 1.8, count: 12)
+        k.antenna(-4.3, 0.4, 3.9, h: 2.2)
+        k.box(-4.2, 0.25, 3.3, 0.6, 0.5, 0.5, k.metal, chamfer: 0.05)
+
+        k.root.scale = SCNVector3(5, 5, 5)
+        dockNode.addChildNode(k.root)
 
         // eigenes Licht für die Nahaufnahme
         let light = SCNNode()
