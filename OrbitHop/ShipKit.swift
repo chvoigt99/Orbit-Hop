@@ -398,6 +398,7 @@ final class ShipKit {
         glass.emission.contents = UIColor(red: 0.12, green: 0.06, blue: 0.02, alpha: 1)
         lamp = ShipKit.glow(UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 1))
         fire = ShipKit.glow(UIColor(red: 1, green: 0.5, blue: 0.12, alpha: 1))
+        fire.name = "engineFire"   // Düsenglut: World3D schaltet sie aus, wenn die Triebwerke aus sind
         weaponGlow = ShipKit.glow(UIColor(hsl(weaponHue, 0.9, 0.6)))
     }
 

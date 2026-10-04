@@ -463,6 +463,12 @@ final class World3D {
     private let shipHolder = SCNNode()
     private let bankNode = SCNNode()
     private var shipModelNode: SCNNode?
+    /// Teile mit Düsenglut und ihre aktuelle Helligkeit
+    private var nozzleMats: [SCNMaterial] = []
+    private var nozzleHalos: [SCNNode] = []
+    private var appliedNozzleGlow: CGFloat = 1
+    private var nozzleGlow: CGFloat = 1
+    private var lastNozzleTime: CGFloat = 0
     private var shipID = ""
     private let exhaust = SCNParticleSystem()
     private var exhausts: [(SCNParticleSystem, CGFloat)] = []
@@ -2147,7 +2153,34 @@ final class World3D {
             let n = Ship3D.shipNode(for: game.ship.model, showcase: false)
             bankNode.addChildNode(n)
             shipModelNode = n
+            // Düsenglut dieses Schiffs: eigene Kopie der Glut-Materialien (das Modell ist zusammengefasst und teilt
+            // seine Materialien), dazu die Glut-Sprites hinter den Düsen
+            var mats: [SCNMaterial] = []
+            n.enumerateHierarchy { node, _ in
+                guard let g = node.geometry, g.materials.contains(where: { $0.name == "engineFire" }) else { return }
+                let own = g.copy() as! SCNGeometry
+                own.materials = g.materials.map { m in
+                    guard m.name == "engineFire" else { return m }
+                    let c = m.copy() as! SCNMaterial
+                    mats.append(c)
+                    return c
+                }
+                node.geometry = own
+            }
+            nozzleMats = mats
+            nozzleHalos = Ship3D.outlets(of: n).flatMap { $0.0.childNodes }
 
+        }
+        // Triebwerke aus (Spielende): Düsenglut klingt ab
+        let glowTarget: CGFloat = game.phase == .over ? 0 : 1
+        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 2.5, dt: max(0, min(0.1, game.time - lastNozzleTime)))
+        lastNozzleTime = game.time
+        if game.phase != .over { nozzleGlow = 1 }
+        if abs(nozzleGlow - appliedNozzleGlow) > 0.01 || (nozzleGlow == 1 && appliedNozzleGlow != 1) {
+            appliedNozzleGlow = nozzleGlow
+            let ember = UIColor(white: 0.12 + 0.88 * nozzleGlow, alpha: 1)
+            for m in nozzleMats { m.multiply.contents = ember }
+            for h in nozzleHalos { h.opacity = nozzleGlow }
         }
         // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
         shipHolder.isHidden = game.phase == .over && game.destroyed

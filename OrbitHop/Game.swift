@@ -714,7 +714,7 @@ final class Game {
 
     var speed: CGFloat {
         switch phase {
-        case .flying: return hypot(vel.dx, vel.dy)
+        case .flying, .over: return hypot(vel.dx, vel.dy)
         case .docked:
             guard let t = departElapsed, t > Game.liftTime else { return 0 }
             return launchSpeed(accuracy: Game.dockAccuracy) * (t - Game.liftTime) / Game.rollTime
