@@ -598,6 +598,7 @@ struct GameView: View {
             .foregroundStyle(gold)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
             .overlay(Chamfer(cut: 8).stroke(gold.opacity(0.7), lineWidth: 1.2))
             .contentShape(Rectangle())
@@ -652,7 +653,7 @@ struct GameView: View {
                 label(detail).foregroundStyle(dim)
             }
             .foregroundStyle(signal)
-            .frame(maxWidth: 220)
+            .frame(maxWidth: .infinity)
             arrowButton("chevron.right", enabled: k < game.profile.stationsReached - 1) { game.setStartStation(k + 1) }
         }
         .padding(.horizontal, 8)
@@ -695,6 +696,7 @@ struct GameView: View {
                 .foregroundStyle(game.dailyMode ? signal : daily)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
                 .overlay(Chamfer(cut: 8).stroke((game.dailyMode ? signal : daily).opacity(0.7), lineWidth: 1.2))
                 .contentShape(Rectangle())
@@ -734,6 +736,9 @@ struct GameView: View {
         .accessibilityLabel(soundOn ? "Ton ausschalten" : "Ton einschalten")
     }
 
+    /// Breite der Knopfzeilen auf Start- und Endbildschirm (passt auch aufs kleinste iPhone)
+    private static let menuRowWidth: CGFloat = 330
+
     private var titleView: some View {
         VStack(spacing: 14) {
             titleTexts
@@ -742,13 +747,15 @@ struct GameView: View {
             // unter dem Startplaneten
             tapPrompt
                 .allowsHitTesting(false)
+            // alle Zeilen gleich breit
             HStack(spacing: 10) {
                 shipsButton
                 missionsButton
                 if SoundFX.available { soundButton }
             }
-            if !game.dailyMode && game.profile.stationsReached > 0 { startRow }
-            dailyRow
+            .frame(width: Self.menuRowWidth)
+            if !game.dailyMode && game.profile.stationsReached > 0 { startRow.frame(width: Self.menuRowWidth) }
+            dailyRow.frame(width: Self.menuRowWidth)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -801,7 +808,8 @@ struct GameView: View {
                     shipsButton
                     missionsButton
                 }
-                dailyRow
+                .frame(width: Self.menuRowWidth)
+                dailyRow.frame(width: Self.menuRowWidth)
             }
         }
     }
