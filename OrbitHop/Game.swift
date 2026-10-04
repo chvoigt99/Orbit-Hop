@@ -1880,7 +1880,10 @@ final class Game {
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
-                if distanceToSegment(a.center, muzzle, to) < a.radius + Game.railWidth { damageObstacle(i, 3, blast: false) }
+                // Strahl beginnt am Schiff schmal und wird nach vorn breiter
+                let along = max(0, min(Game.railRange, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
+                let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / Game.railRange
+                if distanceToSegment(a.center, muzzle, to) < a.radius + width { damageObstacle(i, 3, blast: false) }
             }
             shake = max(shake, 0.2)
         case .cannon:
@@ -1903,9 +1906,11 @@ final class Game {
         }
     }
 
-    /// Railgun: Reichweite und halbe Breite des Strahls (gleicht die lange Ladezeit aus)
+    /// Railgun: Reichweite und halbe Breite des Strahls am Ende (gleicht die lange Ladezeit aus)
     static let railRange: CGFloat = 3600
     static let railWidth: CGFloat = 60
+    /// halbe Breite direkt am Schiff (wächst bis zum Ende auf railWidth)
+    static let railWidthNear: CGFloat = 12
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
     private func aimTarget() -> Asteroid? {

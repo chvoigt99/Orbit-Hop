@@ -1841,9 +1841,19 @@ final class World3D {
         root.position = v3(CGPoint(x: (b.from.x + b.to.x) / 2, y: (b.from.y + b.to.y) / 2))
         root.eulerAngles.y = Float(-atan2(dy, dx))
         // breiter, schwacher Saum in Weltgröße: zeigt, wie breit der Strahl trifft
-        let band = SCNBox(width: len, height: 2, length: Game.railWidth * 2, chamferRadius: 0)
+        // flacher Keil: am Schiff schmal, nach vorn so breit, wie der Strahl trifft
+        let wedge = UIBezierPath()
+        let half = len / 2, w0 = Game.railWidthNear, w1 = Game.railWidth
+        wedge.move(to: CGPoint(x: -half, y: -w0))
+        wedge.addLine(to: CGPoint(x: half, y: -w1))
+        wedge.addLine(to: CGPoint(x: half, y: w1))
+        wedge.addLine(to: CGPoint(x: -half, y: w0))
+        wedge.close()
+        let band = SCNShape(path: wedge, extrusionDepth: 2)
         band.materials = [glowMat(col.withAlphaComponent(0.12))]
-        root.addChildNode(SCNNode(geometry: band))
+        let bandNode = SCNNode(geometry: band)
+        bandNode.eulerAngles.x = -.pi / 2
+        root.addChildNode(bandNode)
         for (w, c) in [(6 * px, col.withAlphaComponent(0.45)), (2.2 * px, col), (0.9 * px, UIColor.white)] {
             let box = SCNBox(width: len, height: w, length: w, chamferRadius: 0)
             box.materials = [glowMat(c)]
