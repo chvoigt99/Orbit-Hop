@@ -158,6 +158,10 @@ struct Planet {
     let energyScale: CGFloat   // spätere Planeten geben weniger Energie
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
+    /// Hindernispassage auf dem Weg hierher: Bereich auf der Achse vom vorigen Planeten (Abstand von dessen Mitte).
+    /// Davor liegt der freie Abflug, dahinter der freie Anflug. Ohne Hindernisse beide 0.
+    var passageFrom: CGFloat = 0
+    var passageTo: CGFloat = 0
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
     var stationNo = -1         // laufende Nummer der Station (Name und Modell), sonst -1
     var kind: PlanetKind = .normal
@@ -1065,13 +1069,24 @@ final class Game {
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl), using: &Dice.rng)
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
-        let hasField = !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        // (die ersten Strecken nach dem Start bekommen keine Hindernisse)
+        let canSpawn = planets.count >= 2
+        let hasComet = canSpawn && !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
+        let hasField = canSpawn && !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
         // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet oder vor einer Station)
-        let hasDrones = !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
+        let hasDrones = canSpawn && !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
             && Double.random(in: 0...1, using: &Dice.rng) < (Game.droneTest ? 1 : Double(0.12 + 0.18 * lvl))
-        let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
-            + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
+        // Strecken mit Hindernissen sind fest gegliedert: freier Abflug (Übergang in die Nahaufnahme),
+        // Hindernispassage, freier Anflug (Kamera bleibt stehen). Nur in der Passage liegen Hindernisse.
+        let hard = hasField || hasComet || hasDrones
+        var passageLen: CGFloat = 0
+        if hasField { passageLen = max(passageLen, CGFloat.random(in: (2600 + 600 * lvl)...(3000 + 800 * lvl), using: &Dice.rng)) }
+        if hasDrones { passageLen = max(passageLen, CGFloat.random(in: (2300 + 400 * lvl)...(2700 + 500 * lvl), using: &Dice.rng)) }
+        if hasComet { passageLen = max(passageLen, 3600 + 400 * lvl) }
+        let r0 = prev.orbitRadius - prev.radius, r1: CGFloat = kind == .blackHole ? 150 : 90
+        let gap = hard
+            ? r0 + Game.departLength + passageLen + Game.approachLength + r1
+            : CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
         // Das Schwarze Loch wird so schnell umkreist wie ein mittelgroßer Planet, nicht wie ein winziger
@@ -1089,7 +1104,11 @@ final class Game {
         planets.append(Planet.make(center: c, radius: r, spin: spin,
                                    hue: hue, allowRing: !station && kind == .normal,
                                    energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * kindEnergy, bonus: bonus))
-        planets[planets.count - 1].hardRoute = hasField || hasComet || hasDrones
+        planets[planets.count - 1].hardRoute = hard
+        if hard {
+            planets[planets.count - 1].passageFrom = prev.orbitRadius + Game.departLength
+            planets[planets.count - 1].passageTo = prev.orbitRadius + Game.departLength + passageLen
+        }
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
         if station {
@@ -1127,8 +1146,34 @@ final class Game {
 
     // MARK: Hindernisse
 
+    /// Länge des freien Abflugs hinter dem Orbit: Zeit für den Übergang in die Nahaufnahme
+    static let departLength: CGFloat = 1000
+    /// Länge des freien Anflugs vor dem Zielorbit: die Kamera bleibt stehen und lässt das Schiff einfliegen
+    static let approachLength: CGFloat = 1600
+
+    /// Achse und Bereich der Hindernispassage auf der Strecke zum Planeten `gap`
+    func passage(_ gap: Int) -> (origin: CGPoint, dir: CGVector, from: CGFloat, to: CGFloat)? {
+        guard gap > 0, gap < planets.count, planets[gap].passageTo > 0 else { return nil }
+        let a = planets[gap - 1].center, b = planets[gap].center
+        let len = max(1, hypot(b.x - a.x, b.y - a.y))
+        return (a, CGVector(dx: (b.x - a.x) / len, dy: (b.y - a.y) / len), planets[gap].passageFrom, planets[gap].passageTo)
+    }
+
+    /// Wie weit ein Punkt auf der Achse der Strecke zum Planeten `gap` liegt (vom Startplaneten aus)
+    func progress(_ p: CGPoint, gap: Int) -> CGFloat? {
+        guard let ps = passage(gap) else { return nil }
+        return (p.x - ps.origin.x) * ps.dir.dx + (p.y - ps.origin.y) * ps.dir.dy
+    }
+
+    /// Punkt in der Passage: `t` von 0 (Anfang) bis 1 (Ende), seitlich versetzt
+    private func passagePoint(_ ps: (origin: CGPoint, dir: CGVector, from: CGFloat, to: CGFloat), _ t: CGFloat, side: CGFloat) -> CGPoint {
+        let d = ps.from + (ps.to - ps.from) * t
+        return CGPoint(x: ps.origin.x + ps.dir.dx * d - ps.dir.dy * side, y: ps.origin.y + ps.dir.dy * d + ps.dir.dx * side)
+    }
+
     /// Feld aus Gestein, Satellitentrümmern oder Schiffswracks auf der Strecke
     private func spawnField(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
+        guard let ps = passage(gap) else { return }
         let roll = Double.random(in: 0...1, using: &Dice.rng)
         let kind: ObstacleKind = gap >= 5 && roll < 0.15 ? .wreck : (gap >= 3 && roll < 0.4 ? .debris : .rock)
         let count: Int
@@ -1139,10 +1184,9 @@ final class Game {
         case .comet, .drone: count = 0
         }
         for _ in 0..<count {
-            // über die ganze Strecke verteilt, seitlich gestreut
-            let t = CGFloat.random(in: 0.32...0.8, using: &Dice.rng)
-            let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
-            let p = point(from: along, angle: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), distance: CGFloat.random(in: 0...280, using: &Dice.rng))
+            // über die ganze Passage verteilt, seitlich gestreut (mit Rand, damit nichts herausragt)
+            let t = CGFloat.random(in: 0.03...0.97, using: &Dice.rng)
+            let p = passagePoint(ps, t, side: CGFloat.random(in: -300...300, using: &Dice.rng))
             if hypot(p.x - a.center.x, p.y - a.center.y) < a.orbitRadius + 70 { continue }
             if hypot(p.x - b.center.x, p.y - b.center.y) < b.orbitRadius + 70 { continue }
             var o = Asteroid(center: p, radius: CGFloat.random(in: 16...40, using: &Dice.rng),
@@ -1171,11 +1215,10 @@ final class Game {
 
     /// Komet fliegt langsam in Flugrichtung vor dem Schiff her und braucht mehrere Treffer
     private func spawnComet(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
-        let dx = b.center.x - a.center.x, dy = b.center.y - a.center.y
-        let len = hypot(dx, dy)
-        let dir = CGVector(dx: dx / len, dy: dy / len)
-        let start = CGPoint(x: a.center.x + dx * 0.3, y: a.center.y + dy * 0.3)
-        let end = CGPoint(x: a.center.x + dx * 0.85, y: a.center.y + dy * 0.85)
+        guard let ps = passage(gap) else { return }
+        let dir = ps.dir
+        let start = passagePoint(ps, 0.05, side: 0)
+        let end = passagePoint(ps, 0.95, side: 0)
         let hp = 8 + Int(4 * lvl)
         asteroids.append(Asteroid(center: start, radius: 52, shape: (0..<9).map { _ in CGFloat.random(in: 0.8...1.1, using: &Dice.rng) },
                                   spin: 0.3, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), tone: 0.8, gap: gap,
@@ -1185,12 +1228,10 @@ final class Game {
 
     /// Ein bis drei Drohnen warten seitlich der Streckenmitte
     private func spawnDrones(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
+        guard let ps = passage(gap) else { return }
         let count = 1 + (lvl > 0.35 ? 1 : 0) + (Double.random(in: 0...1, using: &Dice.rng) < Double(lvl) * 0.5 ? 1 : 0)
-        let dir = atan2(b.center.y - a.center.y, b.center.x - a.center.x)
         for _ in 0..<count {
-            let t = CGFloat.random(in: 0.4...0.68, using: &Dice.rng)
-            let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
-            let p = point(from: along, angle: dir + .pi / 2, distance: CGFloat.random(in: -340...340, using: &Dice.rng))
+            let p = passagePoint(ps, CGFloat.random(in: 0.25...0.75, using: &Dice.rng), side: CGFloat.random(in: -340...340, using: &Dice.rng))
             let hp = 3 + Int(3 * lvl)
             asteroids.append(Asteroid(center: p, radius: 22, shape: Array(repeating: 1, count: 9),
                                       spin: 0, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
@@ -1205,12 +1246,15 @@ final class Game {
     /// Drohnen: im Flug auf ihrer Strecke Kurs auf das Schiff mit Vorhalt, schießen in Reichweite.
     /// Sonst schweben sie langsam an ihrem Platz. In den Zielorbit folgen sie nicht.
     private func moveDrones(_ dt: CGFloat) {
-        let tg = planets[min(originIndex + 1, planets.count - 1)]
         for i in asteroids.indices where asteroids[i].kind == .drone {
             let c = asteroids[i].center
             let dx = pos.x - c.x, dy = pos.y - c.y
             let d = hypot(dx, dy)
-            let hunting = phase == .flying && asteroids[i].gap == originIndex + 1 && d < Game.droneSight
+            // gejagt wird nur, solange das Schiff in der Hindernispassage ist
+            let shipAt = progress(pos, gap: asteroids[i].gap) ?? 0
+            let route = planets[min(asteroids[i].gap, planets.count - 1)]
+            let inPassage = shipAt > route.passageFrom - 300 && shipAt < route.passageTo
+            let hunting = phase == .flying && asteroids[i].gap == originIndex + 1 && inPassage && d < Game.droneSight
             var want = CGVector.zero
             if hunting {
                 // Vorhalt: dorthin, wo das Schiff gleich sein wird
@@ -1234,11 +1278,11 @@ final class Game {
                 let a = asteroids[i].phase + time * 0.8
                 want = CGVector(dx: cos(a) * 25, dy: sin(a) * 25)
             }
-            // nicht in den Zielorbit hinein
-            let tdx = c.x - tg.center.x, tdy = c.y - tg.center.y
-            let td = max(1, hypot(tdx, tdy))
-            if td < tg.orbitRadius + 260 {
-                want = CGVector(dx: tdx / td * Game.droneSpeed * 0.6, dy: tdy / td * Game.droneSpeed * 0.6)
+            // nicht aus der Hindernispassage hinaus (weder in den Abflug noch in den Anflug)
+            if let ps = passage(asteroids[i].gap) {
+                let at = (c.x - ps.origin.x) * ps.dir.dx + (c.y - ps.origin.y) * ps.dir.dy
+                if at > ps.to - 60 { want = CGVector(dx: -ps.dir.dx * Game.droneSpeed * 0.6, dy: -ps.dir.dy * Game.droneSpeed * 0.6) }
+                if at < ps.from + 60 { want = CGVector(dx: ps.dir.dx * Game.droneSpeed * 0.6, dy: ps.dir.dy * Game.droneSpeed * 0.6) }
             }
             // weich lenken statt sofort umzudrehen
             let k = min(1, dt * 2.2)
@@ -1291,8 +1335,8 @@ final class Game {
                     asteroids[i].center.x += dx / d * step
                     asteroids[i].center.y += dy / d * step
                 }
-                // weiter in Flugrichtung, aber nicht in den Zielorbit hinein
-                let nearTarget = hypot(tgt.center.x - c.x, tgt.center.y - c.y) < tgt.orbitRadius + 550
+                // weiter in Flugrichtung, aber nicht aus der Hindernispassage hinaus
+                let nearTarget = (progress(c, gap: originIndex + 1) ?? 0) > tgt.passageTo - asteroids[i].radius
                 asteroids[i].vel = nearTarget ? .zero : CGVector(dx: fwd.dx * 105, dy: fwd.dy * 105)
                 asteroids[i].end = nil
             }
@@ -1302,6 +1346,15 @@ final class Game {
             guard v.dx != 0 || v.dy != 0 else { continue }
             asteroids[i].center.x += v.dx * dt
             asteroids[i].center.y += v.dy * dt
+            // treibende Trümmer und Wracks prallen an den Enden der Hindernispassage ab
+            if asteroids[i].kind == .debris || asteroids[i].kind == .wreck, let ps = passage(asteroids[i].gap) {
+                let c = asteroids[i].center
+                let at = (c.x - ps.origin.x) * ps.dir.dx + (c.y - ps.origin.y) * ps.dir.dy
+                let va = v.dx * ps.dir.dx + v.dy * ps.dir.dy
+                if (at < ps.from + asteroids[i].radius && va < 0) || (at > ps.to - asteroids[i].radius && va > 0) {
+                    asteroids[i].vel = CGVector(dx: v.dx - 2 * va * ps.dir.dx, dy: v.dy - 2 * va * ps.dir.dy)
+                }
+            }
             if let e = asteroids[i].end {
                 let c = asteroids[i].center
                 if (e.x - c.x) * v.dx + (e.y - c.y) * v.dy < 0 {

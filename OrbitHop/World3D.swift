@@ -1797,29 +1797,20 @@ final class World3D {
             clearAll()
         }
 
-        // Kamera-Mischung: Verfolgerkamera, wenn Asteroiden vor dem Schiff liegen
-        // Entscheidung fällt einmal beim Start eines Flugs: Hindernisse auf der Strecke und Weg lang genug?
-        // Danach bleibt die Kamera dran, bis der Zielplanet nah ist, und schaltet im selben Flug nicht wieder ein.
+        // Kamera-Mischung auf Strecken mit Hindernissen, fest gegliedert:
+        // Abflug mit Übergang in die Verfolgerkamera, Hindernispassage in der Nahaufnahme,
+        // am Ende der Passage bleibt die Kamera stehen und lässt das Schiff in den Zielorbit fliegen.
         let ti = min(game.originIndex + 1, game.planets.count - 1)
         let tgt = game.planets[ti]
         let distT = hypot(tgt.center.x - game.pos.x, tgt.center.y - game.pos.y)
-        let release = tgt.orbitRadius + 1300
+        let shipAt = game.progress(game.pos, gap: ti)
+        let passageDone = shipAt.map { $0 >= tgt.passageTo } ?? true
         if game.phase == .flying && lastPhase != .flying { chasedThisFlight = false }
-        // Hindernisse in einem breiten Korridor um die Strecke, auch etwas neben der Flugbahn
-        if game.phase == .flying && !chasedThisFlight && distT > release + 150 {
-            let lx = (tgt.center.x - game.pos.x) / max(1, distT), ly = (tgt.center.y - game.pos.y) / max(1, distT)
-            let near = game.asteroids.contains { a in
-                let rx = a.center.x - game.pos.x, ry = a.center.y - game.pos.y
-                let along = rx * lx + ry * ly
-                let side = abs(rx * ly - ry * lx)
-                return along > -100 && along < distT && side < 750
-            }
-            if near {
-                chaseOn = true
-                chasedThisFlight = true
-            }
+        if game.phase == .flying && !chasedThisFlight && tgt.hardRoute && !passageDone {
+            chaseOn = true
+            chasedThisFlight = true
         }
-        if game.phase != .flying || distT < release { chaseOn = false }
+        if game.phase != .flying || passageDone { chaseOn = false }
         lastPhase = game.phase
         let danger = chaseOn
         let want: CGFloat = danger ? 1 : 0
@@ -1836,7 +1827,7 @@ final class World3D {
             // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
             chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
         }
-        updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
+        updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, passageDone: passageDone)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
         // Beim Abflug löst sich die Kamera schon während des Anrollens
         let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
@@ -2208,8 +2199,6 @@ final class World3D {
     private var arrivalHold: CGFloat = .infinity
     /// Dauer des Übergangs von der angehaltenen Kamera in die Orbit-Ansicht
     private let arrivalBlendTime: CGFloat = 1.7
-    /// zusätzliche Dauer der Anflugphase bei Flügen mit Hindernissen (Sekunden)
-    private static let arrivalLead: CGFloat = 1.5
     private var parkedPos = SCNVector3(0, 0, 0)
     private var parkedLook = SCNVector3(0, 0, 0)
     private var parkedScale: CGFloat = 1
@@ -2219,9 +2208,9 @@ final class World3D {
     private var lastPx: CGFloat = 1
     private var lastLook = SCNVector3(0, 0, 0)
 
-    /// Vor jedem Planeten bleibt die Kamera hinter dem Schiff stehen und lässt es in den Orbit fliegen.
-    /// Nach dem Einfangen hält sie kurz und wechselt dann langsam in die Draufsicht.
-    private func updateArrival(_ game: Game, dt: CGFloat, ti: Int, distT: CGFloat, tgt: Planet, release: CGFloat) {
+    /// Am Ende der Hindernispassage bleibt die Kamera hinter dem Schiff stehen und lässt es auf den Orbit zufliegen.
+    /// Kurz vor dem Orbit wechselt sie langsam in die Draufsicht.
+    private func updateArrival(_ game: Game, dt: CGFloat, ti: Int, distT: CGFloat, tgt: Planet, passageDone: Bool) {
         if game.phase == .over {
             arrivalActive = false
             arrival = 0
@@ -2229,13 +2218,11 @@ final class World3D {
         }
         // Kamera hält genau dort an, wo sie gerade ist: kein eigener Kameraschwenk
         // nur aus der Nahansicht (Verfolgerkamera), nie in der Draufsicht
-        // setzt 1,5 s Flugzeit früher ein als das Ende der Verfolgerkamera, damit die Anflugphase länger läuft
-        let arrivalStart = release + game.speed * Self.arrivalLead
-        if game.phase == .flying && arrivalIndex != ti && distT < arrivalStart && chase > 0.15 {
+        if game.phase == .flying && arrivalIndex != ti && passageDone && chase > 0.15 {
             arrivalIndex = ti
             arrivalActive = true
-            // kurz stehen bleiben, dann in die Draufsicht
-            arrivalHold = game.time + 0.9
+            // stehen bleiben, bis das Schiff kurz vor dem Orbit ist (Sicherheitsgrenze 6 s), dann in die Draufsicht
+            arrivalHold = game.time + 6
             parkedPos = cameraNode.position
             parkedLook = lastLook
             parkedScale = lastShipScale
