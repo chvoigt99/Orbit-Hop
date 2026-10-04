@@ -519,8 +519,6 @@ struct GameView: View {
     private var stationMenu: some View {
         let cost = game.repairCost
         let canRepair = cost > 0 && game.profile.parts >= cost
-        let hullDamage = Int(Game.maxHull - ceil(game.hull))
-        let energyMissing = Int(game.maxEnergy) - Int(ceil(game.energy))
         return VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 12) {
@@ -533,22 +531,11 @@ struct GameView: View {
                 label("⚙ \(game.profile.parts) TECH-TEILE · \(game.profile.shipParts) SCHIFFSTEILE")
                     .foregroundStyle(dim)
                     .padding(.bottom, 8)
-                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "REPARIEREN · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
+                menuButton(cost == 0 ? "SCHIFF INTAKT" : "REPARIEREN · ⚙ \(cost)",
                            "wrench.and.screwdriver.fill", canRepair ? signal : dim) {
                     game.repair()
                 }
                 .disabled(!canRepair)
-                // Schäden, die die Reparatur behebt
-                VStack(spacing: 4) {
-                    label(hullDamage == 0 ? "PANZERUNG 100 % · KEIN SCHADEN"
-                                          : "PANZERUNG \(100 - hullDamage) % · SCHADEN -\(hullDamage) %")
-                        .foregroundStyle(hullDamage == 0 ? dim : hullDamage >= 75 ? warn : gold)
-                    label("ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy))"
-                          + (energyMissing == 0 ? "" : " · FEHLT \(energyMissing)"))
-                        .foregroundStyle(energyMissing == 0 ? dim : gold)
-                }
-                .padding(.top, -4)
-                .padding(.bottom, 4)
                 menuButton("WERFT", "airplane", gold) { showShop = true }
                 menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
             }

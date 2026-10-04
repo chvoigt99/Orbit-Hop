@@ -554,6 +554,8 @@ final class Game {
 
     var particles: [Particle] = []
     var bursts: [Burst] = []              // neue Effekte für die 3D-Welt
+    var shatters: [Asteroid] = []         // zerstörte Kometen: die 3D-Welt lässt sie in Eisbrocken zerplatzen
+    var cometKilledAt: CGFloat = -10      // Zeitpunkt der letzten Kometen-Zerstörung (Blitz und Banner)
     var generation = 0                    // zählt hoch bei jedem Neustart
     var project: ((CGPoint) -> CGPoint?)? // Welt → Bildschirm, kommt von der 3D-Welt
     var popups: [Popup] = []
@@ -813,6 +815,7 @@ final class Game {
         enemyShots = []
         clouds = []
         brakeFlash = 0
+        cometKilledAt = -10
         orbitCharge = 0
         bonusTaken = []
         solarPool = 0
@@ -1797,10 +1800,16 @@ final class Game {
         let shipPartChance: Double = a.kind == .wreck ? 0.2 : (a.kind == .comet ? 0.25 : 0)
         if Double.random(in: 0...1) < shipPartChance { spawnTech(from: a.center, kind: .shipPart) }
         if a.kind == .comet {
-            burst(at: a.center, count: 70, hue: 195, speed: 380, life: 1.4)
+            // Der Komet soll unübersehbar zerplatzen: Eisbrocken, Lichtblitz, doppelte Druckwelle,
+            // Bildschirmblitz und Banner (Renderer), dazu ein kräftiger Ruck
+            shatters.append(a)
+            cometKilledAt = time
+            burst(at: a.center, count: 120, hue: 195, speed: 520, life: 1.6)
+            burst(at: a.center, count: 50, hue: 180, speed: 260, life: 2.2)
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
-            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0))
-            shake = max(shake, 0.4)
+            waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 1.4, hue: 185))
+            shake = max(shake, 0.6)
+            Haptics.launch(1)
         }
         if a.kind == .drone {
             burst(at: a.center, count: 36, hue: 355, speed: 300, life: 0.9)

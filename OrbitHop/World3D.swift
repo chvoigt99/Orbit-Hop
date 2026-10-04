@@ -1579,6 +1579,70 @@ final class World3D {
         return root
     }
 
+    /// Kometen-Zerstörung: greller Lichtblitz, Koma bläht sich auf, der Kern zerbricht in Eisbrocken,
+    /// die auseinanderfliegen, und der Schweif verweht, statt mitten im Bild abzureißen
+    private func shatterComet(_ a: Asteroid) {
+        let r = a.radius
+        if let n = asteroidNodes.removeValue(forKey: a.uid) {
+            n.particleSystems?.forEach { $0.birthRate = 0 }
+            for c in n.childNodes {
+                c.runAction(.sequence([.group([.scale(by: 2.5, duration: 0.25), .fadeOut(duration: 0.25)]), .hide()]))
+            }
+            n.runAction(.sequence([.wait(duration: 3.5), .removeFromParentNode()]))
+        }
+        let root = SCNNode()
+        root.position = v3(a.center, 0)
+        scene.rootNode.addChildNode(root)
+
+        // Lichtblitz
+        let flash = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
+        let fm = spriteMat(WorldTextures.soft)
+        fm.multiply.contents = UIColor(red: 0.85, green: 0.97, blue: 1, alpha: 1)
+        flash.geometry?.materials = [fm]
+        flash.constraints = [SCNBillboardConstraint()]
+        flash.renderingOrder = 10
+        flash.runAction(.sequence([
+            .group([.scale(to: 4, duration: 0.35), .sequence([.wait(duration: 0.1), .fadeOut(duration: 0.45)])]),
+            .hide()
+        ]))
+        root.addChildNode(flash)
+
+        // Eisbrocken
+        let ice = SCNMaterial()
+        ice.lightingModel = .physicallyBased
+        ice.diffuse.contents = UIColor(red: 0.8, green: 0.9, blue: 1, alpha: 1)
+        ice.roughness.contents = 0.3
+        ice.metalness.contents = 0.1
+        ice.emission.contents = UIColor(red: 0.2, green: 0.5, blue: 0.7, alpha: 1)
+        let meshes: [SCNGeometry] = (0..<3).map { k in
+            let g = RockMesh.variants[(abs(a.uid) + k) % RockMesh.variants.count].copy() as! SCNGeometry
+            g.materials = [ice]
+            return g
+        }
+        let count = 10
+        for k in 0..<count {
+            let frag = SCNNode(geometry: meshes[k % meshes.count])
+            let s = Float(r * CGFloat.random(in: 0.16...0.36))
+            frag.scale = SCNVector3(s, s, s)
+            let ang = CGFloat(k) / CGFloat(count) * .pi * 2 + CGFloat.random(in: -0.3...0.3)
+            let dist = r * CGFloat.random(in: 4...8)
+            // Brocken behalten etwas vom Schwung des Kometen
+            let dx = cos(ang) * dist + a.vel.dx * 1.2
+            let dz = sin(ang) * dist + a.vel.dy * 1.2
+            let dy = r * CGFloat.random(in: -1.5...1.5)
+            let move = SCNAction.move(by: SCNVector3(Float(dx), Float(dy), Float(dz)), duration: 1.9)
+            move.timingMode = .easeOut
+            let axis = SCNVector3(Float.random(in: -1...1), 1, Float.random(in: -1...1))
+            frag.runAction(.group([
+                move,
+                .rotate(by: CGFloat.random(in: 4...9), around: axis, duration: 1.9),
+                .sequence([.wait(duration: 1.1), .fadeOut(duration: 0.8)])
+            ]))
+            root.addChildNode(frag)
+        }
+        root.runAction(.sequence([.wait(duration: 2.1), .removeFromParentNode()]))
+    }
+
     private func makeAsteroid(_ a: Asteroid) -> SCNNode {
         let geo = RockMesh.variants[abs(a.uid) % RockMesh.variants.count]
         let n = SCNNode(geometry: geo)
@@ -2054,6 +2118,10 @@ final class World3D {
     }
 
     private func syncObjects(_ game: Game, px: CGFloat) {
+        // zerstörte Kometen zerplatzen, statt einfach zu verschwinden
+        for a in game.shatters { shatterComet(a) }
+        game.shatters.removeAll()
+
         // Asteroiden
         var alive = Set<Int>()
         for a in game.asteroids {

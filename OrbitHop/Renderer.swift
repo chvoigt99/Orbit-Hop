@@ -14,6 +14,32 @@ extension Game {
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
         if !stationOpen { drawPopups(context, size) }
+        drawCometBanner(context, size)
+    }
+
+    /// Komet zerstört: kurzer eisblauer Bildschirmblitz und ein großes Banner in der Bildmitte,
+    /// damit man es auch merkt, wenn der Komet weit voraus oder am Bildrand zerplatzt
+    private func drawCometBanner(_ c: GraphicsContext, _ size: CGSize) {
+        let t = time - cometKilledAt
+        guard t >= 0, t < 2.2, phase != .over else { return }
+        let ice = Color(red: 0.6, green: 0.9, blue: 1)
+        if t < 0.35 {
+            let a = Double(0.35 * (1 - t / 0.35))
+            c.fill(Path(CGRect(origin: .zero, size: size)), with: .color(ice.opacity(a)))
+        }
+        let alpha = Double(min(1, min(t / 0.12, (2.2 - t) / 0.5)))
+        // springt groß herein und setzt sich dann
+        let pop = 1 + 0.35 * exp(-t * 9)
+        let text = c.resolve(Text("KOMET ZERSTÖRT")
+            .font(.system(size: 26 * pop, weight: .heavy, design: .monospaced))
+            .tracking(3)
+            .foregroundColor(ice.opacity(alpha)))
+        let ts = text.measure(in: size)
+        let center = CGPoint(x: size.width / 2, y: size.height * 0.36)
+        let plate = CGRect(x: center.x - ts.width / 2, y: center.y - ts.height / 2,
+                           width: ts.width, height: ts.height).insetBy(dx: -16, dy: -8)
+        drawPlate(c, plate, accent: ice, alpha: alpha, cut: 8)
+        c.draw(text, at: center)
     }
 
     /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild
@@ -945,8 +971,9 @@ extension Game {
             let ts = text.measure(in: size)
             var plate = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
                                width: ts.width, height: ts.height).insetBy(dx: -9, dy: -4)
-            // nicht über den Bildrand hinaus
+            // nicht über den Bildrand hinaus, auch nicht oben oder unten (Ziele weit voraus liegen oft außerhalb)
             plate.origin.x = min(max(plate.minX, 8), size.width - 8 - plate.width)
+            plate.origin.y = min(max(plate.minY, insets.top + 150), size.height - insets.bottom - 120 - plate.height)
             var moved = true
             while moved {
                 moved = false
