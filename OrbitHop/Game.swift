@@ -2402,6 +2402,25 @@ final class Game {
         let orbitFit = usable / ((fp.orbitRadius + 80) * 2)
         targetScale += (max(targetScale, orbitFit) - targetScale) * f
 
+        // Im Flug muss das Schiff immer im Bild bleiben. Die Orbit-Ansicht des Ziels übernimmt schon
+        // 700 vor der Bahn, zeigt aber nur 360 um sie herum: bei kurzen Strecken oder einem Flug
+        // seitlich am Ziel vorbei lag das Schiff dann außerhalb. Dann wird der Ausschnitt erweitert.
+        if phase == .flying && !stationOpen {
+            let view = CGRect(x: targetCenter.x - size.width / targetScale / 2,
+                              y: targetCenter.y - size.height * 0.62 / targetScale / 2,
+                              width: size.width / targetScale, height: size.height * 0.62 / targetScale)
+            // mit Vorhalt, weil die Kamera weich (also etwas verzögert) folgt
+            let ahead = CGPoint(x: pos.x + vel.dx * 0.9, y: pos.y + vel.dy * 0.9)
+            let ship = CGRect(x: pos.x - 140, y: pos.y - 140, width: 280, height: 280)
+                .union(CGRect(x: ahead.x - 140, y: ahead.y - 140, width: 280, height: 280))
+            if !view.contains(ship) {
+                let r = view.union(ship)
+                targetCenter = CGPoint(x: r.midX, y: r.midY)
+                targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
+            }
+        }
+        targetScale = min(max(targetScale, 0.04), 0.8)
+
         // Federn statt fester Lerp-Rate: bei jedem Zielwechsel (neuer Planet, Start) läuft die Kamera
         // weich an, statt mit voller Geschwindigkeit loszuspringen.
         // gesperrt: zügig ansteuern, das passiert unsichtbar hinter der Anflug-Einstellung
