@@ -1876,11 +1876,11 @@ final class Game {
 
         switch weapon {
         case .railgun:
-            let to = CGPoint(x: muzzle.x + fwd.dx * 2400, y: muzzle.y + fwd.dy * 2400)
+            let to = CGPoint(x: muzzle.x + fwd.dx * Game.railRange, y: muzzle.y + fwd.dy * Game.railRange)
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
-                if distanceToSegment(a.center, muzzle, to) < a.radius + 22 { damageObstacle(i, 3, blast: false) }
+                if distanceToSegment(a.center, muzzle, to) < a.radius + Game.railWidth { damageObstacle(i, 3, blast: false) }
             }
             shake = max(shake, 0.2)
         case .cannon:
@@ -1903,8 +1903,13 @@ final class Game {
         }
     }
 
-    /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit)
+    /// Railgun: Reichweite und halbe Breite des Strahls (gleicht die lange Ladezeit aus)
+    static let railRange: CGFloat = 3600
+    static let railWidth: CGFloat = 60
+
+    /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
     private func aimTarget() -> Asteroid? {
+        let reach: CGFloat = weapon == .railgun ? 1.8 : 1
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?
         var bestScore = CGFloat.infinity
@@ -1912,7 +1917,7 @@ final class Game {
             let dx = a.center.x - pos.x, dy = a.center.y - pos.y
             let d = hypot(dx, dy)
             // Kometen liegen ohnehin in der Flugbahn und werden früher erfasst
-            let range: CGFloat = a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)
+            let range: CGFloat = (a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)) * reach
             guard d > 1, d < range + a.radius else { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
             // Drohnen greifen von der Seite an: weiter Erfassungswinkel

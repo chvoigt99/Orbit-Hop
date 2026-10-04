@@ -1723,6 +1723,10 @@ final class World3D {
         let root = SCNNode()
         root.position = v3(CGPoint(x: (b.from.x + b.to.x) / 2, y: (b.from.y + b.to.y) / 2))
         root.eulerAngles.y = Float(-atan2(dy, dx))
+        // breiter, schwacher Saum in Weltgröße: zeigt, wie breit der Strahl trifft
+        let band = SCNBox(width: len, height: 2, length: Game.railWidth * 2, chamferRadius: 0)
+        band.materials = [glowMat(col.withAlphaComponent(0.12))]
+        root.addChildNode(SCNNode(geometry: band))
         for (w, c) in [(6 * px, col.withAlphaComponent(0.45)), (2.2 * px, col), (0.9 * px, UIColor.white)] {
             let box = SCNBox(width: len, height: w, length: w, chamferRadius: 0)
             box.materials = [glowMat(c)]
