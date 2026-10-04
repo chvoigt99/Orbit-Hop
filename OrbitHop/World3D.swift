@@ -1549,10 +1549,10 @@ final class World3D {
         flash.geometry?.materials = [fm]
         flash.constraints = [SCNBillboardConstraint()]
         flash.renderingOrder = 10
-        flash.runAction(.sequence([
-            .group([.scale(to: 4, duration: 0.35), .sequence([.wait(duration: 0.1), .fadeOut(duration: 0.45)])]),
-            .hide()
-        ]))
+        // kurzer Blitz, der mit dem Kometen zusammenschrumpft statt sich auszubreiten
+        let fshrink = SCNAction.scale(to: 0, duration: 0.3)
+        fshrink.timingMode = .easeIn
+        flash.runAction(.sequence([fshrink, .hide()]))
         root.addChildNode(flash)
 
         // Eisbrocken
