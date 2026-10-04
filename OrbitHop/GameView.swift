@@ -161,8 +161,9 @@ struct GameView: View {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
+        if game.dockArriving { return ("ANFLUG · STATION \(game.currentStationName ?? "")", signal) }
+        if game.atStation { return ("STATION \(game.currentStationName ?? "") · ANGEDOCKT", signal) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
-        if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
         if game.inHorizon { return ("EREIGNISHORIZONT · PANZERUNG REISST", warn) }
         if let c = game.horizonCountdown {
             return ("SCHWARZES LOCH · BAHN ZERFÄLLT · \(Int(c.rounded(.up))) S", Color(red: 1, green: 0.6, blue: 0.3))
@@ -522,8 +523,8 @@ struct GameView: View {
         return VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 12) {
-                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
-                Text("RAUMSTATION")
+                label("RAUMSTATION · PLANET \(game.score) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
+                Text(game.currentStationName ?? "RAUMSTATION")
                     .font(.system(size: 30, weight: .heavy, design: .monospaced))
                     .tracking(5)
                     .foregroundStyle(.white)
@@ -612,6 +613,44 @@ struct GameView: View {
     }
 
     /// Tagesflug ein- oder ausschalten, im Tagesflug zusätzlich die Bestenliste
+    /// Startpunkt: Hangar oder eine schon erreichte Raumstation, mit Pfeilen durchschalten
+    private var startRow: some View {
+        let k = min(game.profile.startStation, game.profile.stationsReached - 1)
+        let title = k < 0 ? "START: HANGAR" : "START: \(Game.stationName(k))"
+        let detail = k < 0 ? "PLANET 0 · \(game.profile.stationsReached) STATIONEN FREI"
+                           : "STATION \(k + 1) · AB PLANET \(Game.stationPlanet(k))"
+        return HStack(spacing: 8) {
+            arrowButton("chevron.left", enabled: k > -1) { game.setStartStation(k - 1) }
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .tracking(2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                label(detail).foregroundStyle(dim)
+            }
+            .foregroundStyle(signal)
+            .frame(maxWidth: 220)
+            arrowButton("chevron.right", enabled: k < game.profile.stationsReached - 1) { game.setStartStation(k + 1) }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+        .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.6), lineWidth: 1.2))
+    }
+
+    private func arrowButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(enabled ? signal : dim.opacity(0.4))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
     private var dailyRow: some View {
         HStack(spacing: 10) {
             Button {
@@ -686,6 +725,7 @@ struct GameView: View {
                 missionsButton
                 if SoundFX.available { soundButton }
             }
+            if !game.dailyMode && game.profile.stationsReached > 0 { startRow }
             dailyRow
         }
         .padding(.horizontal, 16)

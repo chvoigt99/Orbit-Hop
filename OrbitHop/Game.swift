@@ -159,6 +159,7 @@ struct Planet {
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
+    var stationNo = -1         // laufende Nummer der Station (Name und Modell), sonst -1
     var kind: PlanetKind = .normal
 
     /// Schwarze Löcher ziehen viel stärker, als ihre Größe vermuten lässt
@@ -522,6 +523,11 @@ final class Game {
     }
     /// Höhe über der Plattform (nur 3D): sanft hoch, nach dem Abflug wieder auf Flughöhe
     var liftHeight: CGFloat {
+        if departAt == nil, phase == .docked, let t0 = arriveAt {
+            // Anflug: leicht über die Plattform heben und weich aufsetzen
+            let u = min(1, max(0, (time - t0) / arriveDuration))
+            return 6 * sin(u * .pi)
+        }
         guard let t0 = departAt else { return 0 }
         let t = time - t0
         func ease(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * (3 - 2 * c) }
@@ -529,6 +535,18 @@ final class Game {
         let down = ease((t - Game.liftTime - Game.rollTime) / 1.0)
         let hover = 0.5 * sin(t * 3.2) * up * (1 - ease((t - Game.liftTime) / 0.6))
         return (7 * up + hover) * (1 - down)
+    }
+    /// Anflug auf eine Raumstation: Startzeit, Dauer und Bogen um die Station bis zur Plattform
+    private(set) var arriveAt: CGFloat?
+    private var arriveDuration: CGFloat = 2.5
+    private var arriveFromAngle: CGFloat = 0
+    private var arriveFromDist: CGFloat = 0
+    private var arriveSweep: CGFloat = 0
+    private var arriveHeading: CGFloat = 0
+    /// Das Schiff fliegt gerade die Andockplattform einer Station an
+    var dockArriving: Bool {
+        guard phase == .docked, departAt == nil, let t0 = arriveAt else { return false }
+        return time - t0 < arriveDuration
     }
     /// Hangar-Nahaufnahme oder der Übergang danach: Zielanzeigen der Draufsicht passen dann nicht ins Bild
     var inHangarView: Bool { phase == .docked || (dockLaunch && time - lastLaunchTime < 1.8) }
@@ -715,16 +733,55 @@ final class Game {
     static let droneTest = ProcessInfo.processInfo.arguments.contains("-droneTest")
 
     // MARK: Raumstation
-    /// Index des nächsten Planeten, der eine Raumstation wird
-    private var nextStation = 0
+    /// Namen der Raumstationen; ab der elften wiederholen sie sich mit Zählung (AURORA II …).
+    /// Name und Modell hängen an der Nummer, damit man eine Station wiedererkennt und dort neu starten kann.
+    static let stationNames = ["AURORA", "VEGA", "HELIOS", "KEPLER", "BOREAS",
+                               "LYRA", "ZENIT", "POLARIS", "ANDROMEDA", "ELYSIUM"]
+    static let stationModels = 10
+
+    static func stationName(_ k: Int) -> String {
+        let round = max(0, k) / stationNames.count
+        let roman = ["", " II", " III", " IV", " V", " VI", " VII", " VIII", " IX", " X"]
+        return stationNames[max(0, k) % stationNames.count] + (round < roman.count ? roman[round] : " \(round + 1)")
+    }
+
+    /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
+    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40.
+    static func stationPlanet(_ k: Int) -> Int {
+        var n = stationTest ? 2 : 32
+        for j in 0..<max(0, k) {
+            let lvl = min(1, CGFloat(n) / 40)
+            n += Int(30 + 12 * lvl) + (j * 5) % 9
+        }
+        return n
+    }
+
+    /// Nummer der nächsten Station, die auf der Strecke entsteht
+    private var nextStationNo = 0
+    /// Planetennummer des ersten Planeten dieses Flugs: 0 im Hangar, sonst die der Startstation
+    private(set) var planetBase = 0
+    /// Name der Station, an der das Schiff gerade liegt
+    var currentStationName: String? {
+        let p = planets[currentIndex]
+        return p.isStation ? Game.stationName(p.stationNo) : nil
+    }
     /// Menü der Raumstation ist offen, die Simulation ruht
     var stationOpen = false
     /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
     private var stationMenuAt: CGFloat?
-    var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
+    var atStation: Bool {
+        planets[currentIndex].isStation && (phase == .orbiting || (phase == .docked && departAt == nil))
+    }
 
-    /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
-    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8, using: &Dice.rng) }
+    /// Andockplattform einer Station: auf der Bahn an der Stelle, von der aus die Tangente genau zum
+    /// nächsten Planeten zeigt (wie im Hangar). Stationen werden immer gegen den Uhrzeigersinn angeflogen.
+    func stationDock(_ i: Int) -> (pos: CGPoint, heading: CGFloat, angle: CGFloat)? {
+        guard planets.indices.contains(i), planets.indices.contains(i + 1) else { return nil }
+        let c = planets[i].center, t = planets[i + 1].center
+        let dir = atan2(t.y - c.y, t.x - c.x)
+        let angle = dir - CGFloat.pi / 2
+        return (point(from: c, angle: angle, distance: planets[i].orbitRadius), dir, angle)
+    }
 
     /// Panzerung: Kollisionen zehren daran, bei null explodiert das Schiff. Nur an Stationen reparierbar.
     static let maxHull: CGFloat = 100
@@ -748,8 +805,54 @@ final class Game {
         Haptics.bonus()
     }
 
+    /// Weiterfliegen: Menü zu, das Schiff hebt von der Plattform ab wie beim Spielstart
     func leaveStation() {
         stationOpen = false
+        if phase == .docked { depart() }
+    }
+
+    /// Anflug auf die Station: das Schiff zieht in einem Bogen um die Station zur Andockplattform,
+    /// bremst dabei ab und setzt auf. Danach öffnet sich das Stationsmenü.
+    private func beginDocking(_ index: Int) {
+        guard let d = stationDock(index) else { return }
+        let c = planets[index].center
+        arriveFromAngle = atan2(pos.y - c.y, pos.x - c.x)
+        arriveFromDist = hypot(pos.x - c.x, pos.y - c.y)
+        arriveSweep = mod(d.angle - arriveFromAngle, CGFloat.pi * 2)
+        arriveHeading = heading
+        let arc = arriveSweep * planets[index].orbitRadius
+        arriveDuration = min(4.2, 1.8 + arc / 380)
+        arriveAt = time
+        orbitDir = 1
+        orbitAngle = d.angle
+        orbitDist = planets[index].orbitRadius
+        orbitOmega = 0
+        orbitVr = 0
+        dockPos = d.pos
+        dockHeading = d.heading
+        departAt = nil
+        dockLaunch = false
+        vel = .zero
+        phase = .docked
+        stationMenuAt = time + arriveDuration + 0.3
+    }
+
+    /// Bogen zur Plattform: zügig herein, weich abbremsen; der Kurs dreht in der ersten halben Sekunde ein
+    private func updateDocking() {
+        guard let t0 = arriveAt else { return }
+        let u = min(1, max(0, (time - t0) / arriveDuration))
+        let e = 1 - (1 - u) * (1 - u) * (1 - u)
+        let s = u * u * (3 - 2 * u)
+        let c = planets[currentIndex].center
+        let a = arriveFromAngle + arriveSweep * e
+        pos = point(from: c, angle: a, distance: arriveFromDist + (orbitDist - arriveFromDist) * s)
+        let turn = min(1, (time - t0) / 0.5)
+        let k = turn * turn * (3 - 2 * turn)
+        heading = arriveHeading + wrap(a + CGFloat.pi / 2 - arriveHeading) * k
+        if u >= 1 {
+            pos = dockPos
+            heading = dockHeading
+        }
     }
     var botThreshold: CGFloat = -1
     var botSkip = false
@@ -830,17 +933,28 @@ final class Game {
         boostTime = 0
         stationOpen = false
         stationMenuAt = nil
-        // ZUM TESTEN: erste Station schon als zweites Ziel; im fertigen Spiel Int.random(in: 30...36)
-        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36, using: &Dice.rng)
-        planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
+        arriveAt = nil
+        // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
+        let startNo = dailyMode ? -1 : min(profile.startStation, profile.stationsReached - 1)
+        planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
+        nextStationNo = startNo + 1
+        if startNo >= 0 {
+            var first = Planet.make(center: .zero, radius: 160, spin: 0.85, hue: 165, allowRing: false, energyScale: 0)
+            first.isStation = true
+            first.stationNo = startNo
+            planets = [first]
+        } else {
+            planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
+        }
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
         currentIndex = 0
         originIndex = 0
-        score = 0
+        score = planetBase
         energy = maxEnergy
         orbitAngle = CGFloat.random(in: 0...(CGFloat.pi * 2))
-        orbitDir = Bool.random(using: &Dice.rng) ? 1 : -1
+        // an einer Station liegt die Plattform immer auf derselben Seite (siehe stationDock)
+        orbitDir = startNo >= 0 ? 1 : (Bool.random(using: &Dice.rng) ? 1 : -1)
         orbitDist = planets[0].orbitRadius
         orbitVr = 0
         orbitOmega = orbitDir * planets[0].spin
@@ -881,18 +995,19 @@ final class Game {
     func addPlanet() {
         let prev = planets[planets.count - 1]
         // je weiter hinten, desto kleiner, schneller umkreist und weiter entfernt
-        let lvl = min(1, CGFloat(planets.count) / 40)
-        let station = planets.count == nextStation
-        if station { nextStation += stationGap(lvl) }
+        // Nummer des neuen Planeten auf der ganzen Strecke (beim Start an einer Station nicht bei 0)
+        let n = planetBase + planets.count
+        let lvl = min(1, CGFloat(n) / 40)
+        let station = n == Game.stationPlanet(nextStationNo)
         // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
         var kind = PlanetKind.normal
-        if !station && planets.count >= 6 && prev.kind == .normal && !prev.isStation && planets.count + 1 != nextStation {
+        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) {
             let roll = Double.random(in: 0...1, using: &Dice.rng)
             if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
             else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
         }
         if Game.planetTest && !station {
-            kind = planets.count == 2 ? .blackHole : (planets.count == 4 ? .binary : .normal)
+            kind = n == 2 ? .blackHole : (n == 4 ? .binary : .normal)
         }
         // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
         let r: CGFloat
@@ -904,10 +1019,10 @@ final class Game {
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl), using: &Dice.rng)
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
-        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        let hasComet = !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
+        let hasField = !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
         // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet oder vor einer Station)
-        let hasDrones = !station && !hasComet && planets.count >= (Game.droneTest ? 2 : 8)
+        let hasDrones = !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
             && Double.random(in: 0...1, using: &Dice.rng) < (Game.droneTest ? 1 : Double(0.12 + 0.18 * lvl))
         let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
             + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
@@ -931,6 +1046,10 @@ final class Game {
         planets[planets.count - 1].hardRoute = hasField || hasComet || hasDrones
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
+        if station {
+            planets[planets.count - 1].stationNo = nextStationNo
+            nextStationNo += 1
+        }
 
         guard planets.count >= 3 else { return }
         let gapIndex = planets.count - 1
@@ -1207,6 +1326,12 @@ final class Game {
     /// Ergebnis dieses Laufs ist schon gespeichert (Spielende, Abbruch und Neustart melden nur einmal)
     private var runRecorded = false
 
+    /// Startpunkt wählen: -1 = Hangar, sonst eine erreichte Station; baut die Welt neu auf
+    func setStartStation(_ k: Int) {
+        profile.setStartStation(k)
+        reset()
+    }
+
     /// Zwischen freiem Spiel und Tagesherausforderung wechseln; baut die Welt neu auf
     func setDaily(_ on: Bool) {
         finishRun()
@@ -1263,7 +1388,8 @@ final class Game {
         }
         switch phase {
         case .docked:
-            depart()
+            // beim Anflug auf eine Station und im Stationsmenü startet ein Tipp nichts
+            if arriveAt == nil { depart() }
         case .over:
             if time - overAt > 0.6 { reset() }
         case .flying:
@@ -1352,6 +1478,7 @@ final class Game {
     private func depart() {
         guard departAt == nil else { return }
         departAt = time
+        arriveAt = nil
         Haptics.capture()
         SoundFX.shared.play(.release)
     }
@@ -1382,6 +1509,7 @@ final class Game {
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
         uiTime += dt
+        if stationOpen && (Game.bot || Game.autopilot) { leaveStation() }
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
             // im Stationsmenü fährt die Kamera noch auf die Station über dem Menü
@@ -1519,7 +1647,7 @@ final class Game {
 
         switch phase {
         case .docked:
-            updateDeparture()
+            if departAt == nil { updateDocking() } else { updateDeparture() }
         case .orbiting:
             let p = planets[currentIndex]
             // weiches Einschwingen: Tempo und Radius gleiten auf die Bahn
@@ -2042,10 +2170,11 @@ final class Game {
         SoundFX.shared.play(.capture, variant: index)
 
         // zurückgefallen statt weiter: Combo ist weg
-        if index <= score && comboFlight { breakCombo() }
-        if index > score {
-            score = index
-            if index % 5 == 0 {
+        let number = planetBase + index
+        if number <= score && comboFlight { breakCombo() }
+        if number > score {
+            score = number
+            if number % 5 == 0 {
                 spawnTech(from: planets[index].center)
                 techFocus = .infinity    // bleibt nah dran bis zum nächsten Start
             }
@@ -2069,10 +2198,13 @@ final class Game {
                 let gain = pl.energyGain * comboMultiplier
                 addEnergy(gain, from: pl.center)
             }
-            // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
-            if pl.isStation { stationMenuAt = time + 2.0 }
             track(.planet(index))
-            if pl.isStation { track(.station) }
+            if pl.isStation {
+                track(.station)
+                // ab jetzt kann man hier neu starten
+                profile.reachStation(pl.stationNo)
+                popups.append(Popup(pos: pos, text: "STATION \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
+            }
             switch pl.kind {
             case .normal: break
             case .blackHole:
@@ -2088,6 +2220,8 @@ final class Game {
         items.removeAll { $0.gap < index - 2 }
         asteroids.removeAll { $0.gap < index - 1 || ($0.kind == .comet && $0.gap <= index) }
         clouds.removeAll { $0.gap < index - 2 }
+        // Raumstation: nicht in den Orbit, sondern die Andockplattform anfliegen und landen
+        if pl.isStation { beginDocking(index) }
     }
 
     private func updateFx(_ dt: CGFloat) {

@@ -136,7 +136,8 @@ struct ShipModel: Identifiable {
 // MARK: - Schiff mit Upgrade-Stufe
 
 struct Ship {
-    static let maxLevel = 5
+    /// Zehn Ausbaustufen; jede kostet 25 % mehr als die vorige (Christian, 2026-10-04)
+    static let maxLevel = 10
 
     let model: ShipModel
     let level: Int
@@ -151,10 +152,14 @@ struct Ship {
     var maxEnergy: CGFloat { (model.energy * (1 + 0.08 * l)).rounded() }
     var armor: CGFloat { min(0.85, model.armor + 0.04 * l) }
     var drain: CGFloat { model.drain * (1 - 0.03 * l) }
-    var weaponCostFactor: CGFloat { 1 - 0.08 * l }
+    var weaponCostFactor: CGFloat { max(0.35, 1 - 0.07 * l) }
 
-    /// Tech-Teile für die nächste Stufe: Grundpreis je Klasse, jede Stufe 25 % teurer
-    var upgradeCost: Int { model.grade.upgradeBase * (4 + level) / 4 }
+    /// Tech-Teile für die nächste Stufe: Grundpreis je Klasse, jede Stufe 25 % teurer als die vorige,
+    /// auf 5 gerundet (Stufe 10 kostet gut das Siebenfache der ersten)
+    var upgradeCost: Int {
+        let raw = CGFloat(model.grade.upgradeBase) * pow(1.25, l)
+        return Int((raw / 5).rounded()) * 5
+    }
 
     static let starter = Ship(model: ShipModel.all[0], level: 0)
 }
@@ -168,6 +173,10 @@ final class Profile {
     var owned: Set<String>
     var levels: [String: Int]
     var selectedID: String
+    /// Anzahl erreichter Raumstationen; an jeder davon kann ein neuer Flug starten
+    var stationsReached: Int
+    /// gewählter Startpunkt: -1 = Hangar, sonst die Nummer einer erreichten Station
+    var startStation: Int
 
     private let defaults = UserDefaults.standard
 
@@ -177,6 +186,8 @@ final class Profile {
         owned = Set(defaults.stringArray(forKey: "orbitHopFleet") ?? [])
         levels = (defaults.dictionary(forKey: "orbitHopLevels") as? [String: Int]) ?? [:]
         selectedID = defaults.string(forKey: "orbitHopSelected") ?? Ship.starter.model.id
+        stationsReached = defaults.integer(forKey: "orbitHopStations")
+        startStation = (defaults.object(forKey: "orbitHopStartStation") as? Int) ?? -1
         owned.insert(Ship.starter.model.id)
         if !owned.contains(selectedID) { selectedID = Ship.starter.model.id }
     }
@@ -214,6 +225,17 @@ final class Profile {
         save()
     }
 
+    func reachStation(_ k: Int) {
+        guard k >= 0, k + 1 > stationsReached else { return }
+        stationsReached = k + 1
+        save()
+    }
+
+    func setStartStation(_ k: Int) {
+        startStation = min(max(-1, k), stationsReached - 1)
+        save()
+    }
+
     /// zieht Tech-Teile ab, wenn genug da sind
     func spendParts(_ n: Int) -> Bool {
         guard parts >= n else { return false }
@@ -238,6 +260,8 @@ final class Profile {
         defaults.set(Array(owned), forKey: "orbitHopFleet")
         defaults.set(levels, forKey: "orbitHopLevels")
         defaults.set(selectedID, forKey: "orbitHopSelected")
+        defaults.set(stationsReached, forKey: "orbitHopStations")
+        defaults.set(startStation, forKey: "orbitHopStartStation")
     }
 }
 
@@ -341,7 +365,7 @@ enum ShipArt {
 
         // Upgrade-Marken
         for k in 0..<ship.level {
-            c.fill(Path(CGRect(x: (-1.9 + CGFloat(k) * 0.3) * u, y: -0.1 * u, width: 0.18 * u, height: 0.2 * u)),
+            c.fill(Path(CGRect(x: (-1.9 + CGFloat(k) * 0.17) * u, y: -0.1 * u, width: 0.11 * u, height: 0.2 * u)),
                    with: .color(Color(red: 1, green: 0.85, blue: 0.42)))
         }
     }
@@ -573,11 +597,11 @@ struct ShipShopView: View {
     private func upgradeRow(_ m: ShipModel, _ ship: Ship) -> some View {
         HStack(spacing: 8) {
             label("UPGRADE").foregroundStyle(dim).frame(width: 66, alignment: .leading)
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 ForEach(0..<Ship.maxLevel, id: \.self) { i in
                     Rectangle()
                         .fill(i < ship.level ? gold : Color.white.opacity(0.1))
-                        .frame(width: 14, height: 8)
+                        .frame(width: 8, height: 8)
                 }
             }
             Spacer()
