@@ -1529,11 +1529,14 @@ final class World3D {
     private func shatterComet(_ a: Asteroid) {
         let r = a.radius
         if let n = asteroidNodes.removeValue(forKey: a.uid) {
-            n.particleSystems?.forEach { $0.birthRate = 0 }
+            // Schweif sofort weg, Kern und Leuchthülle schrumpfen in einem Zug auf nichts zusammen
+            n.removeAllParticleSystems()
             for c in n.childNodes {
-                c.runAction(.sequence([.group([.scale(by: 2.5, duration: 0.25), .fadeOut(duration: 0.25)]), .hide()]))
+                let shrink = SCNAction.scale(to: 0, duration: 0.3)
+                shrink.timingMode = .easeIn
+                c.runAction(.sequence([shrink, .hide()]))
             }
-            n.runAction(.sequence([.wait(duration: 3.5), .removeFromParentNode()]))
+            n.runAction(.sequence([.wait(duration: 0.35), .removeFromParentNode()]))
         }
         let root = SCNNode()
         root.position = v3(a.center, 0)
