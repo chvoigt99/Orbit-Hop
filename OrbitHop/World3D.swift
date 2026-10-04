@@ -934,10 +934,9 @@ final class World3D {
         glow.constraints = [SCNBillboardConstraint()]
         root.addChildNode(glow)
 
-        // Akkretionsscheibe: deutlich gekippt, damit sie aus der Draufsicht wie aus der Nahaufnahme
-        // als flache Scheibe (Ellipse) zu lesen ist und nicht als runder Ball; dreht sich innen sichtbar schnell
+        // Akkretionsscheibe: liegt flach in der Bahnebene, genau wie die Orbit- und Bonusringe, und wirkt
+        // deshalb aus jeder Kamera so elliptisch wie diese; dreht sich innen sichtbar schnell
         let tilt = SCNNode()
-        tilt.eulerAngles = SCNVector3(0.95 + Float(p.tilt) * 0.2, 0, 0.35 + Float(p.tilt) * 0.2)
         root.addChildNode(tilt)
         let diskSize = p.outerRadius * 2
         let disk = SCNNode(geometry: SCNPlane(width: diskSize, height: diskSize))
