@@ -921,16 +921,17 @@ final class World3D {
         root.addChildNode(halo)
 
         // weiter, schwacher Schein
-        let glow = SCNNode(geometry: SCNPlane(width: r * 6, height: r * 6))
+        let glow = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = uic(p.hue, 0.9, 0.5, 0.35)
+        gm.multiply.contents = uic(p.hue, 0.9, 0.5, 0.2)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         root.addChildNode(glow)
 
-        // Akkretionsscheibe: leicht gekippt, dreht sich innen sichtbar schnell
+        // Akkretionsscheibe: deutlich gekippt, damit sie aus der Draufsicht wie aus der Nahaufnahme
+        // als flache Scheibe (Ellipse) zu lesen ist und nicht als runder Ball; dreht sich innen sichtbar schnell
         let tilt = SCNNode()
-        tilt.eulerAngles = SCNVector3(Float(p.tilt) * 0.5, 0, Float(p.tilt) * 0.35)
+        tilt.eulerAngles = SCNVector3(0.95 + Float(p.tilt) * 0.2, 0, 0.35 + Float(p.tilt) * 0.2)
         root.addChildNode(tilt)
         let diskSize = p.outerRadius * 2
         let disk = SCNNode(geometry: SCNPlane(width: diskSize, height: diskSize))
@@ -941,14 +942,8 @@ final class World3D {
         spinner.addChildNode(disk)
         spinner.runAction(.repeatForever(.rotateBy(x: 0, y: -.pi * 2, z: 0, duration: 7)))
         tilt.addChildNode(spinner)
-        // Lichtablenkung: die Rückseite der Scheibe erscheint als Bogen über dem Kern
-        let lens = SCNNode(geometry: SCNPlane(width: diskSize * 0.62, height: diskSize * 0.62))
-        let lm = spriteMat(WorldTextures.accretionDisk)
-        lm.multiply.contents = UIColor(white: 0.55, alpha: 1)
-        lens.geometry?.materials = [lm]
-        lens.constraints = [SCNBillboardConstraint()]
-        lens.renderingOrder = 4
-        root.addChildNode(lens)
+        // (Früher lag hier ein zur Kamera gedrehtes rundes Abbild der Scheibe als Lichtablenkung.
+        // Es ließ das Ganze wie eine leuchtende Kugel wirken und ist deshalb entfallen.)
         return root
     }
 
