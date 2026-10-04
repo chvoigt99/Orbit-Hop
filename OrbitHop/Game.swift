@@ -785,6 +785,14 @@ final class Game {
     var stationOpen = false
     /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
     private var stationMenuAt: CGFloat?
+    /// Sichtbarkeit der HUD-Anzeigen: vor dem Start aus, beim Abheben aus dem Hangar weich einblenden
+    var hudAlpha: CGFloat {
+        guard started else { return 0 }
+        guard phase == .docked, arriveAt == nil, !planets[currentIndex].isStation else { return 1 }
+        guard let d = departAt else { return 0 }
+        return min(1, max(0, (time - d) / 0.6))
+    }
+
     var atStation: Bool {
         planets[currentIndex].isStation && (phase == .orbiting || (phase == .docked && departAt == nil))
     }

@@ -9,7 +9,10 @@ extension Game {
     private var panel: Color { Color(red: 0.02, green: 0.07, blue: 0.11) }
 
     /// Markierungen, die auf 3D-Objekten sitzen: laufen mit jedem Bild mit, sonst hinken sie hinterher
-    func drawTracked(_ context: GraphicsContext, size: CGSize) {
+    func drawTracked(_ base: GraphicsContext, size: CGSize) {
+        guard hudAlpha > 0 else { return }
+        var context = base
+        context.opacity = Double(hudAlpha)
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
@@ -44,7 +47,10 @@ extension Game {
 
     /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild
     /// auszuwerten, sprengte zusammen mit dem HUD das Zeitbudget des Hauptthreads.
-    func drawChrome(_ context: GraphicsContext, size: CGSize) {
+    func drawChrome(_ base: GraphicsContext, size: CGSize) {
+        guard hudAlpha > 0 else { return }
+        var context = base
+        context.opacity = Double(hudAlpha)
         drawScanBar(context, size)
         // in der Hindernispassage sitzen dort die Ausweichknöpfe
         if !stationOpen && !dodgeAvailable { drawRadar(context, size) }

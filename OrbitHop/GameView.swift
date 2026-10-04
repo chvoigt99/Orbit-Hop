@@ -73,13 +73,15 @@ struct GameView: View {
                             }
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
+                            // vor dem Start keine Anzeigen, sie blenden beim Abheben ein
                             hud
+                                .opacity(Double(game.hudAlpha))
                                 .allowsHitTesting(false)
                         }
                         if !game.started {
                             titleView
                         }
-                        if game.started && game.phase != .over && !game.paused && !game.stationOpen {
+                        if game.started && game.phase != .over && !game.paused && !game.stationOpen && game.hudAlpha > 0 {
                             pauseButton
                         }
                         if game.dodgeAvailable {
