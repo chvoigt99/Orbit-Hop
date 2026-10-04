@@ -2178,8 +2178,10 @@ final class World3D {
         if game.phase != .over { nozzleGlow = 1 }
         if abs(nozzleGlow - appliedNozzleGlow) > 0.01 || (nozzleGlow == 1 && appliedNozzleGlow != 1) {
             appliedNozzleGlow = nozzleGlow
-            let ember = UIColor(white: 0.12 + 0.88 * nozzleGlow, alpha: 1)
-            for m in nozzleMats { m.multiply.contents = ember }
+            // Farbe direkt setzen (multiply wirkt beim konstanten Glut-Material nicht zuverlässig): von Orange zu kalt-dunkel
+            let g = nozzleGlow
+            let ember = UIColor(red: 0.05 + 0.95 * g, green: 0.045 + 0.455 * g, blue: 0.04 + 0.08 * g, alpha: 1)
+            for m in nozzleMats { m.diffuse.contents = ember; m.emission.contents = ember }
             for h in nozzleHalos { h.opacity = nozzleGlow }
         }
         // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
