@@ -1796,7 +1796,10 @@ final class Game {
 
         // Kurs aus der Bewegung, außer beim Anflug auf eine Station: dort setzt updateDocking die Nase selbst
         // (früher überschrieb diese Zeile die Drehung, und am Ende sprang die Nase hart in die Startrichtung)
-        if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 && !(phase == .docked && departAt == nil) {
+        // Im Flug zählt die Fluggeschwindigkeit: der seitliche Versatz beim Ausweichen soll die Nase nicht schwenken
+        if phase == .flying && hypot(vel.dx, vel.dy) > 1 {
+            heading = atan2(vel.dy, vel.dx)
+        } else if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 && !(phase == .docked && departAt == nil) {
             heading = atan2(pos.y - before.y, pos.x - before.x)
         }
         trail.append(pos)

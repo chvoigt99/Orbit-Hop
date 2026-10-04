@@ -991,10 +991,10 @@ private struct DodgeButton: View {
             .font(.system(size: 22, weight: .heavy))
             .foregroundStyle(color)
             .frame(width: 64, height: 64)
-            .background(Chamfer(cut: 10).fill(fill.opacity(pressed ? 0.95 : 0.7)))
-            .overlay(Chamfer(cut: 10).stroke(color.opacity(pressed ? 1 : 0.6), lineWidth: pressed ? 2 : 1))
+            .background(Circle().fill(fill.opacity(pressed ? 0.95 : 0.7)))
+            .overlay(Circle().stroke(color.opacity(pressed ? 1 : 0.6), lineWidth: pressed ? 2 : 1))
             .scaleEffect(pressed ? 0.92 : 1)
-            .contentShape(Rectangle())
+            .contentShape(Circle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     guard !pressed else { return }
