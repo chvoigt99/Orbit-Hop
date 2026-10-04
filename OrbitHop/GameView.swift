@@ -723,6 +723,8 @@ struct GameView: View {
                         .font(.system(size: 13, weight: .heavy, design: .monospaced))
                         .tracking(2)
                     label(detail)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .foregroundStyle(dim.opacity(active ? 1 : 0.6))
                 }
             }
