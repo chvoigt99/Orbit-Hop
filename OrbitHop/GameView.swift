@@ -49,6 +49,9 @@ struct GameView: View {
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { game.tap() }
+                    // Railgun: einen Bogen wischen feuert einen Strahlenfächer über den gewischten Winkel
+                    .gesture(DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                        .onEnded { v in game.swipe(from: v.startLocation, to: v.location) })
                 }
 
                 Canvas { context, size in
