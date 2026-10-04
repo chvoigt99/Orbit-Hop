@@ -640,7 +640,7 @@ struct GameView: View {
     private var startRow: some View {
         let k = min(game.profile.startStation, game.profile.stationsReached - 1)
         let title = k < 0 ? "START: HANGAR" : "START: \(Game.stationName(k))"
-        let detail = k < 0 ? "PLANET 0 · \(game.profile.stationsReached) STATIONEN FREI"
+        let detail = k < 0 ? "PLANET 0 · \(game.profile.stationsReached) \(game.profile.stationsReached == 1 ? "STATION" : "STATIONEN") FREI"
                            : "STATION \(k + 1) · AB PLANET \(Game.stationPlanet(k))"
         return HStack(spacing: 8) {
             arrowButton("chevron.left", enabled: k > -1) { game.setStartStation(k - 1) }
