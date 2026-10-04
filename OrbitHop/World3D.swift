@@ -1646,11 +1646,11 @@ final class World3D {
             // Schweif sofort weg, Kern und Leuchthülle schrumpfen in einem Zug auf nichts zusammen
             n.removeAllParticleSystems()
             for c in n.childNodes {
-                let shrink = SCNAction.scale(to: 0, duration: 0.3)
+                let shrink = SCNAction.scale(to: 0, duration: 0.12)
                 shrink.timingMode = .easeIn
                 c.runAction(.sequence([shrink, .hide()]))
             }
-            n.runAction(.sequence([.wait(duration: 0.35), .removeFromParentNode()]))
+            n.runAction(.sequence([.wait(duration: 0.15), .removeFromParentNode()]))
         }
         let root = SCNNode()
         root.position = v3(a.center, 0)
@@ -1664,7 +1664,7 @@ final class World3D {
         flash.constraints = [SCNBillboardConstraint()]
         flash.renderingOrder = 10
         // kurzer Blitz, der mit dem Kometen zusammenschrumpft statt sich auszubreiten
-        let fshrink = SCNAction.scale(to: 0, duration: 0.3)
+        let fshrink = SCNAction.scale(to: 0, duration: 0.12)
         fshrink.timingMode = .easeIn
         flash.runAction(.sequence([fshrink, .hide()]))
         root.addChildNode(flash)
