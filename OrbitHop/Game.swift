@@ -623,6 +623,11 @@ final class Game {
     /// Ausweichen: Startzeit und Seite (-1 links, +1 rechts, aus Sicht des Piloten)
     private(set) var dodgeStart: CGFloat = -10
     private var dodgeSide: CGFloat = 0
+    /// Summe der Ausweich-Versätze: die Lenkhilfe zielt parallel versetzt, damit das Schiff nicht zur alten Linie zurückdriftet.
+    /// Erst nach der Hindernispassage baut sich der Versatz langsam ab.
+    private var dodgeOffset = CGVector.zero
+    /// Richtung des letzten Ausweichens (Einheitsvektor quer zur Flugrichtung, mit Seite)
+    private var dodgeDir = CGVector.zero
     var rescueCharges = 0                 // eingesammelte Nachbrenner
     var boostTime: CGFloat = 0            // Nachbrenner-Effekt läuft
     var weaponCooldown: CGFloat = 0
@@ -983,6 +988,7 @@ final class Game {
         wideConeLaunches = 0
         superBombs = 0
         dodgeStart = -10
+        dodgeOffset = .zero
         rescueCharges = 0
         boostTime = 0
         stationOpen = false
@@ -1537,6 +1543,7 @@ final class Game {
         let hd = orbitAngle + orbitDir * CGFloat.pi / 2
         vel = CGVector(dx: cos(hd) * speed, dy: sin(hd) * speed)
         originIndex = currentIndex
+        dodgeOffset = .zero
         flightTime = 0
         lastAccuracy = accuracy
         lastLaunchTime = time
@@ -1935,6 +1942,14 @@ final class Game {
         Haptics.launch(0.25)
     }
 
+    /// Die Verfolgerkamera zieht beim Ausweichen seitlich verzögert nach, damit man das Schiff zur Seite gehen sieht
+    var dodgeCameraLag: CGVector {
+        let u = (time - dodgeStart) / Game.dodgeTime
+        guard u >= 0 else { return .zero }
+        let lag: CGFloat = u < 1 ? 0.55 * (1 - cos(u * .pi)) / 2 : 0.55 * exp(-(time - dodgeStart - Game.dodgeTime) * 2.2)
+        return CGVector(dx: dodgeDir.dx * Game.dodgeDistance * lag, dy: dodgeDir.dy * Game.dodgeDistance * lag)
+    }
+
     /// Schräglage des Schiffs beim Ausweichen (-1 bis 1)
     var dodgeBank: CGFloat {
         let u = (time - dodgeStart) / Game.dodgeTime
@@ -2245,8 +2260,12 @@ final class Game {
             let tg = planets[originIndex + 1]
             let sp = hypot(vel.dx, vel.dy)
             var hd = atan2(vel.dy, vel.dx)
-            let tdx = tg.center.x - pos.x
-            let tdy = tg.center.y - pos.y
+            if !dodgeAvailable {
+                let k = max(0, 1 - h * 0.7)
+                dodgeOffset = CGVector(dx: dodgeOffset.dx * k, dy: dodgeOffset.dy * k)
+            }
+            let tdx = tg.center.x - (pos.x - dodgeOffset.dx)
+            let tdy = tg.center.y - (pos.y - dodgeOffset.dy)
             let dd = hypot(tdx, tdy)
             let phi = atan2(tdy, tdx)
             var aim = phi
@@ -2275,6 +2294,9 @@ final class Game {
             let side = Game.dodgeDistance * .pi / 2 * sin(du * .pi) / Game.dodgeTime * h * dodgeSide
             pos.x += -vel.dy / sp * side
             pos.y += vel.dx / sp * side
+            dodgeOffset.dx += -vel.dy / sp * side
+            dodgeOffset.dy += vel.dx / sp * side
+            dodgeDir = CGVector(dx: -vel.dy / sp * dodgeSide, dy: vel.dx / sp * dodgeSide)
         }
 
         for i in asteroids.indices.reversed() {

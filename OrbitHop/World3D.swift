@@ -2407,7 +2407,9 @@ final class World3D {
 
         // hinter und über dem Schiff
         let hd = chaseHeading.value
-        let ship = game.pos
+        // beim Ausweichen zieht die Kamera seitlich verzögert nach
+        let lag = game.dodgeCameraLag
+        let ship = CGPoint(x: game.pos.x - lag.dx, y: game.pos.y - lag.dy)
         let chasePos = SCNVector3(Float(ship.x - cos(hd) * 190), 95, Float(ship.y - sin(hd) * 190))
         let chaseLook = SCNVector3(Float(ship.x + cos(hd) * 260), 0, Float(ship.y + sin(hd) * 260))
 

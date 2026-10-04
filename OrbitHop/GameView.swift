@@ -209,7 +209,7 @@ struct GameView: View {
                 Color.clear.frame(height: 42)
             }
             Spacer()
-            if game.hintShown && game.started && game.phase != .docked {
+            if game.hintShown && game.started && game.phase != .docked && !game.dodgeAvailable {
                 hint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
