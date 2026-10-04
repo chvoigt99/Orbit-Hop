@@ -309,11 +309,11 @@ enum ItemKind: CaseIterable {
         }
     }
 
-    /// Gewichtete Zufallsauswahl, der Nachbrenner ist selten.
+    /// Gewichtete Zufallsauswahl, Superbombe und Nachbrenner sind selten.
     static func random() -> ItemKind {
         let r = Double.random(in: 0...1, using: &Dice.rng)
-        if r < 0.42 { return .energy }
-        if r < 0.64 { return .wideCone }
+        if r < 0.5 { return .energy }
+        if r < 0.76 { return .wideCone }
         if r < 0.86 { return .superBomb }
         return .rescue
     }
