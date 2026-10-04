@@ -739,7 +739,7 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", currentIndex + 1))")
+        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", planetBase + currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(amber))
         let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
