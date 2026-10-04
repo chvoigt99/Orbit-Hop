@@ -1841,7 +1841,8 @@ final class Game {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
-        // keine Texteinblendung beim Einsammeln: Lichtblitz, Ton und HUD-Anzeige reichen
+        // Einblendung in der Farbe des Items, damit man sieht, was man bekommen hat
+        popups.append(Popup(pos: pos, text: kind.title, color: hsl(kind.hue, 0.85, 0.68), age: 0))
         Haptics.capture()
         SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
