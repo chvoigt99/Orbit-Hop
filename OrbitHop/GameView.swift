@@ -674,50 +674,67 @@ struct GameView: View {
         .disabled(!enabled)
     }
 
+    /// Spielmodus: freies Spiel und Tagesflug als zwei Knöpfe direkt untereinander, der inaktive ist ausgegraut
     private var dailyRow: some View {
-        HStack(spacing: 10) {
-            Button {
-                let on = !game.dailyMode
-                game.setDaily(on)
-                if on { GameCenter.shared.authenticate() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: game.dailyMode ? "infinity" : "calendar")
-                        .font(.system(size: 12, weight: .bold))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(game.dailyMode ? "FREIES SPIEL" : "TAGESFLUG \(DailyChallenge.todayLabel)")
-                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                            .tracking(2)
-                        label(game.dailyMode ? "ZUFÄLLIGE STRECKE · REKORD \(game.best)"
-                                             : "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))")
-                            .foregroundStyle(dim)
+        VStack(spacing: 0) {
+            modeButton(icon: "infinity", title: "FREIES SPIEL", detail: "ZUFÄLLIGE STRECKE · REKORD \(game.best)",
+                       color: signal, active: !game.dailyMode) {
+                game.setDaily(false)
+            }
+            HStack(spacing: 0) {
+                modeButton(icon: "calendar", title: "TAGESFLUG \(DailyChallenge.todayLabel)",
+                           detail: "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))",
+                           color: daily, active: game.dailyMode) {
+                    game.setDaily(true)
+                    GameCenter.shared.authenticate()
+                }
+                if game.dailyMode {
+                    Button {
+                        GameCenter.shared.showDailyLeaderboard()
+                    } label: {
+                        Image(systemName: "list.number")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(daily)
+                            .frame(width: 48)
+                            .frame(maxHeight: .infinity)
+                            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+                            .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Bestenliste des Tages")
                 }
-                .foregroundStyle(game.dailyMode ? signal : daily)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-                .overlay(Chamfer(cut: 8).stroke((game.dailyMode ? signal : daily).opacity(0.7), lineWidth: 1.2))
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            if game.dailyMode {
-                Button {
-                    GameCenter.shared.showDailyLeaderboard()
-                } label: {
-                    Image(systemName: "list.number")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(daily)
-                        .frame(width: 48, height: 48)
-                        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-                        .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Bestenliste des Tages")
-            }
+            .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func modeButton(icon: String, title: String, detail: String, color: Color, active: Bool,
+                            action: @escaping () -> Void) -> some View {
+        let tint = active ? color : dim.opacity(0.55)
+        return Button {
+            if !active { action() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .tracking(2)
+                    label(detail)
+                        .foregroundStyle(dim.opacity(active ? 1 : 0.6))
+                }
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Chamfer(cut: 8).fill(panel.opacity(active ? 0.85 : 0.6)))
+            .overlay(Chamfer(cut: 8).stroke(tint.opacity(active ? 0.8 : 0.5), lineWidth: active ? 1.6 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var soundButton: some View {
