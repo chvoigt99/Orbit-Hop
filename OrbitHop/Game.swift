@@ -1494,7 +1494,7 @@ final class Game {
         started = false
     }
 
-    func tap() {
+    func tap(at screen: CGPoint? = nil) {
         guard !paused && !stationOpen else { return }
         if !started {
             started = true
@@ -1510,12 +1510,12 @@ final class Game {
         case .over:
             if time - overAt > 0.6 { reset() }
         case .flying:
-            fire()
+            fire(at: screen)
         case .orbiting:
             // im Kegel: Katapult, sonst feuert die Bordwaffe
             let diff = angleOffCenter
             guard diff < coneHalfAngle else {
-                fire()
+                fire(at: screen)
                 return
             }
             launch(accuracy: 1 - diff / coneHalfAngle)
@@ -1872,7 +1872,25 @@ final class Game {
     // MARK: Waffen
 
 
-    func fire() {
+    /// Railgun: Ziel unter dem Finger (Drohne oder Hindernis bis etwa 70 Punkte neben dem Tipp)
+    private func tappedTarget(_ screen: CGPoint?) -> Asteroid? {
+        guard weapon == .railgun, let screen, let project else { return nil }
+        var best: Asteroid?
+        var bestD: CGFloat = 70
+        for a in asteroids {
+            guard hypot(a.center.x - pos.x, a.center.y - pos.y) < Game.railRange,
+                  let sp = project(a.center) else { continue }
+            // Drohnen bevorzugt: sie sind klein und schwer zu treffen
+            let d = hypot(sp.x - screen.x, sp.y - screen.y) * (a.kind == .drone ? 0.7 : 1)
+            if d < bestD {
+                best = a
+                bestD = d
+            }
+        }
+        return best
+    }
+
+    func fire(at screen: CGPoint? = nil) {
         guard started, phase != .over, weaponCooldown <= 0 else { return }
         guard energy > weaponCost else {
             noEnergyFlash = 0.5
@@ -1884,9 +1902,15 @@ final class Game {
         weaponCooldown = weapon.cooldown
         let muzzle = point(from: pos, angle: heading, distance: 30)
         // Zielhilfe: nächstes Hindernis voraus anvisieren, mit Vorhalt bei bewegten Zielen
-        let target = aimTarget()
+        let tapped = tappedTarget(screen)
+        let target = tapped ?? aimTarget()
         var fwd = CGVector(dx: cos(heading), dy: sin(heading))
-        if let t = target {
+        if let t = tapped {
+            // angetipptes Ziel: Railgun schwenkt rundum genau dorthin (Strahl ist sofort da, kein Vorhalt)
+            let dx = t.center.x - muzzle.x, dy = t.center.y - muzzle.y
+            let d = max(1, hypot(dx, dy))
+            fwd = CGVector(dx: dx / d, dy: dy / d)
+        } else if let t = target {
             let lead = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y) / 1900
             let ax = t.center.x + t.vel.dx * lead - muzzle.x
             let ay = t.center.y + t.vel.dy * lead - muzzle.y

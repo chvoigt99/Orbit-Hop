@@ -48,7 +48,8 @@ struct GameView: View {
                     }
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
-                    .onTapGesture { game.tap() }
+                    // Tippstelle zählt: mit der Railgun schießt ein Tipp auf eine Drohne genau dorthin
+                    .onTapGesture(coordinateSpace: .local) { loc in game.tap(at: loc) }
                 }
 
                 Canvas { context, size in
