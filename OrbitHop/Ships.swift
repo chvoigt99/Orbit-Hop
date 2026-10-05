@@ -456,10 +456,10 @@ struct ShipShopView: View {
                     .tracking(3)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                    .layoutPriority(1)
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.6), radius: 10)
             }
+            .layoutPriority(1)
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 label("SCHIFFSTEILE").foregroundStyle(dim)
