@@ -1644,7 +1644,8 @@ final class World3D {
         let r = a.radius
         if let n = asteroidNodes.removeValue(forKey: a.uid) {
             // Schweif sofort weg, Kern und Leuchthülle schrumpfen in einem Zug auf nichts zusammen
-            n.removeAllParticleSystems()
+            // reset() löscht auch die schon ausgestoßenen Partikel; sie leben sonst in der Szene weiter und glühen nach
+            killParticles(n)
             for c in n.childNodes {
                 let shrink = SCNAction.scale(to: 0, duration: 0.12)
                 shrink.timingMode = .easeIn
@@ -1703,6 +1704,15 @@ final class World3D {
             root.addChildNode(frag)
         }
         root.runAction(.sequence([.wait(duration: 1.0), .removeFromParentNode()]))
+    }
+
+    /// Partikelsystem samt bereits ausgestoßener Partikel sofort entfernen (Kometenschweif)
+    private func killParticles(_ n: SCNNode) {
+        for ps in n.particleSystems ?? [] {
+            ps.birthRate = 0
+            ps.reset()
+        }
+        n.removeAllParticleSystems()
     }
 
     private func makeAsteroid(_ a: Asteroid) -> SCNNode {
@@ -2264,6 +2274,7 @@ final class World3D {
             }
         }
         for (id, n) in asteroidNodes where !alive.contains(id) {
+            killParticles(n)
             n.removeFromParentNode()
             asteroidNodes[id] = nil
             droneOpen[id] = nil
