@@ -1675,7 +1675,7 @@ final class World3D {
         ice.diffuse.contents = UIColor(red: 0.8, green: 0.9, blue: 1, alpha: 1)
         ice.roughness.contents = 0.3
         ice.metalness.contents = 0.1
-        ice.emission.contents = UIColor(red: 0.2, green: 0.5, blue: 0.7, alpha: 1)
+        // Brocken leuchten nicht selbst: nach der Explosion soll nichts nachglühen
         let meshes: [SCNGeometry] = (0..<3).map { k in
             let g = RockMesh.variants[(abs(a.uid) + k) % RockMesh.variants.count].copy() as! SCNGeometry
             g.materials = [ice]
@@ -1698,11 +1698,11 @@ final class World3D {
             frag.runAction(.group([
                 move,
                 .rotate(by: CGFloat.random(in: 4...9), around: axis, duration: 1.9),
-                .sequence([.wait(duration: 1.1), .fadeOut(duration: 0.8)])
+                .sequence([.wait(duration: 0.4), .fadeOut(duration: 0.5)])
             ]))
             root.addChildNode(frag)
         }
-        root.runAction(.sequence([.wait(duration: 2.1), .removeFromParentNode()]))
+        root.runAction(.sequence([.wait(duration: 1.0), .removeFromParentNode()]))
     }
 
     private func makeAsteroid(_ a: Asteroid) -> SCNNode {
