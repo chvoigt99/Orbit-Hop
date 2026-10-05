@@ -555,10 +555,10 @@ final class ShipKit {
         for k in 0..<5 {
             tube(x - half + 0.08 + Float(k) * 0.09, y, z, r: r * 1.02, len: 0.04, dark, mirror: mirror)
         }
-        // glühende Lüftungsschlitze an der Außenseite
+        // glühende Lüftungsschlitze an der Außenseite (Glut-Material: kühlen mit den Triebwerken ab)
         let outer: Float = z >= 0 ? 1 : -1
         for k in 0..<3 {
-            box(x - 0.1 + Float(k) * 0.22, y, z + outer * Float(r * 1.0), 0.12, 0.04, 0.04, lamp, chamfer: 0.01, mirror: mirror)
+            box(x - 0.1 + Float(k) * 0.22, y, z + outer * Float(r * 1.0), 0.12, 0.04, 0.04, fire, chamfer: 0.01, mirror: mirror)
         }
         // offene Düse: Glut sitzt vertieft im Rohr, davor ein dunkler Innenring
         let nozzle = SCNTube(innerRadius: r * 0.74, outerRadius: r * 0.92, height: 0.3)
@@ -569,7 +569,7 @@ final class ShipKit {
         add(liner, dark, SCNVector3(x - half - 0.08, y, z), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: mirror)
         tube(x - half - 0.02, y, z, r: r * 0.62, len: 0.02, fire, mirror: mirror)
         let ring = SCNTorus(ringRadius: r * 0.66, pipeRadius: 0.02)
-        add(ring, lamp, SCNVector3(x - half - 0.18, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
+        add(ring, fire, SCNVector3(x - half - 0.18, y, z), rot: SCNVector3(0, 0, Float.pi / 2), mirror: mirror)
         let tail = x - half - 0.28
         for side in mirror && abs(z) > 0.001 ? [z, -z] : [z] {
             let outlet = SCNNode()
