@@ -465,6 +465,9 @@ final class World3D {
     private let shipHolder = SCNNode()
     private let bankNode = SCNNode()
     private var shipModelNode: SCNNode?
+    /// unzusammengefasstes Modell des aktuellen Schiffs: liefert die Wrackteile für die Explosion
+    private var debrisSource: SCNNode?
+    private var exploded = false
     /// Teile mit Düsenglut und ihre aktuelle Helligkeit
     private var nozzleMats: [SCNMaterial] = []
     private var nozzleHalos: [SCNNode] = []
@@ -2162,6 +2165,126 @@ final class World3D {
         coneMats.forEach { $0.multiply.contents = tint }
     }
 
+    /// Schiff zerstört: das Modell zerfällt in seine Einzelteile, die brennend auseinanderfliegen,
+    /// dazu mehrere kleine Feuerbälle nacheinander über dem Wrack
+    private func explodeShip(_ game: Game) {
+        guard let model = shipModelNode, let src = debrisSource else { return }
+        let base = model.worldTransform
+        let root = SCNNode()
+        scene.rootNode.addChildNode(root)
+        let center = SCNVector3(base.m41, base.m42, base.m43)
+        // Größe des Schiffs in Weltkoordinaten (für Tempo der Teile und Abstand der Feuerbälle)
+        let probe = SCNNode()
+        probe.transform = base
+        let (mn, mx) = src.boundingBox
+        let a = probe.convertPosition(mn, to: nil), b = probe.convertPosition(mx, to: nil)
+        let ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z
+        let size = max(8, CGFloat((ex * ex + ey * ey + ez * ez).squareRoot()))
+
+        var pieces: [SCNNode] = []
+        src.enumerateHierarchy { n, _ in
+            if n.geometry != nil { pieces.append(n) }
+        }
+        // sehr viele Kleinteile zusammen begrenzen: größere Teile bevorzugt
+        func volume(_ n: SCNNode) -> Float {
+            let (lo, hi) = n.boundingBox
+            let sc = n.scale
+            return abs((hi.x - lo.x) * sc.x * (hi.y - lo.y) * sc.y * (hi.z - lo.z) * sc.z)
+        }
+        pieces = Array(pieces.sorted { volume($0) > volume($1) }.prefix(36))
+        for (i, n) in pieces.enumerated() {
+            let local = src.convertTransform(SCNMatrix4Identity, from: n)
+            let c = SCNNode(geometry: n.geometry)
+            c.transform = SCNMatrix4Mult(local, base)
+            root.addChildNode(c)
+            // nach außen, weg von der Schiffsmitte, mit etwas Zufall und Auftrieb
+            var dx = CGFloat(c.position.x - center.x), dz = CGFloat(c.position.z - center.z)
+            let len = max(0.001, hypot(dx, dz))
+            dx /= len; dz /= len
+            let ang = atan2(dz, dx) + CGFloat.random(in: -0.6...0.6)
+            let speed = size * CGFloat.random(in: 1.2...3.2)
+            let move = SCNAction.move(by: SCNVector3(Float(cos(ang) * speed), Float(size * CGFloat.random(in: -0.6...1.2)),
+                                                     Float(sin(ang) * speed)), duration: 2.6)
+            move.timingMode = .easeOut
+            let axis = SCNVector3(Float.random(in: -1...1), Float.random(in: -1...1), Float.random(in: -1...1))
+            c.runAction(.group([
+                move,
+                .rotate(by: CGFloat.random(in: 3...10), around: axis, duration: 2.6),
+                .sequence([.wait(duration: 1.7 + Double.random(in: 0...0.5)), .fadeOut(duration: 0.6)])
+            ]))
+            // die größten Teile ziehen eine kurze Feuerspur hinter sich her
+            if i < 6 {
+                let trail = SCNParticleSystem()
+                trail.birthRate = 90
+                trail.particleLifeSpan = 0.45
+                trail.particleLifeSpanVariation = 0.15
+                trail.particleVelocity = 6
+                trail.spreadingAngle = 180
+                trail.particleSize = size * 0.09
+                trail.particleImage = WorldTextures.soft
+                trail.blendMode = .additive
+                trail.isLightingEnabled = false
+                trail.isAffectedByGravity = false
+                trail.particleColor = UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 0.9)
+                let grow = CAKeyframeAnimation()
+                grow.values = [1.0, 0.3]
+                let fade = CAKeyframeAnimation()
+                fade.values = [1, 0]
+                trail.propertyControllers = [.size: SCNParticlePropertyController(animation: grow),
+                                             .opacity: SCNParticlePropertyController(animation: fade)]
+                c.addParticleSystem(trail)
+                // Feuer erlischt, bevor das Teil verblasst; reset() nimmt auch die schon ausgestoßenen Partikel mit
+                c.runAction(.sequence([.wait(duration: 1.2 + Double.random(in: 0...0.5)),
+                                       .run { _ in trail.birthRate = 0 },
+                                       .wait(duration: 0.5),
+                                       .run { node in trail.reset(); node.removeAllParticleSystems() }]))
+            }
+        }
+
+        // kleine Feuerbälle nacheinander, verteilt über das Wrack: heller Kern, orange Hülle, dunkler Rauch
+        for k in 0..<8 {
+            let delay = k == 0 ? 0 : Double.random(in: 0.05...1.1)
+            let off = SCNVector3(Float(size * CGFloat.random(in: -0.7...0.7)), Float(size * CGFloat.random(in: -0.2...0.4)),
+                                 Float(size * CGFloat.random(in: -0.7...0.7)))
+            let at = SCNVector3(center.x + off.x, center.y + off.y, center.z + off.z)
+            let big: CGFloat = k == 0 ? 1.6 : CGFloat.random(in: 0.6...1.1)
+            let ball = SCNNode()
+            ball.position = at
+            ball.opacity = 0
+            root.addChildNode(ball)
+            for (scale, color, additive) in [(1.0, UIColor(red: 1, green: 0.42, blue: 0.08, alpha: 1), true),
+                                             (0.55, UIColor(red: 1, green: 0.9, blue: 0.6, alpha: 1), true),
+                                             (1.3, UIColor(white: 0.12, alpha: 0.75), false)] as [(CGFloat, UIColor, Bool)] {
+                let w = size * big * scale
+                let plane = SCNNode(geometry: SCNPlane(width: w, height: w))
+                let m = spriteMat(WorldTextures.soft)
+                m.multiply.contents = color
+                if !additive {
+                    m.blendMode = .alpha
+                    plane.renderingOrder = 8
+                } else {
+                    plane.renderingOrder = 9
+                }
+                plane.geometry?.materials = [m]
+                plane.constraints = [SCNBillboardConstraint()]
+                if !additive {
+                    // Rauch quillt langsamer auf und bleibt etwas länger stehen
+                    plane.scale = SCNVector3(0.4, 0.4, 0.4)
+                    plane.runAction(.scale(to: 1.4, duration: 1.1))
+                } else {
+                    plane.scale = SCNVector3(0.2, 0.2, 0.2)
+                    let pop = SCNAction.scale(to: 1, duration: 0.18)
+                    pop.timingMode = .easeOut
+                    plane.runAction(.sequence([pop, .group([.scale(to: 1.25, duration: 0.4), .fadeOut(duration: 0.4)])]))
+                }
+                ball.addChildNode(plane)
+            }
+            ball.runAction(.sequence([.wait(duration: delay), .fadeIn(duration: 0.04),
+                                      .wait(duration: 0.7), .fadeOut(duration: 0.5), .removeFromParentNode()]))
+        }
+        root.runAction(.sequence([.wait(duration: 3.0), .removeFromParentNode()]))
+    }
+
     private func syncShip(_ game: Game, px: CGFloat, k: CGFloat, ka: CGFloat, kh: CGFloat) {
         if shipID != game.ship.model.id {
             shipID = game.ship.model.id
@@ -2185,6 +2308,8 @@ final class World3D {
             }
             nozzleMats = mats
             nozzleHalos = Ship3D.outlets(of: n).flatMap { $0.0.childNodes }
+            // Einzelteile für die Explosion vorhalten (Materialien sind ohnehin im ShipKit-Cache)
+            debrisSource = ShipDesigns.build(game.ship.model)
 
         }
         // Triebwerke aus (Spielende): Düsenglut klingt ab
@@ -2201,6 +2326,14 @@ final class World3D {
             for h in nozzleHalos { h.opacity = nozzleGlow }
         }
         // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
+        if game.phase == .over && game.destroyed {
+            if !exploded {
+                exploded = true
+                explodeShip(game)
+            }
+        } else {
+            exploded = false
+        }
         shipHolder.isHidden = game.phase == .over && game.destroyed
         shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
