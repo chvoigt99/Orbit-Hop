@@ -9,18 +9,36 @@ extension Game {
     private var panel: Color { Color(red: 0.02, green: 0.07, blue: 0.11) }
 
     /// Markierungen, die auf 3D-Objekten sitzen: laufen mit jedem Bild mit, sonst hinken sie hinterher
-    func drawTracked(_ context: GraphicsContext, size: CGSize) {
+    func drawTracked(_ base: GraphicsContext, size: CGSize) {
+        guard hudAlpha > 0 else { return }
+        var context = base
+        context.opacity = Double(hudAlpha)
         drawObstacleHP(context, size)
         drawTargetLabel(context, size)
         if !stationOpen { drawIndicator(context, size) }
         if !stationOpen { drawPopups(context, size) }
+        drawCometBanner(context, size)
+    }
+
+    /// Komet zerstört: kurzer eisblauer Bildschirmblitz. Die Meldung selbst erscheint wie alle anderen
+    /// als Schild an der Stelle des Kometen (Popup), damit sie Explosion und Brocken nicht verdeckt.
+    private func drawCometBanner(_ c: GraphicsContext, _ size: CGSize) {
+        let t = time - cometKilledAt
+        guard t >= 0, t < 0.25, phase != .over else { return }
+        let ice = Color(red: 0.6, green: 0.9, blue: 1)
+        let a = Double(0.2 * (1 - t / 0.25))
+        c.fill(Path(CGRect(origin: .zero, size: size)), with: .color(ice.opacity(a)))
     }
 
     /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild
     /// auszuwerten, sprengte zusammen mit dem HUD das Zeitbudget des Hauptthreads.
-    func drawChrome(_ context: GraphicsContext, size: CGSize) {
+    func drawChrome(_ base: GraphicsContext, size: CGSize) {
+        guard hudAlpha > 0 else { return }
+        var context = base
+        context.opacity = Double(hudAlpha)
         drawScanBar(context, size)
-        if !stationOpen { drawRadar(context, size) }
+        // in der Hindernispassage sitzen dort die Ausweichknöpfe
+        if !stationOpen && !dodgeAvailable { drawRadar(context, size) }
         drawOverlays(context, size)
     }
 
@@ -706,7 +724,7 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", currentIndex + 1))")
+        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", planetBase + currentIndex + 1))")
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(amber))
         let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
@@ -937,7 +955,7 @@ extension Game {
             let sp = screenPoint(pp.pos, size)
             // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
             let rise = 1 - exp(-pp.age * 3)
-            let sy = sp.y - 18 - rise * 40
+            let sy = sp.y - 18 - pp.lift - rise * 40
             let alpha = Double(min(1, max(0, (Popup.lifetime - pp.age) / Popup.fade)))
             let text = c.resolve(Text(pp.text)
                 .font(.system(size: 17, weight: .bold, design: .monospaced))
@@ -945,8 +963,9 @@ extension Game {
             let ts = text.measure(in: size)
             var plate = CGRect(x: sp.x - ts.width / 2, y: sy - ts.height / 2,
                                width: ts.width, height: ts.height).insetBy(dx: -9, dy: -4)
-            // nicht über den Bildrand hinaus
+            // nicht über den Bildrand hinaus, auch nicht oben oder unten (Ziele weit voraus liegen oft außerhalb)
             plate.origin.x = min(max(plate.minX, 8), size.width - 8 - plate.width)
+            plate.origin.y = min(max(plate.minY, insets.top + 150), size.height - insets.bottom - 120 - plate.height)
             var moved = true
             while moved {
                 moved = false

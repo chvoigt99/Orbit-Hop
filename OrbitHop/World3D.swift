@@ -1,6 +1,7 @@
 import SwiftUI
 import SceneKit
 import UIKit
+import simd
 
 // MARK: - Hilfen
 
@@ -423,6 +424,10 @@ final class World3D {
     /// 0 = Draufsicht, 1 = Verfolgerkamera hinter dem Schiff
     private(set) var chase: CGFloat = 0
     private var chaseOn = false
+    /// Ausgleiten ohne Energie: Kamera rückt noch dichter ans Schiff (0…1)
+    private var coastClose: CGFloat = 0
+    /// Explosion: Kamera schaut auf das Wrack statt voraus und weicht etwas zurück (0…1)
+    private var blastView: CGFloat = 0
     private var releasing = false
     private var chasedThisFlight = false
     /// geglätteter Kurs für die Verfolgerkamera, damit Lenkkorrekturen nicht als Ruckler ankommen
@@ -450,6 +455,8 @@ final class World3D {
     }
     private var bonusRings: [Int: BonusRing] = [:]
     private var asteroidNodes: [Int: SCNNode] = [:]
+    /// Andockplattformen der Raumstationen, je Planetenindex
+    private var stationDocks: [Int: SCNNode] = [:]
     private var itemNodes: [Int: SCNNode] = [:]
     private var projectileNodes: [Int: SCNNode] = [:]
     private var enemyShotNodes: [Int: SCNNode] = [:]
@@ -460,6 +467,17 @@ final class World3D {
     private let shipHolder = SCNNode()
     private let bankNode = SCNNode()
     private var shipModelNode: SCNNode?
+    /// unzusammengefasstes Modell des aktuellen Schiffs: liefert die Wrackteile für die Explosion
+    private var debrisSource: SCNNode?
+    private var exploded = false
+    /// Teile mit Düsenglut und ihre aktuelle Helligkeit
+    private var nozzleMats: [SCNMaterial] = []
+    /// Grundfarbe je Glut-Material (Düsenglut orange, Leuchtringe der Waffe in Waffenfarbe)
+    private var nozzleBase: [UIColor] = []
+    private var nozzleHalos: [SCNNode] = []
+    private var appliedNozzleGlow: CGFloat = 1
+    private var nozzleGlow: CGFloat = 1
+    private var lastNozzleTime: CGFloat = 0
     private var shipID = ""
     private let exhaust = SCNParticleSystem()
     private var exhausts: [(SCNParticleSystem, CGFloat)] = []
@@ -468,6 +486,11 @@ final class World3D {
     private let damageSmoke = SCNParticleSystem()
     private let damageSparks = SCNParticleSystem()
     private let hitFlash = SCNNode()
+    private var hitShellMat: SCNMaterial?
+    private let impactSparks = SCNParticleSystem()
+    private var lastBrakeFlash: CGFloat = 0
+    private var hitAt: CGFloat = -10
+    private var appliedHit: Float = -1
 
     private let orbitGroup = SCNNode()
     private let orbitRing = SCNNode()
@@ -530,8 +553,7 @@ final class World3D {
         buildOrbitParts()
         buildDock()
         // Stationslacke schon während des Ladebildschirms erzeugen, sonst hakt es beim Auftauchen der ersten Station
-        for (key, c) in [("station", UIColor(white: 0.66, alpha: 1)), ("station-dark", UIColor(white: 0.22, alpha: 1)),
-                         ("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))] {
+        for (key, c) in StationModels.paints {
             _ = WornPaint.material(key, base: c)
         }
         // Texturen des Schwarzen Lochs entstehen beim ersten Zugriff; das im Hintergrund erledigen
@@ -544,38 +566,64 @@ final class World3D {
 
     // MARK: Hangar
 
-    /// Startplattform mit Leuchtkanten und einem Tor aus zwei Pylonen und einer Brücke.
-    /// Lokal zeigt +x in Flugrichtung, die Plattform liegt knapp unter dem Schiff.
+    /// Startplattform im Stil der Schiffe: gleicher Baukasten (ShipKit) mit abgenutztem Lack, Panzerplatten,
+    /// facettierten Trägern, Leitungen und Kleinteilen. Gebaut in Schiffseinheiten und wie das Schiff im
+    /// Hangar fünffach skaliert. Lokal zeigt +x in Flugrichtung, das Deck liegt knapp unter dem Schiff.
     private func buildDock() {
-        let metal = WornPaint.material("dock", base: UIColor(white: 0.34, alpha: 1))
-        let dark = WornPaint.material("dock-dark", base: UIColor(white: 0.2, alpha: 1))
-        let edge = glowMat(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
-        let lamp = glowMat(UIColor(red: 1, green: 0.78, blue: 0.4, alpha: 1))
+        let k = ShipKit(seed: "dock", base: ShipDesigns.bone, accent: ShipDesigns.red, second: ShipDesigns.gunmetal,
+                        weaponHue: 165, marking: "PAD")
+        let edge = ShipKit.glow(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
+        let amber = ShipKit.glow(UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 1))
 
-        func box(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, _ x: Float, _ y: Float, _ z: Float) {
-            let g = SCNBox(width: w, height: h, length: l, chamferRadius: min(w, h, l) * 0.08)
-            g.materials = [m]
-            let n = SCNNode(geometry: g)
-            n.position = SCNVector3(x, y, z)
-            dockNode.addChildNode(n)
-        }
+        // Deck: gekantetes Achteck wie die Flügel, darunter ein dunkler Rahmen
+        let deck: [(CGFloat, CGFloat)] = [(5, -3), (5, 3), (3.8, 4.2), (-3.8, 4.2), (-5, 3), (-5, -3), (-3.8, -4.2), (3.8, -4.2)]
+        k.plate(deck, y: -0.15, thick: 0.3, k.paint, mirror: false)
+        k.plate(deck.map { ($0.0 * 1.05, $0.1 * 1.05) }, y: -0.42, thick: 0.3, k.dark, mirror: false)
+        // Panzerplatten mit Nähten quer über das Deck
+        k.plates(x0: -4.4, x1: 4.0, y: -0.02, width: 6.4, count: 7)
+        // Warnstreifen an Vorder- und Hinterkante
+        k.box(4.7, 0.06, 0, 0.45, 0.1, 5.6, k.stripe, chamfer: 0.03, mirror: false)
+        k.box(-4.7, 0.06, 0, 0.45, 0.1, 5.6, k.stripe, chamfer: 0.03, mirror: false)
 
-        // Plattform
-        box(48, 2, 40, metal, 0, -1.2, 0)
-        box(54, 1.2, 46, dark, -2, -2.8, 0)
-        // Leuchtkanten links und rechts, vorn eine Startlinie
-        box(46, 0.5, 0.8, edge, 0, 0.1, 19.6)
-        box(46, 0.5, 0.8, edge, 0, 0.1, -19.6)
-        for i in 0..<4 { box(1.2, 0.5, 6, edge, 23.5, 0.1, Float(i - 2) * 9 + 4.5) }
-        // Tor vorn: zwei Pylonen mit Brücke und Lampen, das Schiff startet hindurch
-        for z: Float in [-23, 23] {
-            box(3.2, 24, 3.2, dark, 22, 10, z)
-            let s = SCNNode(geometry: SCNSphere(radius: 1.3))
-            s.geometry?.materials = [lamp]
-            s.position = SCNVector3(22, 23, z)
-            dockNode.addChildNode(s)
+        // Landekreis mit Leuchtring und Lampen
+        let ring = SCNTube(innerRadius: 1.55, outerRadius: 1.7, height: 0.04)
+        ring.radialSegmentCount = 64
+        k.addNode(ring, edge, SCNVector3(0, 0.15, 0))
+        let disc = SCNCylinder(radius: 1.5, height: 0.06)
+        disc.radialSegmentCount = 48
+        k.addNode(disc, k.second, SCNVector3(0, 0.12, 0))
+        for i in 0..<8 {
+            let a = Float(i) / 8 * .pi * 2
+            k.box(cos(a) * 2.05, 0.15, sin(a) * 2.05, 0.18, 0.06, 0.18, amber, chamfer: 0.01, mirror: false)
         }
-        box(3, 2.6, 49, metal, 22, 21, 0)
+        // Leuchtkanten an den Seiten und eine gestrichelte Startlinie vorn
+        k.box(0, 0.12, 4.05, 7.4, 0.06, 0.1, edge, chamfer: 0.01)
+        for i in 0..<4 { k.box(4.35, 0.12, Float(i) * 1.6 - 2.4, 0.1, 0.06, 0.9, edge, chamfer: 0.01, mirror: false) }
+
+        // Seitenträger: facettiert wie die Rümpfe, mit Leitungen und Seitenpaneelen
+        k.hull([ShipKit.Sec(-4.6, 0.25, 0.32, 0.3), ShipKit.Sec(-3.8, 0.3, 0.38, 0.36),
+                ShipKit.Sec(3.6, 0.3, 0.38, 0.36), ShipKit.Sec(4.4, 0.25, 0.32, 0.3)], z: 4.65, k.second)
+        k.pipes(x0: -4.2, x1: 3.8, y: 0.2, z: 4.25)
+        k.sidePanels(x0: -3.6, x1: 3.4, y: 0.2, z: 5.05, count: 5)
+
+        // Tor vorn: zwei gepanzerte Pylonen mit Brücke, das Schiff startet hindurch
+        k.box(4.4, 2.3, 4.6, 0.75, 4.6, 0.75, k.paint, chamfer: 0.12)
+        k.box(4.4, 1.0, 4.6, 0.85, 0.5, 0.85, k.stripe, chamfer: 0.06)
+        k.box(4.4, 3.4, 4.6, 0.85, 0.35, 0.85, k.dark, chamfer: 0.06)
+        k.intake(4.4, 2.2, 4.2, h: 0.6, w: 0.3)
+        k.lamp(4.4, 4.75, 4.6, size: 0.3)
+        k.box(4.4, 4.3, 0, 0.7, 0.5, 9.9, k.accent, chamfer: 0.1, mirror: false)
+        k.box(4.4, 4.0, 0, 0.5, 0.2, 9.4, k.dark, chamfer: 0.04, mirror: false)
+        for z: Float in [-3, -1, 1, 3] { k.lamp(4.75, 4.3, z, size: 0.14) }
+
+        // Heck: Lufteinlässe, Kleinteile und Antennen
+        k.intake(-4.55, 0.35, 2.6, h: 0.45, w: 0.7)
+        k.greeble(x0: -4.8, x1: -3.6, y: 0.05, zMax: 1.8, count: 12)
+        k.antenna(-4.3, 0.4, 3.9, h: 2.2)
+        k.box(-4.2, 0.25, 3.3, 0.6, 0.5, 0.5, k.metal, chamfer: 0.05)
+
+        k.root.scale = SCNVector3(5, 5, 5)
+        dockNode.addChildNode(k.root)
 
         // eigenes Licht für die Nahaufnahme
         let light = SCNNode()
@@ -662,19 +710,48 @@ final class World3D {
         damageSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: sparkFade)]
         shipHolder.addParticleSystem(damageSparks)
 
-        let flash = SCNPlane(width: 9, height: 9)
+        // Treffer: kurz aufleuchtende Schildhülle um das Schiff, nur am Rand hell (Fresnel), dazu Funken.
+        // Bleibt immer in der Szene (mit Stärke 0), damit der Shader schon beim Laden übersetzt ist.
+        let shell = SCNSphere(radius: 3.4)
+        shell.segmentCount = 40
         let fm = SCNMaterial()
         fm.lightingModel = .constant
-        fm.diffuse.contents = WorldTextures.dot
-        fm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 1)
+        fm.diffuse.contents = UIColor.black
         fm.blendMode = .add
         fm.writesToDepthBuffer = false
-        flash.materials = [fm]
-        hitFlash.geometry = flash
-        hitFlash.constraints = [SCNBillboardConstraint()]
-        hitFlash.opacity = 0
+        fm.isDoubleSided = false
+        fm.shaderModifiers = [.fragment: """
+        #pragma arguments
+        float intensity;
+        #pragma body
+        float3 n = normalize(_surface.normal);
+        float3 v = normalize(_surface.view);
+        float rim = pow(1.0 - saturate(abs(dot(n, v))), 2.4);
+        float3 col = mix(float3(1.0, 0.25, 0.12), float3(1.0, 0.85, 0.6), rim * rim);
+        _output.color = float4(col * (rim * 1.6 + 0.04) * intensity, 0.0);
+        """]
+        fm.setValue(0.0 as Float, forKey: "intensity")
+        shell.materials = [fm]
+        hitShellMat = fm
+        hitFlash.geometry = shell
+        hitFlash.scale = SCNVector3(1.25, 0.6, 1.0)
         hitFlash.renderingOrder = 50
         shipHolder.addChildNode(hitFlash)
+
+        impactSparks.birthRate = 0
+        impactSparks.particleLifeSpan = 0.4
+        impactSparks.particleLifeSpanVariation = 0.2
+        impactSparks.spreadingAngle = 180
+        impactSparks.particleImage = WorldTextures.soft
+        impactSparks.stretchFactor = 0.1
+        impactSparks.blendMode = .additive
+        impactSparks.isLightingEnabled = false
+        impactSparks.isAffectedByGravity = false
+        impactSparks.particleColor = UIColor(red: 1, green: 0.6, blue: 0.3, alpha: 1)
+        let impactFade = CAKeyframeAnimation()
+        impactFade.values = [1, 0]
+        impactSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: impactFade)]
+        shipHolder.addParticleSystem(impactSparks)
 
         exhaust.birthRate = 0
         exhaust.isLocal = true
@@ -719,6 +796,8 @@ final class World3D {
             d.values.forEach { $0.removeFromParentNode() }
         }
         bonusRings.values.forEach { $0.node.removeFromParentNode() }
+        stationDocks.values.forEach { $0.removeFromParentNode() }
+        stationDocks = [:]
         planetNodes = [:]; asteroidNodes = [:]; itemNodes = [:]; projectileNodes = [:]; cloudNodes = [:]; bonusRings = [:]; enemyShotNodes = [:]
         seenBeams = []; seenWaves = []
         orbitIndex = -1; lockIndex = -1; coneKey = ""
@@ -891,16 +970,16 @@ final class World3D {
         root.addChildNode(halo)
 
         // weiter, schwacher Schein
-        let glow = SCNNode(geometry: SCNPlane(width: r * 6, height: r * 6))
+        let glow = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = uic(p.hue, 0.9, 0.5, 0.35)
+        gm.multiply.contents = uic(p.hue, 0.9, 0.5, 0.2)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         root.addChildNode(glow)
 
-        // Akkretionsscheibe: leicht gekippt, dreht sich innen sichtbar schnell
+        // Akkretionsscheibe: liegt flach in der Bahnebene, genau wie die Orbit- und Bonusringe, und wirkt
+        // deshalb aus jeder Kamera so elliptisch wie diese; dreht sich innen sichtbar schnell
         let tilt = SCNNode()
-        tilt.eulerAngles = SCNVector3(Float(p.tilt) * 0.5, 0, Float(p.tilt) * 0.35)
         root.addChildNode(tilt)
         let diskSize = p.outerRadius * 2
         let disk = SCNNode(geometry: SCNPlane(width: diskSize, height: diskSize))
@@ -911,14 +990,8 @@ final class World3D {
         spinner.addChildNode(disk)
         spinner.runAction(.repeatForever(.rotateBy(x: 0, y: -.pi * 2, z: 0, duration: 7)))
         tilt.addChildNode(spinner)
-        // Lichtablenkung: die Rückseite der Scheibe erscheint als Bogen über dem Kern
-        let lens = SCNNode(geometry: SCNPlane(width: diskSize * 0.62, height: diskSize * 0.62))
-        let lm = spriteMat(WorldTextures.accretionDisk)
-        lm.multiply.contents = UIColor(white: 0.55, alpha: 1)
-        lens.geometry?.materials = [lm]
-        lens.constraints = [SCNBillboardConstraint()]
-        lens.renderingOrder = 4
-        root.addChildNode(lens)
+        // (Früher lag hier ein zur Kamera gedrehtes rundes Abbild der Scheibe als Lichtablenkung.
+        // Es ließ das Ganze wie eine leuchtende Kugel wirken und ist deshalb entfallen.)
         return root
     }
 
@@ -987,154 +1060,70 @@ final class World3D {
         return root
     }
 
-    /// Raumstation: zentrale Nabe mit Andockturm, rotierendes Wohnrad an Speichen, Solarflügel,
-    /// Andockbuchten und Positionslichter. Passt innerhalb der Umlaufbahn (Radius + 90).
+    /// Raumstation: zehn Modelle je nach Stationsnummer (Stations3D.swift)
     private func makeStation(_ p: Planet) -> SCNNode {
         // Lack wie bei den Schiffen, aber auf Stationsgröße skaliert (sonst kachelt er hundertfach)
-        func paint(_ key: String, _ c: UIColor) -> SCNMaterial {
+        StationModels.make(p) { key, c in
             let m = WornPaint.material(key, base: c).copy() as! SCNMaterial
             m.setValue(NSNumber(value: 1.0 / 70.0), forKey: "tpScale")
             m.setValue(NSNumber(value: 0.01), forKey: "tpBump")
             return m
         }
-        let hull = paint("station", UIColor(white: 0.66, alpha: 1))
-        let dark = paint("station-dark", UIColor(white: 0.22, alpha: 1))
-        let accent = paint("station-accent", UIColor(red: 0.62, green: 0.2, blue: 0.16, alpha: 1))
-        func glow(_ c: UIColor) -> SCNMaterial {
-            let m = SCNMaterial()
-            m.lightingModel = .constant
-            m.diffuse.contents = c
-            return m
-        }
-        let lampMat = glow(UIColor(red: 1, green: 0.7, blue: 0.3, alpha: 1))
-        let windowMat = glow(UIColor(red: 1, green: 0.86, blue: 0.6, alpha: 1))
-        let dockMat = glow(UIColor(red: 0.45, green: 0.95, blue: 1, alpha: 1))
-        let solar = SCNMaterial()
-        solar.lightingModel = .physicallyBased
-        solar.diffuse.contents = WorldTextures.solarCells
-        solar.metalness.contents = 0.6
-        solar.roughness.contents = 0.3
+    }
 
-        func node(_ g: SCNGeometry, _ m: SCNMaterial, _ pos: SCNVector3, rot: SCNVector3 = SCNVector3(0, 0, 0)) -> SCNNode {
-            g.materials = [m]
-            let n = SCNNode(geometry: g)
-            n.position = pos
-            n.eulerAngles = rot
-            return n
-        }
-        func blink(_ n: SCNNode, _ delay: Double) {
-            n.runAction(.repeatForever(.sequence([.wait(duration: delay), .fadeOut(duration: 0.12),
-                                                  .wait(duration: 0.9), .fadeIn(duration: 0.12)])))
-        }
-
-        let R = Float(p.radius)          // Wohnrad-Außenradius
+    /// Andockplattform an einer Station: dieselbe Plattform wie im Hangar, mit einem Steg bis an den Rand der Station
+    private func makeStationDock(_ p: Planet, pos: CGPoint, heading: CGFloat) -> SCNNode {
         let root = SCNNode()
-        root.eulerAngles = SCNVector3(0.12, 0, 0.06)
-
-        // Nabe: gestapelte Zylinder mit Ringwülsten, oben Andockturm, unten Antennenmast
-        let hub = SCNNode()
-        root.addChildNode(hub)
-        let core = SCNCylinder(radius: CGFloat(R * 0.24), height: CGFloat(R * 0.55))
-        core.radialSegmentCount = 32
-        hub.addChildNode(node(core, hull, SCNVector3(0, 0, 0)))
-        for y in [-0.22, 0, 0.22] as [Float] {
-            let collar = SCNCylinder(radius: CGFloat(R * 0.28), height: CGFloat(R * 0.06))
-            collar.radialSegmentCount = 32
-            hub.addChildNode(node(collar, y == 0 ? accent : dark, SCNVector3(0, y * R, 0)))
-        }
-        let tower = SCNCylinder(radius: CGFloat(R * 0.11), height: CGFloat(R * 0.45))
-        hub.addChildNode(node(tower, hull, SCNVector3(0, R * 0.48, 0)))
-        let dome = SCNSphere(radius: CGFloat(R * 0.13))
-        hub.addChildNode(node(dome, dark, SCNVector3(0, R * 0.7, 0)))
-        let mast = SCNCylinder(radius: CGFloat(R * 0.025), height: CGFloat(R * 0.6))
-        hub.addChildNode(node(mast, dark, SCNVector3(0, -R * 0.55, 0)))
-        let tip = SCNSphere(radius: CGFloat(R * 0.03))
-        let tipNode = node(tip, lampMat, SCNVector3(0, -R * 0.86, 0))
-        blink(tipNode, 0.3)
-        hub.addChildNode(tipNode)
-        // Fensterreihen rund um die Nabe
-        for k in 0..<16 {
-            let a = Float(k) / 16 * .pi * 2
-            for y in [-0.11, 0.11] as [Float] {
-                let w = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.05), length: CGFloat(R * 0.05), chamferRadius: 0)
-                hub.addChildNode(node(w, windowMat, SCNVector3(cos(a) * R * 0.242, y * R, sin(a) * R * 0.242), rot: SCNVector3(0, -a, 0)))
-            }
-        }
-
-        // Wohnrad: dreht sich langsam um die Nabe
-        let wheel = SCNNode()
-        wheel.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 70)))
-        root.addChildNode(wheel)
-        let rim = SCNTube(innerRadius: CGFloat(R * 0.84), outerRadius: CGFloat(R), height: CGFloat(R * 0.16))
-        rim.radialSegmentCount = 96
-        wheel.addChildNode(node(rim, hull, SCNVector3(0, 0, 0)))
-        for y in [-0.085, 0.085] as [Float] {
-            let lip = SCNTube(innerRadius: CGFloat(R * 0.83), outerRadius: CGFloat(R * 1.015), height: CGFloat(R * 0.025))
-            lip.radialSegmentCount = 96
-            wheel.addChildNode(node(lip, dark, SCNVector3(0, y * R, 0)))
-        }
-        let windows = SCNTube(innerRadius: CGFloat(R * 1.0), outerRadius: CGFloat(R * 1.006), height: CGFloat(R * 0.03))
-        windows.radialSegmentCount = 96
-        wheel.addChildNode(node(windows, windowMat, SCNVector3(0, 0, 0)))
-        for i in 0..<12 {
-            let a = Float(i) / 12 * .pi * 2
-            let holder = SCNNode()
-            holder.eulerAngles.y = a
-            wheel.addChildNode(holder)
-            // Module auf dem Rad, abwechselnd hell und dunkel
-            let module = SCNBox(width: CGFloat(R * 0.2), height: CGFloat(R * 0.22), length: CGFloat(R * 0.16), chamferRadius: CGFloat(R * 0.02))
-            holder.addChildNode(node(module, i % 4 == 0 ? accent : (i % 2 == 0 ? dark : hull), SCNVector3(R * 0.92, 0, 0)))
-            let lamp = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.02), length: CGFloat(R * 0.03), chamferRadius: 0)
-            let ln = node(lamp, lampMat, SCNVector3(R * 0.92, R * 0.12, 0))
-            if i % 2 == 0 { blink(ln, Double(i) * 0.12) }
-            holder.addChildNode(ln)
-            // Speichen bei jedem dritten Modul: Röhre mit Gelenkring
-            if i % 3 == 0 {
-                let len = R * 0.6
-                let spoke = SCNCylinder(radius: CGFloat(R * 0.04), height: CGFloat(len))
-                holder.addChildNode(node(spoke, dark, SCNVector3(R * 0.24 + len / 2, 0, 0), rot: SCNVector3(0, 0, Float.pi / 2)))
-                let joint = SCNCylinder(radius: CGFloat(R * 0.06), height: CGFloat(R * 0.05))
-                holder.addChildNode(node(joint, hull, SCNVector3(R * 0.55, 0, 0), rot: SCNVector3(0, 0, Float.pi / 2)))
-            }
-        }
-
-        // Solarflügel über dem Rad, an Auslegern von der Nabe, gegenläufig zum Rad
-        let arrays = SCNNode()
-        arrays.position = SCNVector3(0, R * 0.36, 0)
-        arrays.runAction(.repeatForever(.rotateBy(x: 0, y: -.pi * 2, z: 0, duration: 140)))
-        root.addChildNode(arrays)
-        for i in 0..<4 {
-            let holder = SCNNode()
-            holder.eulerAngles.y = Float(i) * .pi / 2 + .pi / 4
-            arrays.addChildNode(holder)
-            let boom = SCNBox(width: CGFloat(R * 1.15), height: CGFloat(R * 0.025), length: CGFloat(R * 0.025), chamferRadius: 0)
-            holder.addChildNode(node(boom, dark, SCNVector3(R * 0.62, 0, 0)))
-            for k in 0..<2 {
-                let panel = SCNBox(width: CGFloat(R * 0.42), height: CGFloat(R * 0.008), length: CGFloat(R * 0.2), chamferRadius: 0)
-                let x = R * (0.5 + Float(k) * 0.5)
-                holder.addChildNode(node(panel, solar, SCNVector3(x, 0, R * 0.12)))
-                holder.addChildNode(node(panel.copy() as! SCNGeometry, solar, SCNVector3(x, 0, -R * 0.12)))
-            }
-        }
-
-        // Andockbucht mit Leitlichtern, an der Nabe nach außen ragend
-        let bay = SCNBox(width: CGFloat(R * 0.3), height: CGFloat(R * 0.14), length: CGFloat(R * 0.2), chamferRadius: CGFloat(R * 0.02))
-        root.addChildNode(node(bay, dark, SCNVector3(0, -R * 0.2, R * 0.38)))
-        for k in 0..<4 {
-            let guide = SCNBox(width: CGFloat(R * 0.03), height: CGFloat(R * 0.015), length: CGFloat(R * 0.03), chamferRadius: 0)
-            let g = node(guide, dockMat, SCNVector3(Float(k - 2) * R * 0.07 + R * 0.035, -R * 0.12, R * 0.48))
-            g.runAction(.repeatForever(.sequence([.wait(duration: Double(k) * 0.15), .fadeOut(duration: 0.1),
-                                                  .wait(duration: 0.5), .fadeIn(duration: 0.1), .wait(duration: Double(3 - k) * 0.15)])))
-            root.addChildNode(g)
-        }
-        // Positionslichter oben auf dem Rad (rot/grün wie bei Schiffen)
-        for (a, c) in [(Float(0), UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 1)), (Float.pi, UIColor(red: 0.3, green: 1, blue: 0.4, alpha: 1))] {
-            let l = SCNSphere(radius: CGFloat(R * 0.025))
-            let ln = node(l, glow(c), SCNVector3(cos(a) * R * 1.02, R * 0.1, sin(a) * R * 1.02))
-            blink(ln, Double(a) * 0.2)
+        root.position = v3(pos, -1)
+        root.eulerAngles.y = Float(-heading)
+        let pad = dockNode.clone()
+        pad.position = SCNVector3(0, 0, 0)
+        pad.eulerAngles = SCNVector3(0, 0, 0)
+        pad.isHidden = false
+        pad.opacity = 1
+        root.addChildNode(pad)
+        // Die Station liegt lokal in +z (Plattform links der Flugrichtung, siehe Game.stationDock)
+        let z0: Float = 22
+        let z1 = Float(p.orbitRadius - p.radius * 0.97)
+        guard z1 > z0 + 4 else { return root }
+        let len = z1 - z0
+        let metal = WornPaint.material("dock", base: UIColor(white: 0.34, alpha: 1))
+        let edge = glowMat(UIColor(red: 79 / 255, green: 227 / 255, blue: 193 / 255, alpha: 1))
+        for x: Float in [-6, 6] {
+            let rail = SCNBox(width: 1.6, height: 1.6, length: CGFloat(len), chamferRadius: 0.2)
+            rail.materials = [metal]
+            let n = SCNNode(geometry: rail)
+            n.position = SCNVector3(x, -1.5, z0 + len / 2)
+            root.addChildNode(n)
+            let light = SCNBox(width: 0.5, height: 0.4, length: CGFloat(len), chamferRadius: 0)
+            light.materials = [edge]
+            let ln = SCNNode(geometry: light)
+            ln.position = SCNVector3(x, -0.5, z0 + len / 2)
             root.addChildNode(ln)
         }
+        let steps = max(2, Int(len / 8))
+        for i in 0...steps {
+            let cross = SCNBox(width: 12, height: 0.8, length: 1.2, chamferRadius: 0)
+            cross.materials = [metal]
+            let n = SCNNode(geometry: cross)
+            n.position = SCNVector3(0, -2, z0 + len * Float(i) / Float(steps))
+            root.addChildNode(n)
+        }
         return root
+    }
+
+    /// Andockplattformen der Stationen im Bild nachführen
+    private func syncStationDocks(_ game: Game) {
+        for (i, n) in stationDocks where planetNodes[i] == nil {
+            n.removeFromParentNode()
+            stationDocks[i] = nil
+        }
+        for i in planetNodes.keys where stationDocks[i] == nil {
+            guard game.planets.indices.contains(i), game.planets[i].isStation, let d = game.stationDock(i) else { continue }
+            let n = makeStationDock(game.planets[i], pos: d.pos, heading: d.heading)
+            scene.rootNode.addChildNode(n)
+            stationDocks[i] = n
+        }
     }
 
     /// Durchgehender Ladering: dunkler Grundring, darüber der wachsende Fortschrittsbogen
@@ -1343,62 +1332,175 @@ final class World3D {
         let root = SCNNode()
         root.position = v3(a.center, 6)
         let r = a.radius
-        let metal = SCNMaterial()
-        metal.lightingModel = .physicallyBased
-        metal.diffuse.contents = UIColor(white: 0.22, alpha: 1)
-        metal.metalness.contents = 0.9
-        metal.roughness.contents = 0.35
-        let red = glowMat(UIColor(red: 1, green: 0.18, blue: 0.15, alpha: 1), additive: false)
-
-        let body = SCNSphere(radius: r * 0.55)
-        body.segmentCount = 24
-        body.materials = [metal]
-        let bodyNode = SCNNode(geometry: body)
-        bodyNode.scale = SCNVector3(1.25, 0.7, 1)
-        root.addChildNode(bodyNode)
-
-        // Auge sitzt vor dem Rumpf (Rumpf reicht in Flugrichtung bis etwa 0,69 r) und leuchtet nach oben sichtbar
-        let eye = SCNSphere(radius: r * 0.24)
-        eye.materials = [red]
-        let eyeNode = SCNNode(geometry: eye)
-        eyeNode.position = SCNVector3(Float(r * 0.7), Float(r * 0.12), 0)
-        eyeNode.renderingOrder = 10
-        root.addChildNode(eyeNode)
-        let eyeGlow = SCNNode(geometry: SCNPlane(width: r * 1.2, height: r * 1.2))
-        let egm = spriteMat(WorldTextures.soft)
-        egm.multiply.contents = UIColor(red: 1, green: 0.25, blue: 0.2, alpha: 1)
-        eyeGlow.geometry?.materials = [egm]
-        eyeGlow.constraints = [SCNBillboardConstraint()]
-        eyeNode.addChildNode(eyeGlow)
-
-        let spinner = SCNNode()
-        let ring = SCNTorus(ringRadius: r * 0.95, pipeRadius: r * 0.07)
-        ring.materials = [metal]
-        spinner.addChildNode(SCNNode(geometry: ring))
-        for k in 0..<3 {
-            let ang = Float(k) * 2 * .pi / 3
-            let pod = SCNBox(width: r * 0.32, height: r * 0.18, length: r * 0.32, chamferRadius: r * 0.05)
-            pod.materials = [metal]
-            let pn = SCNNode(geometry: pod)
-            pn.position = SCNVector3(cos(ang) * Float(r * 0.95), 0, sin(ang) * Float(r * 0.95))
-            spinner.addChildNode(pn)
-            let lamp = SCNSphere(radius: r * 0.08)
-            lamp.materials = [red]
-            let ln = SCNNode(geometry: lamp)
-            ln.position = SCNVector3(0, Float(r * 0.12), 0)
-            ln.runAction(.repeatForever(.sequence([.fadeOpacity(to: 0.2, duration: 0.35), .fadeOpacity(to: 1, duration: 0.35)])))
-            pn.addChildNode(ln)
+        // Wächterkugel aus dem Baukasten der Schiffe; Modell einmal im Hintergrund bauen, dann klonen
+        withDroneModel { [weak root] model in
+            guard let root else { return }
+            let body = model.clone()
+            // Modell hat Radius 1: Kugel etwa so groß wie der Trefferradius, Gürtel etwas darüber
+            let s = Float(r * 0.95)
+            body.scale = SCNVector3(s, s, s)
+            body.name = "body"
+            root.addChildNode(body)
         }
-        spinner.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 1.6)))
-        root.addChildNode(spinner)
-
-        // roter Schein, damit man die Drohne auch klein erkennt
-        let glow = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
+        // roter Schein, damit man die Kugel auch klein erkennt
+        let glow = SCNNode(geometry: SCNPlane(width: r * 3.2, height: r * 3.2))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 0.55)
+        gm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 0.35)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         root.addChildNode(glow)
+        return root
+    }
+
+    /// Öffnungsgrad der Schalen je Drohne (0 zu, 1 offen)
+    private var droneOpen: [Int: CGFloat] = [:]
+
+    /// Schalen klappen kurz vor jedem Schuss auf und danach wieder zu
+    private func animateDrone(_ n: SCNNode, _ a: Asteroid, _ game: Game, dt: CGFloat) {
+        let d = hypot(game.pos.x - a.center.x, game.pos.y - a.center.y)
+        let aiming = game.phase == .flying && a.gap == game.originIndex + 1 && d < Game.droneRange
+            && a.fireAt - game.time < 0.5
+        let open = smoothApproach(droneOpen[a.uid] ?? 0, aiming ? 1 : 0, rate: aiming ? 9 : 5, dt: dt)
+        droneOpen[a.uid] = open
+        guard let body = n.childNode(withName: "body", recursively: false) else { return }
+        let k = Float(open * open * (3 - 2 * open)) * 0.62
+        body.childNode(withName: "upper", recursively: false)?.eulerAngles.z = k
+        body.childNode(withName: "lower", recursively: false)?.eulerAngles.z = -k
+    }
+
+    private var droneModel: SCNNode?
+    private var droneWaiting: [(SCNNode) -> Void] = []
+
+    private func withDroneModel(_ use: @escaping (SCNNode) -> Void) {
+        if let m = droneModel { use(m); return }
+        droneWaiting.append(use)
+        guard droneWaiting.count == 1 else { return }
+        Self.textureQueue.async { [weak self] in
+            let model = Self.buildDroneModel()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.upload(model) { [weak self] in
+                    guard let self else { return }
+                    self.droneModel = model
+                    let waiting = self.droneWaiting
+                    self.droneWaiting = []
+                    waiting.forEach { $0(model) }
+                }
+            }
+        }
+    }
+
+    /// Facettierte Halbkugel (Radius 1, nach oben offen bei y = 0), flach schattiert wie gekantetes Blech
+    private static func shellGeometry(rings: Int = 4, slices: Int = 12) -> SCNGeometry {
+        var pos: [SCNVector3] = [], nor: [SCNVector3] = []
+        func p(_ i: Int, _ j: Int) -> SIMD3<Float> {
+            let lat = Float(i) / Float(rings) * .pi / 2          // 0 = Äquator, π/2 = Pol
+            let lon = Float(j) / Float(slices) * 2 * .pi
+            return SIMD3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon))
+        }
+        func tri(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) {
+            var n = simd_normalize(cross(b - a, c - a))
+            var v = [a, b, c]
+            if dot(n, (a + b + c) / 3) < 0 { n = -n; v = [a, c, b] }
+            for q in v {
+                pos.append(SCNVector3(q.x, q.y, q.z))
+                nor.append(SCNVector3(n.x, n.y, n.z))
+            }
+        }
+        for i in 0..<rings {
+            for j in 0..<slices {
+                let a = p(i, j), b = p(i, j + 1), c = p(i + 1, j + 1), d = p(i + 1, j)
+                tri(a, b, c)
+                if i + 1 < rings { tri(a, c, d) }
+            }
+        }
+        let idx = (0..<Int32(pos.count)).map { $0 }
+        let uv = pos.map { CGPoint(x: CGFloat($0.x) / 2, y: CGFloat($0.y + $0.z) / 2) }
+        return SCNGeometry(sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nor),
+                                     SCNGeometrySource(textureCoordinates: uv)],
+                           elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
+    }
+
+    /// Wächterkugel: zwei gepanzerte Halbschalen mit Scharnier hinten, die vor dem Schuss aufklappen
+    /// und ein rotes Auge freigeben; dazwischen ein dunkler Gürtel mit Lampen. Auge zeigt nach +x.
+    private static func buildDroneModel() -> SCNNode {
+        let k = ShipKit(seed: "drone", base: ShipDesigns.gunmetal, accent: ShipDesigns.red, second: ShipDesigns.night,
+                        weaponHue: 0, marking: "X")
+        let red = ShipKit.glow(UIColor(red: 1, green: 0.16, blue: 0.12, alpha: 1))
+        let root = k.root
+        // Innenleben: dunkler Kern, rotes Auge vorn
+        let core = SCNSphere(radius: 0.78)
+        core.segmentCount = 20
+        core.materials = [k.dark]
+        root.addChildNode(SCNNode(geometry: core))
+        let eye = SCNSphere(radius: 0.3)
+        eye.materials = [red]
+        let eyeNode = SCNNode(geometry: eye)
+        eyeNode.position = SCNVector3(0.62, 0, 0)
+        root.addChildNode(eyeNode)
+        // Halbschalen: Drehpunkt hinten am Gürtel, die Vorderkante hebt sich beim Öffnen
+        let shell = shellGeometry()
+        for (name, flip) in [("upper", Float(1)), ("lower", Float(-1))] {
+            let hinge = SCNNode()
+            hinge.name = name
+            hinge.position = SCNVector3(-0.95, 0, 0)
+            let half = SCNNode()
+            half.position = SCNVector3(0.95, flip * 0.06, 0)
+            // untere Schale: dieselbe Schale um die Längsachse gedreht (keine negative Skalierung, sonst kippen die Flächen)
+            if flip < 0 { half.eulerAngles.x = .pi }
+            let g = shell.copy() as! SCNGeometry
+            g.materials = [flip > 0 ? k.paint : k.second]
+            half.addChildNode(SCNNode(geometry: g))
+            // roter Streifen quer über die Schale und Panzerrippen
+            let band = SCNBox(width: 0.22, height: 0.08, length: 1.5, chamferRadius: 0.02)
+            band.materials = [k.accent]
+            let bn = SCNNode(geometry: band)
+            bn.position = SCNVector3(0.1, 0.96, 0)
+            half.addChildNode(bn)
+            for z in [-0.55, 0.55] as [Float] {
+                let rib = SCNBox(width: 1.2, height: 0.07, length: 0.1, chamferRadius: 0.02)
+                rib.materials = [k.metal]
+                let rn = SCNNode(geometry: rib)
+                rn.position = SCNVector3(0, 0.8, z)
+                half.addChildNode(rn)
+            }
+            if flip > 0 {
+                // Sensormast und Antenne oben
+                let mast = SCNBox(width: 0.18, height: 0.3, length: 0.18, chamferRadius: 0.03)
+                mast.materials = [k.dark]
+                let mn = SCNNode(geometry: mast)
+                mn.position = SCNVector3(-0.35, 1.0, 0)
+                half.addChildNode(mn)
+                let tip = SCNSphere(radius: 0.07)
+                tip.materials = [red]
+                let tn = SCNNode(geometry: tip)
+                tn.position = SCNVector3(-0.35, 1.2, 0)
+                tn.runAction(.repeatForever(.sequence([.fadeOpacity(to: 0.15, duration: 0.3), .fadeOpacity(to: 1, duration: 0.3)])))
+                half.addChildNode(tn)
+            }
+            hinge.addChildNode(half)
+            root.addChildNode(hinge)
+        }
+        // Gürtel mit Lampen und seitlichen Steuerdüsen
+        let belt = SCNTube(innerRadius: 0.9, outerRadius: 1.1, height: 0.16)
+        belt.radialSegmentCount = 24
+        belt.materials = [k.dark]
+        root.addChildNode(SCNNode(geometry: belt))
+        for j in 0..<6 {
+            let ang = Float(j) / 6 * 2 * .pi + .pi / 6
+            let lamp = SCNBox(width: 0.1, height: 0.06, length: 0.1, chamferRadius: 0.01)
+            lamp.materials = [red]
+            let ln = SCNNode(geometry: lamp)
+            ln.position = SCNVector3(cos(ang) * 1.1, 0, sin(ang) * 1.1)
+            root.addChildNode(ln)
+        }
+        for z in [-1.12, 1.12] as [Float] {
+            let pod = SCNBox(width: 0.4, height: 0.22, length: 0.18, chamferRadius: 0.04)
+            pod.materials = [k.second]
+            let pn = SCNNode(geometry: pod)
+            pn.position = SCNVector3(-0.2, 0, z)
+            root.addChildNode(pn)
+        }
         return root
     }
 
@@ -1579,6 +1681,83 @@ final class World3D {
         return root
     }
 
+    /// Kometen-Zerstörung: greller Lichtblitz, Koma bläht sich auf, der Kern zerbricht in Eisbrocken,
+    /// die auseinanderfliegen, und der Schweif verweht, statt mitten im Bild abzureißen
+    private func shatterComet(_ a: Asteroid) {
+        let r = a.radius
+        if let n = asteroidNodes.removeValue(forKey: a.uid) {
+            // Schweif sofort weg, Kern und Leuchthülle schrumpfen in einem Zug auf nichts zusammen
+            // reset() löscht auch die schon ausgestoßenen Partikel; sie leben sonst in der Szene weiter und glühen nach
+            killParticles(n)
+            for c in n.childNodes {
+                let shrink = SCNAction.scale(to: 0, duration: 0.12)
+                shrink.timingMode = .easeIn
+                c.runAction(.sequence([shrink, .hide()]))
+            }
+            n.runAction(.sequence([.wait(duration: 0.15), .removeFromParentNode()]))
+        }
+        let root = SCNNode()
+        root.position = v3(a.center, 0)
+        scene.rootNode.addChildNode(root)
+
+        // Lichtblitz
+        let flash = SCNNode(geometry: SCNPlane(width: r * 4, height: r * 4))
+        let fm = spriteMat(WorldTextures.soft)
+        fm.multiply.contents = UIColor(red: 0.85, green: 0.97, blue: 1, alpha: 1)
+        flash.geometry?.materials = [fm]
+        flash.constraints = [SCNBillboardConstraint()]
+        flash.renderingOrder = 10
+        // kurzer Blitz, der mit dem Kometen zusammenschrumpft statt sich auszubreiten
+        let fshrink = SCNAction.scale(to: 0, duration: 0.12)
+        fshrink.timingMode = .easeIn
+        flash.runAction(.sequence([fshrink, .hide()]))
+        root.addChildNode(flash)
+
+        // Eisbrocken
+        let ice = SCNMaterial()
+        ice.lightingModel = .physicallyBased
+        ice.diffuse.contents = UIColor(red: 0.8, green: 0.9, blue: 1, alpha: 1)
+        ice.roughness.contents = 0.3
+        ice.metalness.contents = 0.1
+        ice.emission.contents = UIColor(red: 0.2, green: 0.5, blue: 0.7, alpha: 1)
+        let meshes: [SCNGeometry] = (0..<3).map { k in
+            let g = RockMesh.variants[(abs(a.uid) + k) % RockMesh.variants.count].copy() as! SCNGeometry
+            g.materials = [ice]
+            return g
+        }
+        let count = 10
+        for k in 0..<count {
+            let frag = SCNNode(geometry: meshes[k % meshes.count])
+            let s = Float(r * CGFloat.random(in: 0.16...0.36))
+            frag.scale = SCNVector3(s, s, s)
+            let ang = CGFloat(k) / CGFloat(count) * .pi * 2 + CGFloat.random(in: -0.3...0.3)
+            let dist = r * CGFloat.random(in: 4...8)
+            // Brocken behalten etwas vom Schwung des Kometen
+            let dx = cos(ang) * dist + a.vel.dx * 1.2
+            let dz = sin(ang) * dist + a.vel.dy * 1.2
+            let dy = r * CGFloat.random(in: -1.5...1.5)
+            let move = SCNAction.move(by: SCNVector3(Float(dx), Float(dy), Float(dz)), duration: 1.9)
+            move.timingMode = .easeOut
+            let axis = SCNVector3(Float.random(in: -1...1), 1, Float.random(in: -1...1))
+            frag.runAction(.group([
+                move,
+                .rotate(by: CGFloat.random(in: 4...9), around: axis, duration: 1.9),
+                .sequence([.wait(duration: 1.1), .fadeOut(duration: 0.8)])
+            ]))
+            root.addChildNode(frag)
+        }
+        root.runAction(.sequence([.wait(duration: 2.1), .removeFromParentNode()]))
+    }
+
+    /// Partikelsystem samt bereits ausgestoßener Partikel sofort entfernen (Kometenschweif)
+    private func killParticles(_ n: SCNNode) {
+        for ps in n.particleSystems ?? [] {
+            ps.birthRate = 0
+            ps.reset()
+        }
+        n.removeAllParticleSystems()
+    }
+
     private func makeAsteroid(_ a: Asteroid) -> SCNNode {
         let geo = RockMesh.variants[abs(a.uid) % RockMesh.variants.count]
         let n = SCNNode(geometry: geo)
@@ -1714,6 +1893,24 @@ final class World3D {
         let root = SCNNode()
         root.position = v3(CGPoint(x: (b.from.x + b.to.x) / 2, y: (b.from.y + b.to.y) / 2))
         root.eulerAngles.y = Float(-atan2(dy, dx))
+        // breiter, schwacher Saum in Weltgröße: zeigt, wie breit der Strahl trifft
+        // schmaler Saum als flacher Keil, nach außen durchsichtiger: drei übereinanderliegende Keile,
+        // innen kräftiger, außen kaum sichtbar (zusammen so breit wie ein Drittel der Trefferbreite)
+        let half = len / 2
+        for (f, alpha) in [(1.0, 0.02), (0.6, 0.035), (0.3, 0.06)] as [(CGFloat, CGFloat)] {
+            let w0 = 1.5 * f, w1 = Game.railWidth * 0.35 * f
+            let wedge = UIBezierPath()
+            wedge.move(to: CGPoint(x: -half, y: -w0))
+            wedge.addLine(to: CGPoint(x: half, y: -w1))
+            wedge.addLine(to: CGPoint(x: half, y: w1))
+            wedge.addLine(to: CGPoint(x: -half, y: w0))
+            wedge.close()
+            let band = SCNShape(path: wedge, extrusionDepth: 0.5)
+            band.materials = [glowMat(col.withAlphaComponent(alpha))]
+            let bandNode = SCNNode(geometry: band)
+            bandNode.eulerAngles.x = -.pi / 2
+            root.addChildNode(bandNode)
+        }
         for (w, c) in [(6 * px, col.withAlphaComponent(0.45)), (2.2 * px, col), (0.9 * px, UIColor.white)] {
             let box = SCNBox(width: len, height: w, length: w, chamferRadius: 0)
             box.materials = [glowMat(c)]
@@ -1788,29 +1985,22 @@ final class World3D {
             clearAll()
         }
 
-        // Kamera-Mischung: Verfolgerkamera, wenn Asteroiden vor dem Schiff liegen
-        // Entscheidung fällt einmal beim Start eines Flugs: Hindernisse auf der Strecke und Weg lang genug?
-        // Danach bleibt die Kamera dran, bis der Zielplanet nah ist, und schaltet im selben Flug nicht wieder ein.
+        // Kamera-Mischung auf Strecken mit Hindernissen, fest gegliedert:
+        // Abflug mit Übergang in die Verfolgerkamera, Hindernispassage in der Nahaufnahme,
+        // am Ende der Passage bleibt die Kamera stehen und lässt das Schiff in den Zielorbit fliegen.
         let ti = min(game.originIndex + 1, game.planets.count - 1)
         let tgt = game.planets[ti]
         let distT = hypot(tgt.center.x - game.pos.x, tgt.center.y - game.pos.y)
-        let release = tgt.orbitRadius + 1300
+        let shipAt = game.progress(game.pos, gap: ti)
+        let passageDone = shipAt.map { $0 >= tgt.passageTo } ?? true
         if game.phase == .flying && lastPhase != .flying { chasedThisFlight = false }
-        // Hindernisse in einem breiten Korridor um die Strecke, auch etwas neben der Flugbahn
-        if game.phase == .flying && !chasedThisFlight && distT > release + 150 {
-            let lx = (tgt.center.x - game.pos.x) / max(1, distT), ly = (tgt.center.y - game.pos.y) / max(1, distT)
-            let near = game.asteroids.contains { a in
-                let rx = a.center.x - game.pos.x, ry = a.center.y - game.pos.y
-                let along = rx * lx + ry * ly
-                let side = abs(rx * ly - ry * lx)
-                return along > -100 && along < distT && side < 750
-            }
-            if near {
-                chaseOn = true
-                chasedThisFlight = true
-            }
+        if game.phase == .flying && !chasedThisFlight && tgt.hardRoute && !passageDone {
+            chaseOn = true
+            chasedThisFlight = true
         }
-        if game.phase != .flying || distT < release { chaseOn = false }
+        if game.phase != .flying || passageDone { chaseOn = false }
+        // Spielende: Nahaufnahme für das Ausgleiten bzw. die Explosion
+        if game.phase == .over { chaseOn = true }
         lastPhase = game.phase
         let danger = chaseOn
         let want: CGFloat = danger ? 1 : 0
@@ -1818,8 +2008,18 @@ final class World3D {
         // Der Vorwärts-Schub beim Herauszoomen gilt nur im Flug; im Orbit würde er mit dem Schiff im Kreis laufen
         releasing = !danger && chase > 0.001 && game.phase == .flying
         // Im Orbit blendet eine Rest-Nahansicht zügig aus, sonst folgt die Kamera dem kreisenden Schiff
-        let chaseRate: CGFloat = danger ? 1.4 : (game.phase == .flying ? 0.45 : 3)
+        let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : 3))
         chase = smoothApproach(chase, want, rate: chaseRate, dt: dt)
+        if game.phase == .over && !game.destroyed {
+            coastClose = smoothApproach(coastClose, 1, rate: 0.7, dt: dt)
+        } else {
+            coastClose = 0
+        }
+        if game.phase == .over && game.destroyed {
+            blastView = smoothApproach(blastView, 1, rate: 2.5, dt: dt)
+        } else {
+            blastView = 0
+        }
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
@@ -1827,11 +2027,16 @@ final class World3D {
             // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
             chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
         }
-        updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, release: release)
+        updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, passageDone: passageDone)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
         // Beim Abflug löst sich die Kamera schon während des Anrollens
         let holdHangar = game.phase == .docked && (game.departElapsed ?? 0) < Game.liftTime + 0.7
-        hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
+        // Anflug auf eine Station: weich in die Plattform-Nahaufnahme, statt hart zu schneiden
+        if holdHangar && game.arriveAt != nil {
+            hangar = min(1, hangar + dt / 1.2)
+        } else {
+            hangar = holdHangar ? 1 : max(0, hangar - dt / hangarBlendTime)
+        }
         // Spielzeit steht im Menü still, deshalb hier die durchlaufende UI-Zeit
         let uiDt = max(0, min(0.1, game.uiTime - lastUITime))
         lastUITime = game.uiTime
@@ -1880,6 +2085,7 @@ final class World3D {
         }
         lastHangarFade = kh
         syncDock(game)
+        syncStationDocks(game)
         syncCamera(game, k: k, topDist: topDist, ka: ka, kh: kh)
 
         // Staub folgt der Kamera kachelweise
@@ -2002,6 +2208,150 @@ final class World3D {
         coneMats.forEach { $0.multiply.contents = tint }
     }
 
+    /// Schiff zerstört: das Modell zerfällt in seine Einzelteile, die brennend auseinanderfliegen,
+    /// dazu mehrere kleine Feuerbälle nacheinander über dem Wrack
+    private func explodeShip(_ game: Game) {
+        guard let model = shipModelNode, let src = debrisSource else { return }
+        let base = model.worldTransform
+        let center = SCNVector3(base.m41, base.m42, base.m43)
+        // Wrack um die Schiffsmitte aufhängen: in der Draufsicht (Orbit) ist das Schiff größer gezeichnet als in der
+        // Nahaufnahme; beim Heranfahren der Kamera schrumpft das Wrack auf Nahaufnahme-Maß, damit Teile und Tempo passen
+        let root = SCNNode()
+        root.position = center
+        scene.rootNode.addChildNode(root)
+        // Größe des Schiffs in Weltkoordinaten (für Tempo der Teile und Abstand der Feuerbälle)
+        let probe = SCNNode()
+        probe.transform = base
+        let (mn, mx) = src.boundingBox
+        let a = probe.convertPosition(mn, to: nil), b = probe.convertPosition(mx, to: nil)
+        let ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z
+        let size = max(8, CGFloat((ex * ex + ey * ey + ez * ez).squareRoot()))
+
+        var pieces: [SCNNode] = []
+        src.enumerateHierarchy { n, _ in
+            if n.geometry != nil { pieces.append(n) }
+        }
+        // sehr viele Kleinteile zusammen begrenzen: größere Teile bevorzugt
+        func volume(_ n: SCNNode) -> Float {
+            let (lo, hi) = n.boundingBox
+            let sc = n.scale
+            return abs((hi.x - lo.x) * sc.x * (hi.y - lo.y) * sc.y * (hi.z - lo.z) * sc.z)
+        }
+        pieces = Array(pieces.sorted { volume($0) > volume($1) }.prefix(36))
+        for (i, n) in pieces.enumerated() {
+            let local = src.convertTransform(SCNMatrix4Identity, from: n)
+            let c = SCNNode(geometry: n.geometry)
+            c.transform = root.convertTransform(SCNMatrix4Mult(local, base), from: nil)
+            root.addChildNode(c)
+            // nach außen, weg von der Schiffsmitte, mit etwas Zufall und Auftrieb
+            var dx = CGFloat(c.position.x), dz = CGFloat(c.position.z)
+            let len = max(0.001, hypot(dx, dz))
+            dx /= len; dz /= len
+            let ang = atan2(dz, dx) + CGFloat.random(in: -0.6...0.6)
+            let speed = size * CGFloat.random(in: 1.2...3.2)
+            let move = SCNAction.move(by: SCNVector3(Float(cos(ang) * speed), Float(size * CGFloat.random(in: -0.6...1.2)),
+                                                     Float(sin(ang) * speed)), duration: 2.6)
+            move.timingMode = .easeOut
+            let axis = SCNVector3(Float.random(in: -1...1), Float.random(in: -1...1), Float.random(in: -1...1))
+            c.runAction(.group([
+                move,
+                .rotate(by: CGFloat.random(in: 3...10), around: axis, duration: 2.6),
+                .sequence([.wait(duration: 1.7 + Double.random(in: 0...0.5)), .fadeOut(duration: 0.6)])
+            ]))
+            // die größten Teile ziehen eine kurze Feuerspur hinter sich her
+            if i < 6 {
+                let trail = SCNParticleSystem()
+                trail.birthRate = 90
+                trail.particleLifeSpan = 0.45
+                trail.particleLifeSpanVariation = 0.15
+                trail.particleVelocity = 6
+                trail.spreadingAngle = 180
+                trail.particleSize = size * 0.09
+                trail.particleImage = WorldTextures.soft
+                trail.blendMode = .additive
+                trail.isLightingEnabled = false
+                trail.isAffectedByGravity = false
+                trail.particleColor = UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 0.9)
+                let grow = CAKeyframeAnimation()
+                grow.values = [1.0, 0.3]
+                let fade = CAKeyframeAnimation()
+                fade.values = [1, 0]
+                trail.propertyControllers = [.size: SCNParticlePropertyController(animation: grow),
+                                             .opacity: SCNParticlePropertyController(animation: fade)]
+                c.addParticleSystem(trail)
+                // Feuer erlischt, bevor das Teil verblasst; reset() nimmt auch die schon ausgestoßenen Partikel mit
+                c.runAction(.sequence([.wait(duration: 1.2 + Double.random(in: 0...0.5)),
+                                       .run { _ in trail.birthRate = 0 },
+                                       .wait(duration: 0.5),
+                                       .run { node in trail.reset(); node.removeAllParticleSystems() }]))
+            }
+        }
+
+        // kleine Feuerbälle nacheinander, verteilt über das Wrack: heller Kern, orange Hülle, dunkler Rauch
+        for k in 0..<8 {
+            let delay = k == 0 ? 0 : Double.random(in: 0.05...1.1)
+            let off = SCNVector3(Float(size * CGFloat.random(in: -0.7...0.7)), Float(size * CGFloat.random(in: -0.2...0.4)),
+                                 Float(size * CGFloat.random(in: -0.7...0.7)))
+            // deutlich größer als die Funken, damit man die einzelnen Feuerbälle erkennt
+            let big: CGFloat = k == 0 ? 2.6 : CGFloat.random(in: 1.3...2.0)
+            let ball = SCNNode()
+            ball.position = off
+            ball.opacity = 0
+            root.addChildNode(ball)
+            for (scale, color, additive) in [(1.0, UIColor(red: 1, green: 0.42, blue: 0.08, alpha: 1), true),
+                                             (0.55, UIColor(red: 1, green: 0.9, blue: 0.6, alpha: 1), true),
+                                             (1.3, UIColor(white: 0.12, alpha: 0.75), false)] as [(CGFloat, UIColor, Bool)] {
+                let w = size * big * scale
+                let plane = SCNNode(geometry: SCNPlane(width: w, height: w))
+                let m = spriteMat(WorldTextures.soft)
+                m.multiply.contents = color
+                if !additive {
+                    m.blendMode = .alpha
+                    plane.renderingOrder = 8
+                } else {
+                    plane.renderingOrder = 9
+                }
+                plane.geometry?.materials = [m]
+                plane.constraints = [SCNBillboardConstraint()]
+                if !additive {
+                    // Rauch quillt langsamer auf und bleibt etwas länger stehen
+                    plane.scale = SCNVector3(0.4, 0.4, 0.4)
+                    plane.runAction(.scale(to: 1.4, duration: 1.1))
+                } else {
+                    plane.scale = SCNVector3(0.2, 0.2, 0.2)
+                    let pop = SCNAction.scale(to: 1, duration: 0.18)
+                    pop.timingMode = .easeOut
+                    plane.runAction(.sequence([pop, .group([.scale(to: 1.25, duration: 0.4), .fadeOut(duration: 0.4)])]))
+                }
+                ball.addChildNode(plane)
+            }
+            ball.runAction(.sequence([.wait(duration: delay), .fadeIn(duration: 0.04),
+                                      .wait(duration: 0.7), .fadeOut(duration: 0.5), .removeFromParentNode()]))
+        }
+        let f = Float(min(1, 5 / max(0.1, lastShipScale)))
+        if f < 0.99 {
+            let shrink = SCNAction.scale(to: CGFloat(f), duration: 0.9)
+            shrink.timingMode = .easeInEaseOut
+            root.runAction(shrink)
+        }
+        root.runAction(.sequence([.wait(duration: 3.0), .removeFromParentNode()]))
+    }
+
+    /// Materialien, Partikel und Wrackteile der Explosion einmal vorab auf die GPU laden, sonst hängt das erste Bild
+    private func prepareExplosion(_ src: SCNNode) {
+        let warm = SCNNode()
+        warm.addChildNode(src.clone())
+        for blend in [SCNBlendMode.add, .alpha] {
+            let plane = SCNNode(geometry: SCNPlane(width: 1, height: 1))
+            let m = spriteMat(WorldTextures.soft)
+            m.multiply.contents = UIColor.orange
+            m.blendMode = blend
+            plane.geometry?.materials = [m]
+            warm.addChildNode(plane)
+        }
+        upload(warm) {}
+    }
+
     private func syncShip(_ game: Game, px: CGFloat, k: CGFloat, ka: CGFloat, kh: CGFloat) {
         if shipID != game.ship.model.id {
             shipID = game.ship.model.id
@@ -2009,12 +2359,64 @@ final class World3D {
             let n = Ship3D.shipNode(for: game.ship.model, showcase: false)
             bankNode.addChildNode(n)
             shipModelNode = n
+            // Düsenglut dieses Schiffs: eigene Kopie der Glut-Materialien (das Modell ist zusammengefasst und teilt
+            // seine Materialien), dazu die Glut-Sprites hinter den Düsen
+            var mats: [SCNMaterial] = []
+            var bases: [UIColor] = []
+            let glowNames: Set<String> = ["engineFire", "weaponGlow"]
+            n.enumerateHierarchy { node, _ in
+                guard let g = node.geometry, g.materials.contains(where: { glowNames.contains($0.name ?? "") }) else { return }
+                let own = g.copy() as! SCNGeometry
+                own.materials = g.materials.map { m in
+                    guard glowNames.contains(m.name ?? "") else { return m }
+                    let c = m.copy() as! SCNMaterial
+                    mats.append(c)
+                    bases.append((m.diffuse.contents as? UIColor) ?? .orange)
+                    return c
+                }
+                node.geometry = own
+            }
+            nozzleMats = mats
+            nozzleBase = bases
+            nozzleHalos = Ship3D.outlets(of: n).flatMap { $0.0.childNodes }
+            // Einzelteile für die Explosion vorhalten (Materialien sind ohnehin im ShipKit-Cache)
+            let src = ShipDesigns.build(game.ship.model)
+            debrisSource = src
+            prepareExplosion(src)
 
         }
-        shipHolder.isHidden = game.phase == .over
+        // Triebwerke aus (Spielende): Düsenglut klingt ab
+        let glowTarget: CGFloat = game.phase == .over ? 0 : 1
+        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 2.2, dt: max(0, min(0.1, game.time - lastNozzleTime)))
+        lastNozzleTime = game.time
+        if game.phase != .over { nozzleGlow = 1 }
+        if abs(nozzleGlow - appliedNozzleGlow) > 0.01 || (nozzleGlow == 1 && appliedNozzleGlow != 1) {
+            appliedNozzleGlow = nozzleGlow
+            // Farbe direkt setzen (multiply wirkt beim konstanten Glut-Material nicht zuverlässig): von Orange zu kalt-dunkel
+            let g = nozzleGlow
+            for (m, base) in zip(nozzleMats, nozzleBase) {
+                var r: CGFloat = 0, gr: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                base.getRed(&r, green: &gr, blue: &b, alpha: &a)
+                // von der Grundfarbe zu kalt-dunkel
+                let ember = UIColor(red: 0.05 + (r - 0.05) * g, green: 0.045 + (gr - 0.045) * g, blue: 0.04 + (b - 0.04) * g, alpha: 1)
+                m.diffuse.contents = ember
+                m.emission.contents = ember
+            }
+            for h in nozzleHalos { h.opacity = nozzleGlow }
+        }
+        // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
+        if game.phase == .over && game.destroyed {
+            if !exploded {
+                exploded = true
+                explodeShip(game)
+            }
+        } else {
+            exploded = false
+        }
+        shipHolder.isHidden = game.phase == .over && game.destroyed
         shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
-        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : 0
+        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : game.dodgeBank * 0.6
         shipHolder.eulerAngles.y = Float(-game.heading)
         bankNode.eulerAngles.x = Float(bank)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten
@@ -2030,7 +2432,7 @@ final class World3D {
         let boost = game.boostTime > 0
         for (ps, r) in exhausts {
             // im Hangar aus, beim Abheben leise, beim Anrollen voll
-            let departing: CGFloat = game.departElapsed.map { $0 > Game.liftTime ? 120 : 30 } ?? 0
+            let departing: CGFloat = game.departElapsed.map { $0 > Game.liftTime ? 120 : 30 } ?? (game.dockArriving ? 60 : 0)
             ps.birthRate = game.phase == .over ? 0 : (game.phase == .docked ? departing : (flying ? (boost ? 260 : 120) : 35))
             ps.particleVelocity = CGFloat(s) * (flying || departing > 100 ? (boost ? 6 : 3) : 1.5)
             ps.particleSize = CGFloat(s) * r * (boost ? 1.7 : 1.25)
@@ -2050,10 +2452,34 @@ final class World3D {
         damageSparks.particleVelocity = CGFloat(s) * 9
         damageSparks.particleVelocityVariation = CGFloat(s) * 5
         damageSparks.particleSize = CGFloat(s) * 0.2
-        hitFlash.opacity = min(1, game.brakeFlash / 0.6) * (alive ? 1 : 0)
+        // neuer Treffer: Schild blitzt auf und klingt in knapp einer halben Sekunde ab, Funken nur im ersten Moment
+        if game.brakeFlash > lastBrakeFlash + 0.05 { hitAt = game.time }
+        lastBrakeFlash = game.brakeFlash
+        let age = game.time - hitAt
+        let e = alive ? max(0, 1 - age / 0.45) : 0
+        let strength = Float(e * e * 1.4)
+        if abs(strength - appliedHit) > 0.01 || (strength == 0 && appliedHit != 0) {
+            appliedHit = strength
+            hitShellMat?.setValue(strength, forKey: "intensity")
+        }
+        // Schild weitet sich beim Abklingen leicht
+        let grow = Float(1 + 0.18 * (1 - e))
+        hitFlash.scale = SCNVector3(1.25 * grow, 0.6 * grow, 1.0 * grow)
+        impactSparks.birthRate = alive && age < 0.08 ? 900 : 0
+        impactSparks.particleVelocity = CGFloat(s) * 14
+        impactSparks.particleVelocityVariation = CGFloat(s) * 7
+        impactSparks.particleSize = CGFloat(s) * 0.18
     }
 
+    private var lastObjectsTime: CGFloat = 0
+
     private func syncObjects(_ game: Game, px: CGFloat) {
+        let dt = max(0, min(0.1, game.time - lastObjectsTime))
+        lastObjectsTime = game.time
+        // zerstörte Kometen zerplatzen, statt einfach zu verschwinden
+        for a in game.shatters { shatterComet(a) }
+        game.shatters.removeAll()
+
         // Asteroiden
         var alive = Set<Int>()
         for a in game.asteroids {
@@ -2066,8 +2492,15 @@ final class World3D {
                     n.eulerAngles.y = Float(-atan2(a.vel.dy, a.vel.dx))
                 }
                 // Drohnen schauen in Flugrichtung, sobald sie Tempo haben
-                if a.kind == .drone && hypot(a.vel.dx, a.vel.dy) > 40 {
-                    n.eulerAngles.y = Float(-atan2(a.vel.dy, a.vel.dx))
+                if a.kind == .drone {
+                    // beim Zielen schaut das Auge aufs Schiff, sonst in Flugrichtung
+                    let aim = (droneOpen[a.uid] ?? 0) > 0.05
+                    if aim {
+                        n.eulerAngles.y = Float(-atan2(game.pos.y - a.center.y, game.pos.x - a.center.x))
+                    } else if hypot(a.vel.dx, a.vel.dy) > 40 {
+                        n.eulerAngles.y = Float(-atan2(a.vel.dy, a.vel.dx))
+                    }
+                    animateDrone(n, a, game, dt: dt)
                 }
             } else {
                 let n = makeObstacle(a)
@@ -2076,8 +2509,10 @@ final class World3D {
             }
         }
         for (id, n) in asteroidNodes where !alive.contains(id) {
+            killParticles(n)
             n.removeFromParentNode()
             asteroidNodes[id] = nil
+            droneOpen[id] = nil
         }
         // Wrack-Modelle nur vorhalten, solange ein Wrackfeld in der Nähe ist (je Typ etwa 10 MB Lacktexturen)
         if !wreckModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .wreck }) {
@@ -2189,8 +2624,6 @@ final class World3D {
     private var arrivalHold: CGFloat = .infinity
     /// Dauer des Übergangs von der angehaltenen Kamera in die Orbit-Ansicht
     private let arrivalBlendTime: CGFloat = 1.7
-    /// zusätzliche Dauer der Anflugphase bei Flügen mit Hindernissen (Sekunden)
-    private static let arrivalLead: CGFloat = 1.5
     private var parkedPos = SCNVector3(0, 0, 0)
     private var parkedLook = SCNVector3(0, 0, 0)
     private var parkedScale: CGFloat = 1
@@ -2200,9 +2633,9 @@ final class World3D {
     private var lastPx: CGFloat = 1
     private var lastLook = SCNVector3(0, 0, 0)
 
-    /// Vor jedem Planeten bleibt die Kamera hinter dem Schiff stehen und lässt es in den Orbit fliegen.
-    /// Nach dem Einfangen hält sie kurz und wechselt dann langsam in die Draufsicht.
-    private func updateArrival(_ game: Game, dt: CGFloat, ti: Int, distT: CGFloat, tgt: Planet, release: CGFloat) {
+    /// Am Ende der Hindernispassage bleibt die Kamera hinter dem Schiff stehen und lässt es auf den Orbit zufliegen.
+    /// Kurz vor dem Orbit wechselt sie langsam in die Draufsicht.
+    private func updateArrival(_ game: Game, dt: CGFloat, ti: Int, distT: CGFloat, tgt: Planet, passageDone: Bool) {
         if game.phase == .over {
             arrivalActive = false
             arrival = 0
@@ -2210,13 +2643,11 @@ final class World3D {
         }
         // Kamera hält genau dort an, wo sie gerade ist: kein eigener Kameraschwenk
         // nur aus der Nahansicht (Verfolgerkamera), nie in der Draufsicht
-        // setzt 1,5 s Flugzeit früher ein als das Ende der Verfolgerkamera, damit die Anflugphase länger läuft
-        let arrivalStart = release + game.speed * Self.arrivalLead
-        if game.phase == .flying && arrivalIndex != ti && distT < arrivalStart && chase > 0.15 {
+        if game.phase == .flying && arrivalIndex != ti && passageDone && chase > 0.15 {
             arrivalIndex = ti
             arrivalActive = true
-            // kurz stehen bleiben, dann in die Draufsicht
-            arrivalHold = game.time + 0.9
+            // stehen bleiben, bis das Schiff kurz vor dem Orbit ist (Sicherheitsgrenze 6 s), dann in die Draufsicht
+            arrivalHold = game.time + 6
             parkedPos = cameraNode.position
             parkedLook = lastLook
             parkedScale = lastShipScale
@@ -2230,7 +2661,9 @@ final class World3D {
         }
         // ein einziger Übergang in den vorab berechneten Orbit-Ausschnitt, noch vor dem Orbiteintritt
         if arrivalActive && game.time < arrivalHold
-            && (game.phase == .orbiting || distT < tgt.orbitRadius + 450) {
+            && (game.phase == .orbiting || distT < tgt.orbitRadius + 450
+                // fliegt das Schiff nicht mehr aufs Ziel zu (abgelenkt oder vorbei), nicht weiter stehen bleiben
+                || game.vel.dx * (tgt.center.x - game.pos.x) + game.vel.dy * (tgt.center.y - game.pos.y) < 0) {
             arrivalHold = game.time
         }
         let want: CGFloat = arrivalActive && game.time < arrivalHold ? 1 : 0
@@ -2252,9 +2685,15 @@ final class World3D {
 
         // hinter und über dem Schiff
         let hd = chaseHeading.value
-        let ship = game.pos
-        let chasePos = SCNVector3(Float(ship.x - cos(hd) * 190), 95, Float(ship.y - sin(hd) * 190))
-        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * 260), 0, Float(ship.y + sin(hd) * 260))
+        // beim Ausweichen zieht die Kamera seitlich verzögert nach
+        let lag = game.dodgeCameraLag
+        let ship = CGPoint(x: game.pos.x - lag.dx, y: game.pos.y - lag.dy)
+        // beim Ausgleiten ohne Energie fährt sie langsam noch dichter heran
+        let cc = coastClose * coastClose * (3 - 2 * coastClose)
+        let bv = blastView * blastView * (3 - 2 * blastView)
+        let back = 190 - 95 * cc + 70 * bv, height = Float(95 - 45 * cc + 55 * bv), ahead = (260 - 130 * cc) * (1 - bv)
+        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height, Float(ship.y - sin(hd) * back))
+        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), 0, Float(ship.y + sin(hd) * ahead))
 
         func mix(_ a: SCNVector3, _ b: SCNVector3) -> SCNVector3 {
             let f = Float(k)
@@ -2316,8 +2755,18 @@ final class World3D {
             // links aus Sicht hinter dem Schiff
             let lx = fz, lz = -fx
             // weit genug hinten, dass beide Pylonen des Tors im Bild sind
-            let hangarPos = SCNVector3(Float(dp.x - fx * 110 + lx * 30), 26, Float(dp.y - fz * 110 + lz * 30))
-            let hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
+            var hangarPos = SCNVector3(Float(dp.x - fx * 110 + lx * 30), 26, Float(dp.y - fz * 110 + lz * 30))
+            var hangarLook = SCNVector3(Float(dp.x + fx * 22), 7, Float(dp.y + fz * 22))
+            // Anflug auf eine Station: dieselbe Nahansicht, aber so weit zurückgezogen und zwischen Schiff und
+            // Plattform ausgerichtet, dass beide im Bild sind; beim Näherkommen läuft sie in die feste Einstellung
+            if game.dockArriving {
+                let sx = game.pos.x - dp.x, sz = game.pos.y - dp.y
+                let gap = hypot(sx, sz)
+                let mx = dp.x + sx * 0.5, mz = dp.y + sz * 0.5
+                let back = 110 + gap * 0.55
+                hangarPos = SCNVector3(Float(mx - fx * back + lx * (30 + gap * 0.15)), Float(26 + gap * 0.28), Float(mz - fz * back + lz * (30 + gap * 0.15)))
+                hangarLook = SCNVector3(Float(mx + fx * 22), 7, Float(mz + fz * 22))
+            }
             let f = Float(kh)
             pos = SCNVector3(pos.x + (hangarPos.x - pos.x) * f, pos.y + (hangarPos.y - pos.y) * f, pos.z + (hangarPos.z - pos.z) * f)
             lookA = SCNVector3(lookA.x + (hangarLook.x - lookA.x) * f, lookA.y + (hangarLook.y - lookA.y) * f, lookA.z + (hangarLook.z - lookA.z) * f)

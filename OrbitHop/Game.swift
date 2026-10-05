@@ -158,7 +158,12 @@ struct Planet {
     let energyScale: CGFloat   // spätere Planeten geben weniger Energie
     let bonus: ItemKind?       // Planetentyp bestimmt das Bonus-Item
     var hardRoute = false      // auf dem Weg hierher liegen Hindernisse
+    /// Hindernispassage auf dem Weg hierher: Bereich auf der Achse vom vorigen Planeten (Abstand von dessen Mitte).
+    /// Davor liegt der freie Abflug, dahinter der freie Anflug. Ohne Hindernisse beide 0.
+    var passageFrom: CGFloat = 0
+    var passageTo: CGFloat = 0
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
+    var stationNo = -1         // laufende Nummer der Station (Name und Modell), sonst -1
     var kind: PlanetKind = .normal
 
     /// Schwarze Löcher ziehen viel stärker, als ihre Größe vermuten lässt
@@ -230,6 +235,8 @@ struct Popup {
     let text: String
     let color: Color
     var age: CGFloat
+    /// zusätzlicher Abstand nach oben in Bildpunkten (Komet: Schild über der Explosion, nicht darauf)
+    var lift: CGFloat = 0
 
     /// So lange bleibt der Text voll sichtbar, danach blendet er über `fade` aus.
     static let hold: CGFloat = 1.4
@@ -304,11 +311,11 @@ enum ItemKind: CaseIterable {
         }
     }
 
-    /// Gewichtete Zufallsauswahl, der Nachbrenner ist selten.
+    /// Gewichtete Zufallsauswahl, Superbombe und Nachbrenner sind selten.
     static func random() -> ItemKind {
         let r = Double.random(in: 0...1, using: &Dice.rng)
-        if r < 0.42 { return .energy }
-        if r < 0.64 { return .wideCone }
+        if r < 0.5 { return .energy }
+        if r < 0.76 { return .wideCone }
         if r < 0.86 { return .superBomb }
         return .rescue
     }
@@ -475,6 +482,9 @@ final class Game {
     var maxEnergy: CGFloat { ship.maxEnergy }
     var weapon: WeaponKind { ship.weapon }
     var weaponCost: CGFloat { (weapon.cost * ship.weaponCostFactor).rounded() }
+    /// Reichweite wächst mit der Ausbaustufe; Geschosse fliegen entsprechend länger
+    var rangeFactor: CGFloat { ship.weaponRangeFactor }
+    var railReach: CGFloat { Game.railRange * rangeFactor }
     var runParts = 0                      // in diesem Flug gesammelte Tech-Teile
     var runShipParts = 0                  // in diesem Flug gefundene Schiffsteile
 
@@ -522,6 +532,12 @@ final class Game {
     }
     /// Höhe über der Plattform (nur 3D): sanft hoch, nach dem Abflug wieder auf Flughöhe
     var liftHeight: CGFloat {
+        if departAt == nil, phase == .docked, let t0 = arriveAt {
+            // Anflug knapp über der Plattform, erst nach der Drehung weich aufsetzen
+            let u = min(1, max(0, (time - t0) / arriveDuration))
+            func ease(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * (3 - 2 * c) }
+            return 7 * ease(u / 0.35) * (1 - ease((u - 0.72) / 0.28))
+        }
         guard let t0 = departAt else { return 0 }
         let t = time - t0
         func ease(_ x: CGFloat) -> CGFloat { let c = min(1, max(0, x)); return c * c * (3 - 2 * c) }
@@ -529,6 +545,21 @@ final class Game {
         let down = ease((t - Game.liftTime - Game.rollTime) / 1.0)
         let hover = 0.5 * sin(t * 3.2) * up * (1 - ease((t - Game.liftTime) / 0.6))
         return (7 * up + hover) * (1 - down)
+    }
+    /// Anflug auf eine Raumstation: Startzeit, Dauer und Bogen um die Station bis zur Plattform
+    private(set) var arriveAt: CGFloat?
+    private var arriveDuration: CGFloat = 2.5
+    /// Anflugbahn: kubische Bézierkurve vom Schiff zur Plattform und ihre Längentabelle
+    private var arrivePath: [CGPoint] = []
+    private var arriveLengths: [CGFloat] = []
+    /// Anfangstempo als Anteil (Steigung des Wegprofils), damit der Übergang aus dem Flug ohne Ruck ist
+    private var arriveSlope: CGFloat = 1
+    /// Ab diesem Abstand zur Plattform übernimmt der Anflug
+    static let dockApproachRange: CGFloat = 620
+    /// Das Schiff fliegt gerade die Andockplattform einer Station an
+    var dockArriving: Bool {
+        guard phase == .docked, departAt == nil, let t0 = arriveAt else { return false }
+        return time - t0 < arriveDuration
     }
     /// Hangar-Nahaufnahme oder der Übergang danach: Zielanzeigen der Draufsicht passen dann nicht ins Bild
     var inHangarView: Bool { phase == .docked || (dockLaunch && time - lastLaunchTime < 1.8) }
@@ -554,6 +585,8 @@ final class Game {
 
     var particles: [Particle] = []
     var bursts: [Burst] = []              // neue Effekte für die 3D-Welt
+    var shatters: [Asteroid] = []         // zerstörte Kometen: die 3D-Welt lässt sie in Eisbrocken zerplatzen
+    var cometKilledAt: CGFloat = -10      // Zeitpunkt der letzten Kometen-Zerstörung (Blitz und Banner)
     var generation = 0                    // zählt hoch bei jedem Neustart
     var project: ((CGPoint) -> CGPoint?)? // Welt → Bildschirm, kommt von der 3D-Welt
     var popups: [Popup] = []
@@ -578,6 +611,9 @@ final class Game {
         return distanceShown
     }
     var overAt: CGFloat = 0
+    /// Die Ende-Tafel kommt erst, wenn man das Ausgleiten bzw. die Explosion gesehen hat
+    var overPanelDelay: CGFloat { destroyed ? 2.8 : 5.5 }
+    var overPanelShown: Bool { phase == .over && time - overAt >= overPanelDelay }
     var lastAccuracy: CGFloat = 0
     var lastLaunchTime: CGFloat = -10
 
@@ -592,6 +628,14 @@ final class Game {
     var items: [Item] = []
     var wideConeLaunches = 0              // so viele Starts mit breitem Kegel
     var superBombs = 0                    // zündet beim nächsten Hindernis in der Flugbahn
+    /// Ausweichen: Startzeit und Seite (-1 links, +1 rechts, aus Sicht des Piloten)
+    private(set) var dodgeStart: CGFloat = -10
+    private var dodgeSide: CGFloat = 0
+    /// Summe der Ausweich-Versätze: die Lenkhilfe zielt parallel versetzt, damit das Schiff nicht zur alten Linie zurückdriftet.
+    /// Erst nach der Hindernispassage baut sich der Versatz langsam ab.
+    private var dodgeOffset = CGVector.zero
+    /// Richtung des letzten Ausweichens (Einheitsvektor quer zur Flugrichtung, mit Seite)
+    private var dodgeDir = CGVector.zero
     var rescueCharges = 0                 // eingesammelte Nachbrenner
     var boostTime: CGFloat = 0            // Nachbrenner-Effekt läuft
     var weaponCooldown: CGFloat = 0
@@ -675,7 +719,7 @@ final class Game {
 
     var speed: CGFloat {
         switch phase {
-        case .flying: return hypot(vel.dx, vel.dy)
+        case .flying, .over: return hypot(vel.dx, vel.dy)
         case .docked:
             guard let t = departElapsed, t > Game.liftTime else { return 0 }
             return launchSpeed(accuracy: Game.dockAccuracy) * (t - Game.liftTime) / Game.rollTime
@@ -706,29 +750,78 @@ final class Game {
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
-    static let stationTest = false
+    static let stationTest = true   // TESTFLIGHT-TEST: erste Station als zweites Ziel; vor der Veröffentlichung wieder auf false
     /// Nur für Tests: Schwarzes Loch als zweites, Doppelstern als viertes Ziel (Start mit -planetTest)
     static let planetTest = ProcessInfo.processInfo.arguments.contains("-planetTest")
     /// Nur für Tests: Drohnen auf jeder Strecke ab dem zweiten Ziel (Start mit -droneTest)
     static let droneTest = ProcessInfo.processInfo.arguments.contains("-droneTest")
 
     // MARK: Raumstation
-    /// Index des nächsten Planeten, der eine Raumstation wird
-    private var nextStation = 0
+    /// Namen der Raumstationen; ab der elften wiederholen sie sich mit Zählung (AURORA II …).
+    /// Name und Modell hängen an der Nummer, damit man eine Station wiedererkennt und dort neu starten kann.
+    static let stationNames = ["AURORA", "VEGA", "HELIOS", "KEPLER", "BOREAS",
+                               "LYRA", "ZENIT", "POLARIS", "ANDROMEDA", "ELYSIUM"]
+    static let stationModels = 10
+
+    static func stationName(_ k: Int) -> String {
+        let round = max(0, k) / stationNames.count
+        let roman = ["", " II", " III", " IV", " V", " VI", " VII", " VIII", " IX", " X"]
+        return stationNames[max(0, k) % stationNames.count] + (round < roman.count ? roman[round] : " \(round + 1)")
+    }
+
+    /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
+    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40.
+    static func stationPlanet(_ k: Int) -> Int {
+        var n = stationTest ? 2 : 32
+        for j in 0..<max(0, k) {
+            let lvl = min(1, CGFloat(n) / 40)
+            n += Int(30 + 12 * lvl) + (j * 5) % 9
+        }
+        return n
+    }
+
+    /// Nummer der nächsten Station, die auf der Strecke entsteht
+    private var nextStationNo = 0
+    /// Planetennummer des ersten Planeten dieses Flugs: 0 im Hangar, sonst die der Startstation
+    private(set) var planetBase = 0
+    /// Name der Station, an der das Schiff gerade liegt
+    var currentStationName: String? {
+        let p = planets[currentIndex]
+        return p.isStation ? Game.stationName(p.stationNo) : nil
+    }
     /// Menü der Raumstation ist offen, die Simulation ruht
     var stationOpen = false
     /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
     private var stationMenuAt: CGFloat?
-    var atStation: Bool { phase == .orbiting && planets[currentIndex].isStation }
+    /// Sichtbarkeit der HUD-Anzeigen: vor dem Start aus, beim Abheben aus dem Hangar weich einblenden
+    var hudAlpha: CGFloat {
+        guard started else { return 0 }
+        guard phase == .docked, arriveAt == nil, !planets[currentIndex].isStation else { return 1 }
+        guard let d = departAt else { return 0 }
+        return min(1, max(0, (time - d) / 0.6))
+    }
 
-    /// Abstand bis zur nächsten Station: anfangs 30 bis 40 Planeten, mit steigender Schwierigkeit mehr
-    private func stationGap(_ lvl: CGFloat) -> Int { Int(30 + 12 * lvl) + Int.random(in: 0...8, using: &Dice.rng) }
+    var atStation: Bool {
+        planets[currentIndex].isStation && (phase == .orbiting || (phase == .docked && departAt == nil))
+    }
+
+    /// Andockplattform einer Station: auf der Bahn an der Stelle, von der aus die Tangente genau zum
+    /// nächsten Planeten zeigt (wie im Hangar). Stationen werden immer gegen den Uhrzeigersinn angeflogen.
+    func stationDock(_ i: Int) -> (pos: CGPoint, heading: CGFloat, angle: CGFloat)? {
+        guard planets.indices.contains(i), planets.indices.contains(i + 1) else { return nil }
+        let c = planets[i].center, t = planets[i + 1].center
+        let dir = atan2(t.y - c.y, t.x - c.x)
+        let angle = dir - CGFloat.pi / 2
+        return (point(from: c, angle: angle, distance: planets[i].orbitRadius), dir, angle)
+    }
 
     /// Panzerung: Kollisionen zehren daran, bei null explodiert das Schiff. Nur an Stationen reparierbar.
     static let maxHull: CGFloat = 100
     var hull: CGFloat = Game.maxHull
     /// Flug endete durch zerstörte Panzerung statt leerer Energie
     private(set) var destroyed = false
+    /// Bewegung im letzten Schritt (für das Ausgleiten ohne Energie)
+    private var lastStepVel = CGVector.zero
 
     /// Tech-Teile für eine volle Reparatur: etwa 1 je 10 % Panzerung und 1 je 25 Energie, mindestens 1
     var repairCost: Int {
@@ -746,8 +839,96 @@ final class Game {
         Haptics.bonus()
     }
 
+    /// Weiterfliegen: Menü zu, das Schiff hebt von der Plattform ab wie beim Spielstart
     func leaveStation() {
         stationOpen = false
+        if phase == .docked { depart() }
+    }
+
+    /// Anflug auf die Station in der Nahansicht. Die Bahn ist eine weiche Kurve vom Schiff zur Plattform:
+    /// Sie beginnt in der aktuellen Flugrichtung und mit dem aktuellen Tempo, endet in Startrichtung der
+    /// Plattform und bremst bis zum Stillstand. Die Nase folgt der Bahn, die Drehung steckt also in der
+    /// Bewegung. Liegt die Station im Weg, wird die Kurve außen herumgebogen.
+    private func beginDocking(_ index: Int) {
+        guard let d = stationDock(index) else { return }
+        let c = planets[index].center
+        let p0 = pos, p3 = d.pos
+        let v = hypot(vel.dx, vel.dy)
+        let speed = max(120, v)
+        let vdir = v > 1 ? CGVector(dx: vel.dx / v, dy: vel.dy / v) : CGVector(dx: cos(heading), dy: sin(heading))
+        let chord = max(60, hypot(p3.x - p0.x, p3.y - p0.y))
+        var p1 = CGPoint(x: p0.x + vdir.dx * chord * 0.4, y: p0.y + vdir.dy * chord * 0.4)
+        // letztes Stück gerade in Startrichtung auf die Plattform
+        var p2 = CGPoint(x: p3.x - cos(d.heading) * chord * 0.45, y: p3.y - sin(d.heading) * chord * 0.45)
+        let clear = planets[index].radius + 45
+        func bez(_ t: CGFloat) -> CGPoint {
+            let a = (1 - t) * (1 - t) * (1 - t), b = 3 * (1 - t) * (1 - t) * t, cc = 3 * (1 - t) * t * t, e = t * t * t
+            return CGPoint(x: a * p0.x + b * p1.x + cc * p2.x + e * p3.x, y: a * p0.y + b * p1.y + cc * p2.y + e * p3.y)
+        }
+        // Station im Weg: die beiden Hilfspunkte schrittweise nach außen schieben
+        for _ in 0..<12 {
+            var closest: CGFloat = .infinity
+            for k in 1..<24 {
+                let q = bez(CGFloat(k) / 24)
+                closest = min(closest, hypot(q.x - c.x, q.y - c.y))
+            }
+            guard closest < clear else { break }
+            for i in 0..<2 {
+                let q = i == 0 ? p1 : p2
+                let ox = q.x - c.x, oy = q.y - c.y
+                let ol = max(1, hypot(ox, oy))
+                let moved = CGPoint(x: q.x + ox / ol * 70, y: q.y + oy / ol * 70)
+                if i == 0 { p1 = moved } else { p2 = moved }
+            }
+        }
+        // Längentabelle für gleichmäßiges Abfahren nach Weg statt nach Kurvenparameter
+        arrivePath = (0...48).map { bez(CGFloat($0) / 48) }
+        var lengths: [CGFloat] = [0]
+        for k in 1..<arrivePath.count {
+            lengths.append(lengths[k - 1] + hypot(arrivePath[k].x - arrivePath[k - 1].x, arrivePath[k].y - arrivePath[k - 1].y))
+        }
+        arriveLengths = lengths
+        let total = max(1, lengths.last ?? 1)
+        // mittleres Tempo etwa zwei Drittel des Eintrittstempos, dann bremst das Wegprofil bis null
+        arriveDuration = min(4.2, max(2.2, total / (speed * 0.6)))
+        arriveSlope = min(2.6, speed * arriveDuration / total)
+        arriveAt = time
+        orbitDir = 1
+        orbitAngle = d.angle
+        orbitDist = planets[index].orbitRadius
+        orbitOmega = 0
+        orbitVr = 0
+        dockPos = d.pos
+        dockHeading = d.heading
+        departAt = nil
+        dockLaunch = false
+        vel = .zero
+        phase = .docked
+        stationMenuAt = time + arriveDuration + 0.4
+    }
+
+    /// Punkt und Richtung auf der Anflugbahn nach zurückgelegtem Weg
+    private func arrivePoint(at dist: CGFloat) -> (CGPoint, CGFloat) {
+        guard arrivePath.count > 1 else { return (dockPos, dockHeading) }
+        var k = 1
+        while k < arriveLengths.count - 1 && arriveLengths[k] < dist { k += 1 }
+        let a = arrivePath[k - 1], b = arrivePath[k]
+        let seg = max(0.001, arriveLengths[k] - arriveLengths[k - 1])
+        let f = min(1, max(0, (dist - arriveLengths[k - 1]) / seg))
+        let p = CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+        return (p, atan2(b.y - a.y, b.x - a.x))
+    }
+
+    /// Anflug abfahren: Wegprofil mit Eintrittstempo am Anfang und Stillstand am Ende (kubisch, ohne Überschwingen)
+    private func updateDocking() {
+        guard let t0 = arriveAt, let total = arriveLengths.last else { return }
+        let u = min(1, max(0, (time - t0) / arriveDuration))
+        let m = arriveSlope
+        let f = m * (u * u * u - 2 * u * u + u) + (-2 * u * u * u + 3 * u * u)
+        let (p, dir) = arrivePoint(at: min(1, max(0, f)) * total)
+        pos = p
+        // Die Nase folgt der Bahn; das letzte Stück liegt in Startrichtung, dort kommt sie genau an
+        heading = u >= 1 ? dockHeading : dir
     }
     var botThreshold: CGFloat = -1
     var botSkip = false
@@ -813,6 +994,7 @@ final class Game {
         enemyShots = []
         clouds = []
         brakeFlash = 0
+        cometKilledAt = -10
         orbitCharge = 0
         bonusTaken = []
         solarPool = 0
@@ -823,21 +1005,34 @@ final class Game {
         comboFlight = false
         wideConeLaunches = 0
         superBombs = 0
+        dodgeStart = -10
+        dodgeOffset = .zero
         rescueCharges = 0
         boostTime = 0
         stationOpen = false
         stationMenuAt = nil
-        // ZUM TESTEN: erste Station schon als zweites Ziel; im fertigen Spiel Int.random(in: 30...36)
-        nextStation = Game.stationTest ? 2 : Int.random(in: 30...36, using: &Dice.rng)
-        planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
+        arriveAt = nil
+        // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
+        let startNo = dailyMode ? -1 : min(profile.startStation, profile.stationsReached - 1)
+        planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
+        nextStationNo = startNo + 1
+        if startNo >= 0 {
+            var first = Planet.make(center: .zero, radius: 160, spin: 0.85, hue: 165, allowRing: false, energyScale: 0)
+            first.isStation = true
+            first.stationNo = startNo
+            planets = [first]
+        } else {
+            planets = [Planet.make(center: .zero, radius: 180, spin: 0.85, hue: 215, allowRing: false)]
+        }
         while planets.count < 4 { addPlanet() }
         phase = .orbiting
         currentIndex = 0
         originIndex = 0
-        score = 0
+        score = planetBase
         energy = maxEnergy
         orbitAngle = CGFloat.random(in: 0...(CGFloat.pi * 2))
-        orbitDir = Bool.random(using: &Dice.rng) ? 1 : -1
+        // an einer Station liegt die Plattform immer auf derselben Seite (siehe stationDock)
+        orbitDir = startNo >= 0 ? 1 : (Bool.random(using: &Dice.rng) ? 1 : -1)
         orbitDist = planets[0].orbitRadius
         orbitVr = 0
         orbitOmega = orbitDir * planets[0].spin
@@ -878,18 +1073,19 @@ final class Game {
     func addPlanet() {
         let prev = planets[planets.count - 1]
         // je weiter hinten, desto kleiner, schneller umkreist und weiter entfernt
-        let lvl = min(1, CGFloat(planets.count) / 40)
-        let station = planets.count == nextStation
-        if station { nextStation += stationGap(lvl) }
+        // Nummer des neuen Planeten auf der ganzen Strecke (beim Start an einer Station nicht bei 0)
+        let n = planetBase + planets.count
+        let lvl = min(1, CGFloat(n) / 40)
+        let station = n == Game.stationPlanet(nextStationNo)
         // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
         var kind = PlanetKind.normal
-        if !station && planets.count >= 6 && prev.kind == .normal && !prev.isStation && planets.count + 1 != nextStation {
+        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) {
             let roll = Double.random(in: 0...1, using: &Dice.rng)
             if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
             else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
         }
         if Game.planetTest && !station {
-            kind = planets.count == 2 ? .blackHole : (planets.count == 4 ? .binary : .normal)
+            kind = n == 2 ? .blackHole : (n == 4 ? .binary : .normal)
         }
         // Raumstationen sind große, ruhige Planeten mit freier Anflugstrecke
         let r: CGFloat
@@ -901,13 +1097,24 @@ final class Game {
         let angle = -CGFloat.pi / 2 + CGFloat.random(in: -(0.9 + 0.3 * lvl)...(0.9 + 0.3 * lvl), using: &Dice.rng)
         // Liegt ein Asteroidenfeld auf der Strecke, ist der nächste Planet deutlich weiter weg
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
-        let hasComet = !station && planets.count >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
-        let hasField = !station && !hasComet && planets.count >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        // (die ersten Strecken nach dem Start bekommen keine Hindernisse)
+        let canSpawn = planets.count >= 2
+        let hasComet = canSpawn && !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
+        let hasField = canSpawn && !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
         // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet oder vor einer Station)
-        let hasDrones = !station && !hasComet && planets.count >= (Game.droneTest ? 2 : 8)
+        let hasDrones = canSpawn && !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
             && Double.random(in: 0...1, using: &Dice.rng) < (Game.droneTest ? 1 : Double(0.12 + 0.18 * lvl))
-        let gap = CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
-            + (hasField ? 2200 + 500 * lvl : 0) + (hasComet ? 3400 : 0)
+        // Strecken mit Hindernissen sind fest gegliedert: freier Abflug (Übergang in die Nahaufnahme),
+        // Hindernispassage, freier Anflug (Kamera bleibt stehen). Nur in der Passage liegen Hindernisse.
+        let hard = hasField || hasComet || hasDrones
+        var passageLen: CGFloat = 0
+        if hasField { passageLen = max(passageLen, CGFloat.random(in: (2600 + 600 * lvl)...(3000 + 800 * lvl), using: &Dice.rng)) }
+        if hasDrones { passageLen = max(passageLen, CGFloat.random(in: (2300 + 400 * lvl)...(2700 + 500 * lvl), using: &Dice.rng)) }
+        if hasComet { passageLen = max(passageLen, 3600 + 400 * lvl) }
+        let r0 = prev.orbitRadius - prev.radius, r1: CGFloat = kind == .blackHole ? 150 : 90
+        let gap = hard
+            ? r0 + Game.departLength + passageLen + Game.approachLength + r1
+            : CGFloat.random(in: (1500 + 450 * lvl)...(2400 + 650 * lvl), using: &Dice.rng)
         let dist = prev.radius + r + gap
         let c = point(from: prev.center, angle: angle, distance: dist)
         // Das Schwarze Loch wird so schnell umkreist wie ein mittelgroßer Planet, nicht wie ein winziger
@@ -925,9 +1132,17 @@ final class Game {
         planets.append(Planet.make(center: c, radius: r, spin: spin,
                                    hue: hue, allowRing: !station && kind == .normal,
                                    energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * kindEnergy, bonus: bonus))
-        planets[planets.count - 1].hardRoute = hasField || hasComet || hasDrones
+        planets[planets.count - 1].hardRoute = hard
+        if hard {
+            planets[planets.count - 1].passageFrom = prev.orbitRadius + Game.departLength
+            planets[planets.count - 1].passageTo = prev.orbitRadius + Game.departLength + passageLen
+        }
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
+        if station {
+            planets[planets.count - 1].stationNo = nextStationNo
+            nextStationNo += 1
+        }
 
         guard planets.count >= 3 else { return }
         let gapIndex = planets.count - 1
@@ -959,8 +1174,34 @@ final class Game {
 
     // MARK: Hindernisse
 
+    /// Länge des freien Abflugs hinter dem Orbit: Zeit für den Übergang in die Nahaufnahme
+    static let departLength: CGFloat = 1000
+    /// Länge des freien Anflugs vor dem Zielorbit: die Kamera bleibt stehen und lässt das Schiff einfliegen
+    static let approachLength: CGFloat = 1600
+
+    /// Achse und Bereich der Hindernispassage auf der Strecke zum Planeten `gap`
+    func passage(_ gap: Int) -> (origin: CGPoint, dir: CGVector, from: CGFloat, to: CGFloat)? {
+        guard gap > 0, gap < planets.count, planets[gap].passageTo > 0 else { return nil }
+        let a = planets[gap - 1].center, b = planets[gap].center
+        let len = max(1, hypot(b.x - a.x, b.y - a.y))
+        return (a, CGVector(dx: (b.x - a.x) / len, dy: (b.y - a.y) / len), planets[gap].passageFrom, planets[gap].passageTo)
+    }
+
+    /// Wie weit ein Punkt auf der Achse der Strecke zum Planeten `gap` liegt (vom Startplaneten aus)
+    func progress(_ p: CGPoint, gap: Int) -> CGFloat? {
+        guard let ps = passage(gap) else { return nil }
+        return (p.x - ps.origin.x) * ps.dir.dx + (p.y - ps.origin.y) * ps.dir.dy
+    }
+
+    /// Punkt in der Passage: `t` von 0 (Anfang) bis 1 (Ende), seitlich versetzt
+    private func passagePoint(_ ps: (origin: CGPoint, dir: CGVector, from: CGFloat, to: CGFloat), _ t: CGFloat, side: CGFloat) -> CGPoint {
+        let d = ps.from + (ps.to - ps.from) * t
+        return CGPoint(x: ps.origin.x + ps.dir.dx * d - ps.dir.dy * side, y: ps.origin.y + ps.dir.dy * d + ps.dir.dx * side)
+    }
+
     /// Feld aus Gestein, Satellitentrümmern oder Schiffswracks auf der Strecke
     private func spawnField(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
+        guard let ps = passage(gap) else { return }
         let roll = Double.random(in: 0...1, using: &Dice.rng)
         let kind: ObstacleKind = gap >= 5 && roll < 0.15 ? .wreck : (gap >= 3 && roll < 0.4 ? .debris : .rock)
         let count: Int
@@ -971,10 +1212,9 @@ final class Game {
         case .comet, .drone: count = 0
         }
         for _ in 0..<count {
-            // über die ganze Strecke verteilt, seitlich gestreut
-            let t = CGFloat.random(in: 0.32...0.8, using: &Dice.rng)
-            let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
-            let p = point(from: along, angle: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), distance: CGFloat.random(in: 0...280, using: &Dice.rng))
+            // über die ganze Passage verteilt, seitlich gestreut (mit Rand, damit nichts herausragt)
+            let t = CGFloat.random(in: 0.03...0.97, using: &Dice.rng)
+            let p = passagePoint(ps, t, side: CGFloat.random(in: -300...300, using: &Dice.rng))
             if hypot(p.x - a.center.x, p.y - a.center.y) < a.orbitRadius + 70 { continue }
             if hypot(p.x - b.center.x, p.y - b.center.y) < b.orbitRadius + 70 { continue }
             var o = Asteroid(center: p, radius: CGFloat.random(in: 16...40, using: &Dice.rng),
@@ -1003,11 +1243,10 @@ final class Game {
 
     /// Komet fliegt langsam in Flugrichtung vor dem Schiff her und braucht mehrere Treffer
     private func spawnComet(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
-        let dx = b.center.x - a.center.x, dy = b.center.y - a.center.y
-        let len = hypot(dx, dy)
-        let dir = CGVector(dx: dx / len, dy: dy / len)
-        let start = CGPoint(x: a.center.x + dx * 0.3, y: a.center.y + dy * 0.3)
-        let end = CGPoint(x: a.center.x + dx * 0.85, y: a.center.y + dy * 0.85)
+        guard let ps = passage(gap) else { return }
+        let dir = ps.dir
+        let start = passagePoint(ps, 0.05, side: 0)
+        let end = passagePoint(ps, 0.95, side: 0)
         let hp = 8 + Int(4 * lvl)
         asteroids.append(Asteroid(center: start, radius: 52, shape: (0..<9).map { _ in CGFloat.random(in: 0.8...1.1, using: &Dice.rng) },
                                   spin: 0.3, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng), tone: 0.8, gap: gap,
@@ -1017,12 +1256,10 @@ final class Game {
 
     /// Ein bis drei Drohnen warten seitlich der Streckenmitte
     private func spawnDrones(from a: Planet, to b: Planet, gap: Int, lvl: CGFloat) {
+        guard let ps = passage(gap) else { return }
         let count = 1 + (lvl > 0.35 ? 1 : 0) + (Double.random(in: 0...1, using: &Dice.rng) < Double(lvl) * 0.5 ? 1 : 0)
-        let dir = atan2(b.center.y - a.center.y, b.center.x - a.center.x)
         for _ in 0..<count {
-            let t = CGFloat.random(in: 0.4...0.68, using: &Dice.rng)
-            let along = CGPoint(x: a.center.x + (b.center.x - a.center.x) * t, y: a.center.y + (b.center.y - a.center.y) * t)
-            let p = point(from: along, angle: dir + .pi / 2, distance: CGFloat.random(in: -340...340, using: &Dice.rng))
+            let p = passagePoint(ps, CGFloat.random(in: 0.25...0.75, using: &Dice.rng), side: CGFloat.random(in: -340...340, using: &Dice.rng))
             let hp = 3 + Int(3 * lvl)
             asteroids.append(Asteroid(center: p, radius: 22, shape: Array(repeating: 1, count: 9),
                                       spin: 0, phase: CGFloat.random(in: 0...(CGFloat.pi * 2), using: &Dice.rng),
@@ -1037,12 +1274,15 @@ final class Game {
     /// Drohnen: im Flug auf ihrer Strecke Kurs auf das Schiff mit Vorhalt, schießen in Reichweite.
     /// Sonst schweben sie langsam an ihrem Platz. In den Zielorbit folgen sie nicht.
     private func moveDrones(_ dt: CGFloat) {
-        let tg = planets[min(originIndex + 1, planets.count - 1)]
         for i in asteroids.indices where asteroids[i].kind == .drone {
             let c = asteroids[i].center
             let dx = pos.x - c.x, dy = pos.y - c.y
             let d = hypot(dx, dy)
-            let hunting = phase == .flying && asteroids[i].gap == originIndex + 1 && d < Game.droneSight
+            // gejagt wird nur, solange das Schiff in der Hindernispassage ist
+            let shipAt = progress(pos, gap: asteroids[i].gap) ?? 0
+            let route = planets[min(asteroids[i].gap, planets.count - 1)]
+            let inPassage = shipAt > route.passageFrom - 300 && shipAt < route.passageTo
+            let hunting = phase == .flying && asteroids[i].gap == originIndex + 1 && inPassage && d < Game.droneSight
             var want = CGVector.zero
             if hunting {
                 // Vorhalt: dorthin, wo das Schiff gleich sein wird
@@ -1066,11 +1306,11 @@ final class Game {
                 let a = asteroids[i].phase + time * 0.8
                 want = CGVector(dx: cos(a) * 25, dy: sin(a) * 25)
             }
-            // nicht in den Zielorbit hinein
-            let tdx = c.x - tg.center.x, tdy = c.y - tg.center.y
-            let td = max(1, hypot(tdx, tdy))
-            if td < tg.orbitRadius + 260 {
-                want = CGVector(dx: tdx / td * Game.droneSpeed * 0.6, dy: tdy / td * Game.droneSpeed * 0.6)
+            // nicht aus der Hindernispassage hinaus (weder in den Abflug noch in den Anflug)
+            if let ps = passage(asteroids[i].gap) {
+                let at = (c.x - ps.origin.x) * ps.dir.dx + (c.y - ps.origin.y) * ps.dir.dy
+                if at > ps.to - 60 { want = CGVector(dx: -ps.dir.dx * Game.droneSpeed * 0.6, dy: -ps.dir.dy * Game.droneSpeed * 0.6) }
+                if at < ps.from + 60 { want = CGVector(dx: ps.dir.dx * Game.droneSpeed * 0.6, dy: ps.dir.dy * Game.droneSpeed * 0.6) }
             }
             // weich lenken statt sofort umzudrehen
             let k = min(1, dt * 2.2)
@@ -1123,8 +1363,8 @@ final class Game {
                     asteroids[i].center.x += dx / d * step
                     asteroids[i].center.y += dy / d * step
                 }
-                // weiter in Flugrichtung, aber nicht in den Zielorbit hinein
-                let nearTarget = hypot(tgt.center.x - c.x, tgt.center.y - c.y) < tgt.orbitRadius + 550
+                // weiter in Flugrichtung, aber nicht aus der Hindernispassage hinaus
+                let nearTarget = (progress(c, gap: originIndex + 1) ?? 0) > tgt.passageTo - asteroids[i].radius
                 asteroids[i].vel = nearTarget ? .zero : CGVector(dx: fwd.dx * 105, dy: fwd.dy * 105)
                 asteroids[i].end = nil
             }
@@ -1134,6 +1374,15 @@ final class Game {
             guard v.dx != 0 || v.dy != 0 else { continue }
             asteroids[i].center.x += v.dx * dt
             asteroids[i].center.y += v.dy * dt
+            // treibende Trümmer und Wracks prallen an den Enden der Hindernispassage ab
+            if asteroids[i].kind == .debris || asteroids[i].kind == .wreck, let ps = passage(asteroids[i].gap) {
+                let c = asteroids[i].center
+                let at = (c.x - ps.origin.x) * ps.dir.dx + (c.y - ps.origin.y) * ps.dir.dy
+                let va = v.dx * ps.dir.dx + v.dy * ps.dir.dy
+                if (at < ps.from + asteroids[i].radius && va < 0) || (at > ps.to - asteroids[i].radius && va > 0) {
+                    asteroids[i].vel = CGVector(dx: v.dx - 2 * va * ps.dir.dx, dy: v.dy - 2 * va * ps.dir.dy)
+                }
+            }
             if let e = asteroids[i].end {
                 let c = asteroids[i].center
                 if (e.x - c.x) * v.dx + (e.y - c.y) * v.dy < 0 {
@@ -1204,6 +1453,12 @@ final class Game {
     /// Ergebnis dieses Laufs ist schon gespeichert (Spielende, Abbruch und Neustart melden nur einmal)
     private var runRecorded = false
 
+    /// Startpunkt wählen: -1 = Hangar, sonst eine erreichte Station; baut die Welt neu auf
+    func setStartStation(_ k: Int) {
+        profile.setStartStation(k)
+        reset()
+    }
+
     /// Zwischen freiem Spiel und Tagesherausforderung wechseln; baut die Welt neu auf
     func setDaily(_ on: Bool) {
         finishRun()
@@ -1260,9 +1515,14 @@ final class Game {
         }
         switch phase {
         case .docked:
-            depart()
+            // beim Anflug auf eine Station und im Stationsmenü startet ein Tipp nichts
+            if arriveAt == nil { depart() }
         case .over:
-            if time - overAt > 0.6 { reset() }
+            // zurück zum Titel: dort liegen Schiffe, Missionen und die Wahl zwischen freiem Spiel und Tagesflug
+            if overPanelShown && time - overAt > overPanelDelay + 0.4 {
+                started = false
+                reset()
+            }
         case .flying:
             fire()
         case .orbiting:
@@ -1305,6 +1565,7 @@ final class Game {
         let hd = orbitAngle + orbitDir * CGFloat.pi / 2
         vel = CGVector(dx: cos(hd) * speed, dy: sin(hd) * speed)
         originIndex = currentIndex
+        dodgeOffset = .zero
         flightTime = 0
         lastAccuracy = accuracy
         lastLaunchTime = time
@@ -1349,6 +1610,7 @@ final class Game {
     private func depart() {
         guard departAt == nil else { return }
         departAt = time
+        arriveAt = nil
         Haptics.capture()
         SoundFX.shared.play(.release)
     }
@@ -1379,6 +1641,7 @@ final class Game {
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
         uiTime += dt
+        if stationOpen && (Game.bot || Game.autopilot) { leaveStation() }
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
             // im Stationsmenü fährt die Kamera noch auf die Station über dem Menü
@@ -1403,7 +1666,7 @@ final class Game {
                 popups.append(Popup(pos: pos, text: t, color: hsl(h, 0.85, 0.65), age: 0))
             }
         }
-        if phase != .over { simulate(simDt) }
+        if phase != .over { simulate(simDt) } else { coast(simDt) }
         if let t = stationMenuAt, time >= t {
             stationMenuAt = nil
             if atStation { stationOpen = true }
@@ -1486,6 +1749,15 @@ final class Game {
         }
     }
 
+    /// Spielende ohne Energie: Triebwerke aus, das Schiff gleitet mit dem letzten Schwung weiter und bremst ab
+    private func coast(_ dt: CGFloat) {
+        guard !destroyed else { return }
+        let k = exp(-0.3 * dt)
+        vel = CGVector(dx: vel.dx * k, dy: vel.dy * k)
+        pos.x += vel.dx * dt
+        pos.y += vel.dy * dt
+    }
+
     private func simulate(_ dt: CGFloat) {
         let before = pos
         // Beim Aufladen eines Bonus-Items kein Verbrauch
@@ -1504,10 +1776,20 @@ final class Game {
             destroyed = hull <= 0
             blog("over score=\(score) t=\(Int(missionTime)) phase=\(phase) idx=\(currentIndex) flight=\(String(format: "%.1f", flightTime)) parts=\(runParts)")
             energy = 0
+            // ohne Energie: Triebwerke aus, das Schiff gleitet mit seinem letzten Schwung aus und bremst ab
+            // Panzerung zerstört: Explosion
+            vel = phase == .docked ? .zero : lastStepVel
             phase = .over
             overAt = time
-            burst(at: pos, count: 50, hue: 12, speed: 300, life: 1.2)
-            shake = 0.5
+            if destroyed {
+                // weniger Funken: Feuerbälle und Wrackteile der 3D-Explosion sollen sichtbar bleiben
+                burst(at: pos, count: 30, hue: 12, speed: 340, life: 1.0)
+                burst(at: pos, count: 15, hue: 38, speed: 180, life: 1.2)
+                waves.append(Wave(center: pos, r0: 20, age: 0, maxAge: 0.8, hue: 20))
+                shake = 0.6
+            } else {
+                shake = 0.15
+            }
             finishRun()
             Haptics.gameOver()
             SoundFX.shared.play(.gameOver)
@@ -1516,7 +1798,7 @@ final class Game {
 
         switch phase {
         case .docked:
-            updateDeparture()
+            if departAt == nil { updateDocking() } else { updateDeparture() }
         case .orbiting:
             let p = planets[currentIndex]
             // weiches Einschwingen: Tempo und Radius gleiten auf die Bahn
@@ -1560,12 +1842,20 @@ final class Game {
             break
         }
 
-        if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 {
+        // Kurs aus der Bewegung, außer beim Anflug auf eine Station: dort setzt updateDocking die Nase selbst
+        // (früher überschrieb diese Zeile die Drehung, und am Ende sprang die Nase hart in die Startrichtung)
+        // Im Flug zählt die Fluggeschwindigkeit: der seitliche Versatz beim Ausweichen soll die Nase nicht schwenken
+        if phase == .flying && hypot(vel.dx, vel.dy) > 1 {
+            heading = atan2(vel.dy, vel.dx)
+        } else if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 && !(phase == .docked && departAt == nil) {
             heading = atan2(pos.y - before.y, pos.x - before.x)
         }
         trail.append(pos)
         if trail.count > 80 { trail.removeFirst(trail.count - 80) }
 
+        if dt > 0 && phase != .over {
+            lastStepVel = CGVector(dx: (pos.x - before.x) / dt, dy: (pos.y - before.y) / dt)
+        }
         collectItems()
     }
 
@@ -1609,7 +1899,8 @@ final class Game {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
             waves.append(Wave(center: p, r0: 20, age: 0, maxAge: 0.7, hue: kind.hue))
         }
-        // keine Texteinblendung beim Einsammeln: Lichtblitz, Ton und HUD-Anzeige reichen
+        // Einblendung in der Farbe des Items, damit man sieht, was man bekommen hat
+        popups.append(Popup(pos: pos, text: kind.title, color: hsl(kind.hue, 0.85, 0.68), age: 0))
         Haptics.capture()
         SoundFX.shared.play(kind == .tech || kind == .shipPart ? .tech : .item)
     }
@@ -1626,7 +1917,7 @@ final class Game {
             return
         }
         energy -= weaponCost
-        weaponCooldown = weapon.cooldown
+        weaponCooldown = weapon.cooldown * ship.weaponReloadFactor
         let muzzle = point(from: pos, angle: heading, distance: 30)
         // Zielhilfe: nächstes Hindernis voraus anvisieren, mit Vorhalt bei bewegten Zielen
         let target = aimTarget()
@@ -1644,23 +1935,26 @@ final class Game {
 
         switch weapon {
         case .railgun:
-            let to = CGPoint(x: muzzle.x + fwd.dx * 2400, y: muzzle.y + fwd.dy * 2400)
+            let to = CGPoint(x: muzzle.x + fwd.dx * railReach, y: muzzle.y + fwd.dy * railReach)
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
-                if distanceToSegment(a.center, muzzle, to) < a.radius + 22 { damageObstacle(i, 3, blast: false) }
+                // Strahl beginnt am Schiff schmal und wird nach vorn breiter
+                let along = max(0, min(railReach, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
+                let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / railReach
+                if distanceToSegment(a.center, muzzle, to) < a.radius + width { damageObstacle(i, 3, blast: false) }
             }
             shake = max(shake, 0.2)
         case .cannon:
             projectiles.append(Projectile(kind: .cannon, p: muzzle,
                                           v: CGVector(dx: fwd.dx * 1900 + vel.dx * 0.3, dy: fwd.dy * 1900 + vel.dy * 0.3),
-                                          maxAge: 1.6, target: target?.uid))
+                                          maxAge: 1.6 * rangeFactor, target: target?.uid))
         case .rocket:
             projectiles.append(Projectile(kind: .rocket, p: muzzle,
-                                          v: CGVector(dx: fwd.dx * 700 + vel.dx * 0.5, dy: fwd.dy * 700 + vel.dy * 0.5), maxAge: 2.5))
+                                          v: CGVector(dx: fwd.dx * 700 + vel.dx * 0.5, dy: fwd.dy * 700 + vel.dy * 0.5), maxAge: 2.5 * rangeFactor))
         case .bomb:
             projectiles.append(Projectile(kind: .bomb, p: muzzle,
-                                          v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9))
+                                          v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9 * rangeFactor))
         }
         Haptics.launch(0.3)
         switch weapon {
@@ -1671,8 +1965,154 @@ final class Game {
         }
     }
 
-    /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit)
+    // MARK: Ausweichen
+
+    static let dodgeTime: CGFloat = 0.38
+    static let dodgeDistance: CGFloat = 120
+
+    /// Ausweichknöpfe gibt es nur in der Hindernispassage (und kurz davor)
+    var dodgeAvailable: Bool {
+        guard started, !paused, phase == .flying else { return false }
+        let gap = min(originIndex + 1, planets.count - 1)
+        guard planets[gap].hardRoute, let at = progress(pos, gap: gap) else { return false }
+        return at > planets[gap].passageFrom - 500 && at < planets[gap].passageTo
+    }
+
+    /// Seitwärts ausweichen: -1 links, +1 rechts
+    func dodge(_ side: CGFloat) {
+        guard dodgeAvailable, time - dodgeStart > Game.dodgeTime + 0.1 else { return }
+        dodgeStart = time
+        dodgeSide = side
+        Haptics.launch(0.25)
+    }
+
+    /// Die Verfolgerkamera zieht beim Ausweichen seitlich verzögert nach, damit man das Schiff zur Seite gehen sieht
+    var dodgeCameraLag: CGVector {
+        let u = (time - dodgeStart) / Game.dodgeTime
+        guard u >= 0 else { return .zero }
+        let lag: CGFloat = u < 1 ? 0.55 * (1 - cos(u * .pi)) / 2 : 0.55 * exp(-(time - dodgeStart - Game.dodgeTime) * 2.2)
+        return CGVector(dx: dodgeDir.dx * Game.dodgeDistance * lag, dy: dodgeDir.dy * Game.dodgeDistance * lag)
+    }
+
+    /// Schräglage des Schiffs beim Ausweichen (-1 bis 1)
+    var dodgeBank: CGFloat {
+        let u = (time - dodgeStart) / Game.dodgeTime
+        guard u >= 0 && u < 1 else { return 0 }
+        return dodgeSide * sin(u * .pi)
+    }
+
+    // MARK: Streufeuer
+
+    /// Streufeuer: bis zu so viele Schüsse, je einer pro Ziel im gewischten Bogen (Railgun-Strahlen je ein Schaden)
+    static let fanBeams = 5
+    static let fanMinSpread: CGFloat = 0.35      // mindestens etwa 20° breit
+    static let fanMaxSpread: CGFloat = 2.1       // höchstens etwa 120°
+
+    /// Wischbogen mit jeder Waffe: Start- und Endpunkt auf dem Bildschirm, vom Schiff aus gesehen
+    /// ergibt das den Winkelbereich, über den der Fächer feuert.
+    func swipe(from a: CGPoint, to b: CGPoint) {
+        guard !paused, !stationOpen, started,
+              phase == .flying || phase == .orbiting, weaponCooldown <= 0, let project,
+              let ship = project(pos) else { return }
+        // Bildschirmwinkel in Weltwinkel umrechnen: Kurs und Querrichtung projizieren
+        guard let ahead = project(point(from: pos, angle: heading, distance: 200)),
+              let side = project(point(from: pos, angle: heading + .pi / 2, distance: 200)) else { return }
+        let a0 = atan2(ahead.y - ship.y, ahead.x - ship.x)
+        let a1 = atan2(side.y - ship.y, side.x - ship.x)
+        let sign: CGFloat = wrap(a1 - a0) >= 0 ? 1 : -1
+        func world(_ p: CGPoint) -> CGFloat { heading + sign * wrap(atan2(p.y - ship.y, p.x - ship.x) - a0) }
+        let wa = world(a), wb = world(b)
+        var span = wrap(wb - wa)
+        var mid = wa + span / 2
+        span = abs(span)
+        if span < Game.fanMinSpread { span = Game.fanMinSpread }
+        if span > Game.fanMaxSpread {
+            span = Game.fanMaxSpread
+            mid = wa + (wrap(wb - wa) >= 0 ? 1 : -1) * span / 2
+        }
+        let muzzle = point(from: pos, angle: heading, distance: 30)
+        // Jeder Strahl braucht ein eigenes Ziel im Bogen (etwas Rand dazu): Drohnen zuerst, dann die nächsten Hindernisse.
+        // Bei weniger Zielen feuern entsprechend weniger Schüsse, ohne Ziel gar keiner. Ein Railgun-Strahl kostet 30 %
+        // eines Schusses (macht aber nur 1 statt 3 Schaden), Geschosse der anderen Waffen kosten wie ein normaler Schuss.
+        let margin: CGFloat = 0.1
+        // Reichweite je Waffe: so weit, wie ihre Geschosse fliegen
+        let fanRange: CGFloat
+        switch weapon {
+        case .railgun: fanRange = railReach
+        case .cannon: fanRange = 1900 * 1.6 * rangeFactor
+        case .rocket: fanRange = 700 * 2.5 * rangeFactor
+        case .bomb: fanRange = 600 * 0.9 * rangeFactor + 200
+        }
+        let inArc = asteroids.filter { o in
+            let d = hypot(o.center.x - muzzle.x, o.center.y - muzzle.y)
+            guard d < fanRange else { return false }
+            let ang = atan2(o.center.y - muzzle.y, o.center.x - muzzle.x)
+            return abs(wrap(ang - mid)) < span / 2 + margin
+        }
+        let picked = Array(inArc.sorted { a, b in
+            if (a.kind == .drone) != (b.kind == .drone) { return a.kind == .drone }
+            return hypot(a.center.x - pos.x, a.center.y - pos.y) < hypot(b.center.x - pos.x, b.center.y - pos.y)
+        }.prefix(Game.fanBeams))
+        guard !picked.isEmpty else {
+            Haptics.miss()
+            popups.append(Popup(pos: pos, text: "KEIN ZIEL IN REICHWEITE", color: Color(red: 0.75, green: 0.8, blue: 0.9), age: 0))
+            return
+        }
+        let cost = weaponCost * (weapon == .railgun ? 0.3 : 1) * CGFloat(picked.count)
+        guard energy > cost else {
+            noEnergyFlash = 0.5
+            Haptics.miss()
+            SoundFX.shared.play(.empty)
+            return
+        }
+        energy -= cost
+        weaponCooldown = weapon.cooldown * self.ship.weaponReloadFactor
+        for t in picked {
+            // Geschosse mit Vorhalt auf bewegte Ziele, der Railgun-Strahl trifft sofort
+            let speed: CGFloat = weapon == .cannon ? 1900 : (weapon == .rocket ? 700 : 600)
+            let lead = weapon == .railgun ? 0 : hypot(t.center.x - muzzle.x, t.center.y - muzzle.y) / speed
+            let ang = atan2(t.center.y + t.vel.dy * lead - muzzle.y, t.center.x + t.vel.dx * lead - muzzle.x)
+            let dir = CGVector(dx: cos(ang), dy: sin(ang))
+            switch weapon {
+            case .railgun:
+                let to = CGPoint(x: muzzle.x + dir.dx * railReach, y: muzzle.y + dir.dy * railReach)
+                beams.append(Beam(from: muzzle, to: to))
+                for i in asteroids.indices.reversed() {
+                    let o = asteroids[i]
+                    // Fächerstrahlen sind schmal: gleich breit wie der Hauptstrahl direkt am Schiff
+                    if distanceToSegment(o.center, muzzle, to) < o.radius + Game.railWidthNear { damageObstacle(i, 1, blast: false) }
+                }
+            case .cannon:
+                projectiles.append(Projectile(kind: .cannon, p: muzzle, v: CGVector(dx: dir.dx * 1900, dy: dir.dy * 1900),
+                                              maxAge: 1.6 * rangeFactor, target: t.uid))
+            case .rocket:
+                projectiles.append(Projectile(kind: .rocket, p: muzzle, v: CGVector(dx: dir.dx * 700, dy: dir.dy * 700), maxAge: 2.5 * rangeFactor))
+            case .bomb:
+                // Bombe fliegt höchstens bis kurz vor das Ziel und zündet dort
+                let d = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y)
+                projectiles.append(Projectile(kind: .bomb, p: muzzle, v: CGVector(dx: dir.dx * 600, dy: dir.dy * 600),
+                                              maxAge: min(0.9 * rangeFactor, d / 600)))
+            }
+        }
+        shake = max(shake, 0.25)
+        Haptics.launch(0.4)
+        switch weapon {
+        case .cannon: SoundFX.shared.play(.cannon)
+        case .rocket: SoundFX.shared.play(.rocket)
+        case .railgun: SoundFX.shared.play(.railgun)
+        case .bomb: SoundFX.shared.play(.bomb)
+        }
+    }
+
+    /// Railgun: Reichweite und halbe Breite des Strahls am Ende (gleicht die lange Ladezeit aus)
+    static let railRange: CGFloat = 3600
+    static let railWidth: CGFloat = 60
+    /// halbe Breite direkt am Schiff (wächst bis zum Ende auf railWidth)
+    static let railWidthNear: CGFloat = 12
+
+    /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
     private func aimTarget() -> Asteroid? {
+        let reach: CGFloat = (weapon == .railgun ? 1.8 : 1) * rangeFactor
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?
         var bestScore = CGFloat.infinity
@@ -1680,7 +2120,7 @@ final class Game {
             let dx = a.center.x - pos.x, dy = a.center.y - pos.y
             let d = hypot(dx, dy)
             // Kometen liegen ohnehin in der Flugbahn und werden früher erfasst
-            let range: CGFloat = a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)
+            let range: CGFloat = (a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)) * reach
             guard d > 1, d < range + a.radius else { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
             // Drohnen greifen von der Seite an: weiter Erfassungswinkel
@@ -1797,10 +2237,18 @@ final class Game {
         let shipPartChance: Double = a.kind == .wreck ? 0.2 : (a.kind == .comet ? 0.25 : 0)
         if Double.random(in: 0...1) < shipPartChance { spawnTech(from: a.center, kind: .shipPart) }
         if a.kind == .comet {
-            burst(at: a.center, count: 70, hue: 195, speed: 380, life: 1.4)
+            // Der Komet soll unübersehbar zerplatzen: Eisbrocken, Lichtblitz, doppelte Druckwelle,
+            // kurzer Bildschirmblitz (Renderer), dazu ein kräftiger Ruck
+            shatters.append(a)
+            cometKilledAt = time
+            burst(at: a.center, count: 120, hue: 195, speed: 520, life: 1.6)
+            burst(at: a.center, count: 50, hue: 180, speed: 260, life: 2.2)
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
-            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0))
-            shake = max(shake, 0.4)
+            waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 1.4, hue: 185))
+            // Meldung wie bei allen anderen Treffern an der Stelle selbst, nicht groß über dem Bild
+            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0, lift: 110))
+            shake = max(shake, 0.6)
+            Haptics.launch(1)
         }
         if a.kind == .drone {
             burst(at: a.center, count: 36, hue: 355, speed: 300, life: 0.9)
@@ -1961,8 +2409,12 @@ final class Game {
             let tg = planets[originIndex + 1]
             let sp = hypot(vel.dx, vel.dy)
             var hd = atan2(vel.dy, vel.dx)
-            let tdx = tg.center.x - pos.x
-            let tdy = tg.center.y - pos.y
+            if !dodgeAvailable {
+                let k = max(0, 1 - h * 0.7)
+                dodgeOffset = CGVector(dx: dodgeOffset.dx * k, dy: dodgeOffset.dy * k)
+            }
+            let tdx = tg.center.x - (pos.x - dodgeOffset.dx)
+            let tdy = tg.center.y - (pos.y - dodgeOffset.dy)
             let dd = hypot(tdx, tdy)
             let phi = atan2(tdy, tdx)
             var aim = phi
@@ -1984,6 +2436,17 @@ final class Game {
 
         pos.x += vel.dx * h
         pos.y += vel.dy * h
+        // Ausweichen: seitlicher Versatz quer zur Flugrichtung, weich an- und auslaufend (Sinusprofil)
+        let du = (time - dodgeStart) / Game.dodgeTime
+        if du >= 0 && du < 1 {
+            let sp = max(1, hypot(vel.dx, vel.dy))
+            let side = Game.dodgeDistance * .pi / 2 * sin(du * .pi) / Game.dodgeTime * h * dodgeSide
+            pos.x += -vel.dy / sp * side
+            pos.y += vel.dx / sp * side
+            dodgeOffset.dx += -vel.dy / sp * side
+            dodgeOffset.dy += vel.dx / sp * side
+            dodgeDir = CGVector(dx: -vel.dy / sp * dodgeSide, dy: vel.dx / sp * dodgeSide)
+        }
 
         for i in asteroids.indices.reversed() {
             let a = asteroids[i]
@@ -1999,7 +2462,10 @@ final class Game {
             let dy = pos.y - p.center.y
             // Schwarzes Loch: Fang erst nah an der Bahn, die Scheibe ist kein Planetenkörper
             let catchRadius = p.kind == .blackHole ? p.orbitRadius - 10 : p.radius + captureMargin
-            if hypot(dx, dy) < catchRadius {
+            // Station: der Anflug auf die Plattform beginnt schon ein gutes Stück vorher, damit er Platz hat
+            let dockNear = p.isStation && i != originIndex
+                && (stationDock(i).map { hypot(pos.x - $0.pos.x, pos.y - $0.pos.y) < Game.dockApproachRange } ?? false)
+            if hypot(dx, dy) < catchRadius || dockNear {
                 capture(i, dx: dx, dy: dy)
                 return
             }
@@ -2033,10 +2499,11 @@ final class Game {
         SoundFX.shared.play(.capture, variant: index)
 
         // zurückgefallen statt weiter: Combo ist weg
-        if index <= score && comboFlight { breakCombo() }
-        if index > score {
-            score = index
-            if index % 5 == 0 {
+        let number = planetBase + index
+        if number <= score && comboFlight { breakCombo() }
+        if number > score {
+            score = number
+            if number % 5 == 0 {
                 spawnTech(from: planets[index].center)
                 techFocus = .infinity    // bleibt nah dran bis zum nächsten Start
             }
@@ -2060,10 +2527,13 @@ final class Game {
                 let gain = pl.energyGain * comboMultiplier
                 addEnergy(gain, from: pl.center)
             }
-            // Erstbesuch einer Raumstation: Menü öffnen, sobald die Kamera auf die Station eingeschwenkt ist
-            if pl.isStation { stationMenuAt = time + 2.0 }
             track(.planet(index))
-            if pl.isStation { track(.station) }
+            if pl.isStation {
+                track(.station)
+                // ab jetzt kann man hier neu starten
+                profile.reachStation(pl.stationNo)
+                popups.append(Popup(pos: pos, text: "STATION \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
+            }
             switch pl.kind {
             case .normal: break
             case .blackHole:
@@ -2079,6 +2549,8 @@ final class Game {
         items.removeAll { $0.gap < index - 2 }
         asteroids.removeAll { $0.gap < index - 1 || ($0.kind == .comet && $0.gap <= index) }
         clouds.removeAll { $0.gap < index - 2 }
+        // Raumstation: nicht in den Orbit, sondern die Andockplattform anfliegen und landen
+        if pl.isStation { beginDocking(index) }
     }
 
     private func updateFx(_ dt: CGFloat) {
@@ -2121,7 +2593,14 @@ final class Game {
     /// Die Kamera rahmt den aktuellen und den nächsten Planeten gemeinsam ein. So bleibt der Ausschnitt
     /// beim Start und im Flug ruhig und wechselt nur einmal weich, wenn ein neuer Planet erreicht ist.
     private func updateCamera(_ dt: CGFloat, _ size: CGSize) {
-        guard size.width > 0, phase != .over else { return }
+        guard size.width > 0 else { return }
+        // Spielende: Kamera steht, nur ein ausgleitendes Schiff (ohne Energie) behält sie im Blick
+        if phase == .over {
+            guard !destroyed else { return }
+            cam.x = camSpringX.update(to: pos.x, smoothTime: 1.2, dt: dt)
+            cam.y = camSpringY.update(to: pos.y, smoothTime: 1.2, dt: dt)
+            return
+        }
         // Orbit-Ansicht: genau auf den Planeten zentriert, groß genug für Bahn und ein Stück Startkegel
         let lockedIndex = cameraLock.map { min($0, planets.count - 1) }
         let frameIndex = lockedIndex ?? (phase == .flying ? min(currentIndex + 1, planets.count - 1) : currentIndex)
@@ -2154,6 +2633,25 @@ final class Game {
         // Kamera kreist nicht mit dem Schiff mit
         let orbitFit = usable / ((fp.orbitRadius + 80) * 2)
         targetScale += (max(targetScale, orbitFit) - targetScale) * f
+
+        // Im Flug muss das Schiff immer im Bild bleiben. Die Orbit-Ansicht des Ziels übernimmt schon
+        // 700 vor der Bahn, zeigt aber nur 360 um sie herum: bei kurzen Strecken oder einem Flug
+        // seitlich am Ziel vorbei lag das Schiff dann außerhalb. Dann wird der Ausschnitt erweitert.
+        if phase == .flying && !stationOpen {
+            let view = CGRect(x: targetCenter.x - size.width / targetScale / 2,
+                              y: targetCenter.y - size.height * 0.62 / targetScale / 2,
+                              width: size.width / targetScale, height: size.height * 0.62 / targetScale)
+            // mit Vorhalt, weil die Kamera weich (also etwas verzögert) folgt
+            let ahead = CGPoint(x: pos.x + vel.dx * 0.9, y: pos.y + vel.dy * 0.9)
+            let ship = CGRect(x: pos.x - 140, y: pos.y - 140, width: 280, height: 280)
+                .union(CGRect(x: ahead.x - 140, y: ahead.y - 140, width: 280, height: 280))
+            if !view.contains(ship) {
+                let r = view.union(ship)
+                targetCenter = CGPoint(x: r.midX, y: r.midY)
+                targetScale = min(size.width / r.width, size.height * 0.62 / r.height)
+            }
+        }
+        targetScale = min(max(targetScale, 0.04), 0.8)
 
         // Federn statt fester Lerp-Rate: bei jedem Zielwechsel (neuer Planet, Start) läuft die Kamera
         // weich an, statt mit voller Geschwindigkeit loszuspringen.

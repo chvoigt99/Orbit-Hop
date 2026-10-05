@@ -49,6 +49,9 @@ struct GameView: View {
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { game.tap() }
+                    // Railgun: einen Bogen wischen feuert einen Strahlenfächer über den gewischten Winkel
+                    .gesture(DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                        .onEnded { v in game.swipe(from: v.startLocation, to: v.location) })
                 }
 
                 Canvas { context, size in
@@ -73,14 +76,19 @@ struct GameView: View {
                             }
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
+                            // vor dem Start keine Anzeigen, sie blenden beim Abheben ein
                             hud
+                                .opacity(Double(game.hudAlpha))
                                 .allowsHitTesting(false)
                         }
                         if !game.started {
                             titleView
                         }
-                        if game.started && game.phase != .over && !game.paused && !game.stationOpen {
+                        if game.started && game.phase != .over && !game.paused && !game.stationOpen && game.hudAlpha > 0 {
                             pauseButton
+                        }
+                        if game.dodgeAvailable {
+                            dodgeButtons
                         }
                         if game.paused {
                             pauseMenu
@@ -88,7 +96,7 @@ struct GameView: View {
                         if game.stationOpen {
                             stationMenu
                         }
-                        if game.phase == .over {
+                        if game.overPanelShown {
                             gameOverView
                         }
                         if loading {
@@ -161,8 +169,9 @@ struct GameView: View {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
+        if game.dockArriving { return ("ANFLUG · STATION \(game.currentStationName ?? "")", signal) }
+        if game.atStation { return ("STATION \(game.currentStationName ?? "") · ANGEDOCKT", signal) }
         if game.phase == .docked { return ("HANGAR · STARTFREIGABE", signal) }
-        if game.atStation { return ("RAUMSTATION · ANGEDOCKT", signal) }
         if game.inHorizon { return ("EREIGNISHORIZONT · PANZERUNG REISST", warn) }
         if let c = game.horizonCountdown {
             return ("SCHWARZES LOCH · BAHN ZERFÄLLT · \(Int(c.rounded(.up))) S", Color(red: 1, green: 0.6, blue: 0.3))
@@ -205,11 +214,12 @@ struct GameView: View {
                 Color.clear.frame(height: 42)
             }
             Spacer()
-            if game.hintShown && game.started && game.phase != .docked {
+            if game.hintShown && game.started && game.phase != .docked && game.phase != .over && !game.dodgeAvailable {
                 hint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
-            bottomBar.opacity(game.stationOpen ? 0 : 1)
+            // in der Hindernispassage sitzen dort die Ausweichknöpfe
+            bottomBar.opacity(game.stationOpen || game.dodgeAvailable ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -326,6 +336,22 @@ struct GameView: View {
     }
 
     // MARK: Pause
+
+    /// Ausweichknöpfe links und rechts, nur in der Hindernispassage
+    private var dodgeButtons: some View {
+        VStack {
+            Spacer(minLength: 0)
+            HStack {
+                DodgeButton(side: -1, color: signal, fill: panel) { game.dodge(-1) }
+                Spacer()
+                DodgeButton(side: 1, color: signal, fill: panel) { game.dodge(1) }
+            }
+            .padding(.horizontal, 18)
+            // an der Stelle von Telemetrie und Radar
+            Spacer().frame(height: 14)
+        }
+        .transition(.opacity)
+    }
 
     private var pauseButton: some View {
         VStack {
@@ -519,13 +545,11 @@ struct GameView: View {
     private var stationMenu: some View {
         let cost = game.repairCost
         let canRepair = cost > 0 && game.profile.parts >= cost
-        let hullDamage = Int(Game.maxHull - ceil(game.hull))
-        let energyMissing = Int(game.maxEnergy) - Int(ceil(game.energy))
         return VStack(spacing: 0) {
             Spacer()
             VStack(spacing: 12) {
-                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
-                Text("RAUMSTATION")
+                label("RAUMSTATION · PLANET \(game.score) · ANDOCKEN BESTÄTIGT").foregroundStyle(dim)
+                Text(game.currentStationName ?? "RAUMSTATION")
                     .font(.system(size: 30, weight: .heavy, design: .monospaced))
                     .tracking(5)
                     .foregroundStyle(.white)
@@ -533,22 +557,11 @@ struct GameView: View {
                 label("⚙ \(game.profile.parts) TECH-TEILE · \(game.profile.shipParts) SCHIFFSTEILE")
                     .foregroundStyle(dim)
                     .padding(.bottom, 8)
-                menuButton(cost == 0 ? "SCHIFF INTAKT" : canRepair ? "REPARIEREN · ⚙ \(cost)" : "REPARATUR · ⚙ \(cost) FEHLEN",
+                menuButton(cost == 0 ? "SCHIFF INTAKT" : "REPARIEREN · ⚙ \(cost)",
                            "wrench.and.screwdriver.fill", canRepair ? signal : dim) {
                     game.repair()
                 }
                 .disabled(!canRepair)
-                // Schäden, die die Reparatur behebt
-                VStack(spacing: 4) {
-                    label(hullDamage == 0 ? "PANZERUNG 100 % · KEIN SCHADEN"
-                                          : "PANZERUNG \(100 - hullDamage) % · SCHADEN -\(hullDamage) %")
-                        .foregroundStyle(hullDamage == 0 ? dim : hullDamage >= 75 ? warn : gold)
-                    label("ENERGIE \(Int(ceil(game.energy))) / \(Int(game.maxEnergy))"
-                          + (energyMissing == 0 ? "" : " · FEHLT \(energyMissing)"))
-                        .foregroundStyle(energyMissing == 0 ? dim : gold)
-                }
-                .padding(.top, -4)
-                .padding(.bottom, 4)
                 menuButton("WERFT", "airplane", gold) { showShop = true }
                 menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
             }
@@ -588,6 +601,7 @@ struct GameView: View {
             .foregroundStyle(gold)
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
             .overlay(Chamfer(cut: 8).stroke(gold.opacity(0.7), lineWidth: 1.2))
             .contentShape(Rectangle())
@@ -625,49 +639,107 @@ struct GameView: View {
     }
 
     /// Tagesflug ein- oder ausschalten, im Tagesflug zusätzlich die Bestenliste
-    private var dailyRow: some View {
-        HStack(spacing: 10) {
-            Button {
-                let on = !game.dailyMode
-                game.setDaily(on)
-                if on { GameCenter.shared.authenticate() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: game.dailyMode ? "infinity" : "calendar")
-                        .font(.system(size: 12, weight: .bold))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(game.dailyMode ? "FREIES SPIEL" : "TAGESFLUG \(DailyChallenge.todayLabel)")
-                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                            .tracking(2)
-                        label(game.dailyMode ? "ZUFÄLLIGE STRECKE · REKORD \(game.best)"
-                                             : "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))")
-                            .foregroundStyle(dim)
-                    }
-                }
-                .foregroundStyle(game.dailyMode ? signal : daily)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-                .overlay(Chamfer(cut: 8).stroke((game.dailyMode ? signal : daily).opacity(0.7), lineWidth: 1.2))
-                .contentShape(Rectangle())
+    /// Startpunkt: Hangar oder eine schon erreichte Raumstation, mit Pfeilen durchschalten
+    private var startRow: some View {
+        let k = min(game.profile.startStation, game.profile.stationsReached - 1)
+        let title = k < 0 ? "START: HANGAR" : "START: \(Game.stationName(k))"
+        let detail = k < 0 ? "PLANET 0 · \(game.profile.stationsReached) \(game.profile.stationsReached == 1 ? "STATION" : "STATIONEN") FREI"
+                           : "STATION \(k + 1) · AB PLANET \(Game.stationPlanet(k))"
+        return HStack(spacing: 8) {
+            arrowButton("chevron.left", enabled: k > -1) { game.setStartStation(k - 1) }
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .tracking(2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                label(detail).foregroundStyle(dim)
             }
-            .buttonStyle(.plain)
-            if game.dailyMode {
+            .foregroundStyle(signal)
+            .frame(maxWidth: .infinity)
+            arrowButton("chevron.right", enabled: k < game.profile.stationsReached - 1) { game.setStartStation(k + 1) }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+        .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.6), lineWidth: 1.2))
+    }
+
+    private func arrowButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(enabled ? signal : dim.opacity(0.4))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    /// Spielmodus: freies Spiel und Tagesflug als zwei Knöpfe direkt untereinander, der inaktive ist ausgegraut
+    private var dailyRow: some View {
+        VStack(spacing: 0) {
+            modeButton(icon: "infinity", title: "FREIES SPIEL", detail: "ZUFÄLLIGE STRECKE · REKORD \(game.best)",
+                       color: signal, active: !game.dailyMode) {
+                game.setDaily(false)
+            }
+            HStack(spacing: 0) {
+                modeButton(icon: "calendar", title: "TAGESFLUG \(DailyChallenge.todayLabel)",
+                           detail: "GLEICHE STRECKE FÜR ALLE · HEUTE \(DailyChallenge.best(for: DailyChallenge.today))",
+                           color: daily, active: game.dailyMode) {
+                    game.setDaily(true)
+                    GameCenter.shared.authenticate()
+                }
+                // Bestenliste steht immer da (Knöpfe behalten beim Umschalten ihren Platz), außerhalb des Tagesflugs gedimmt
                 Button {
                     GameCenter.shared.showDailyLeaderboard()
                 } label: {
+                    let tint = game.dailyMode ? daily : dim.opacity(0.55)
                     Image(systemName: "list.number")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(daily)
-                        .frame(width: 48, height: 48)
-                        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-                        .overlay(Chamfer(cut: 8).stroke(daily.opacity(0.7), lineWidth: 1.2))
+                        .foregroundStyle(tint)
+                        .frame(width: 48)
+                        .frame(maxHeight: .infinity)
+                        .background(Chamfer(cut: 8).fill(panel.opacity(game.dailyMode ? 0.85 : 0.6)))
+                        .overlay(Chamfer(cut: 8).stroke(tint.opacity(0.7), lineWidth: 1.2))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Bestenliste des Tages")
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func modeButton(icon: String, title: String, detail: String, color: Color, active: Bool,
+                            action: @escaping () -> Void) -> some View {
+        let tint = active ? color : dim.opacity(0.55)
+        return Button {
+            if !active { action() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .tracking(2)
+                    label(detail)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .foregroundStyle(dim.opacity(active ? 1 : 0.6))
+                }
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Chamfer(cut: 8).fill(panel.opacity(active ? 0.85 : 0.6)))
+            .overlay(Chamfer(cut: 8).stroke(tint.opacity(active ? 0.8 : 0.5), lineWidth: active ? 1.6 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var soundButton: some View {
@@ -686,24 +758,39 @@ struct GameView: View {
         .accessibilityLabel(soundOn ? "Ton ausschalten" : "Ton einschalten")
     }
 
+    /// Breite der Knopfzeilen auf Start- und Endbildschirm (passt auch aufs kleinste iPhone)
+    private static let menuRowWidth: CGFloat = 330
+
     private var titleView: some View {
         VStack(spacing: 14) {
             titleTexts
                 .allowsHitTesting(false)
-            Spacer()
-            // unter dem Startplaneten
+            // im oberen Drittel, direkt unter dem Titel
             tapPrompt
                 .allowsHitTesting(false)
+                .padding(.top, 8)
+            Spacer()
+            // alle Zeilen gleich breit
             HStack(spacing: 10) {
                 shipsButton
                 missionsButton
                 if SoundFX.available { soundButton }
             }
-            dailyRow
+            .frame(width: Self.menuRowWidth)
+            // Startauswahl nur im freien Spiel; im Tagesflug bleibt ihr Platz frei, damit nichts verrutscht
+            if game.profile.stationsReached > 0 {
+                startRow.frame(width: Self.menuRowWidth)
+                    .opacity(game.dailyMode ? 0 : 1)
+                    .allowsHitTesting(!game.dailyMode)
+                    .animation(.easeInOut(duration: 0.2), value: game.dailyMode)
+            }
+            // Tagesflug ist ein eigener Spielmodus: mit Abstand abgesetzt
+            dailyRow.frame(width: Self.menuRowWidth)
+                .padding(.top, 18)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 150)
+        .padding(.top, 70)
         .padding(.bottom, 178)
     }
 
@@ -711,12 +798,14 @@ struct GameView: View {
         let pulse = 0.75 + 0.25 * sin(Double(game.time) * 4)
         // dunkles Feld dahinter, damit der Text auch auf der hellen Startplattform lesbar bleibt
         return Text(game.dailyMode ? "TIPPEN ZUM STARTEN · TAGESFLUG" : "TIPPEN ZUM STARTEN")
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .font(.system(size: 17, weight: .bold, design: .monospaced))
             .tracking(3)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
             .foregroundStyle(signal)
             .opacity(pulse)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
             .background(Chamfer(cut: 6).fill(panel.opacity(0.8)))
             .overlay(Brackets(len: 8).stroke(signal.opacity(pulse), lineWidth: 1.5))
     }
@@ -745,15 +834,9 @@ struct GameView: View {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-            VStack(spacing: 18) {
-                gameOverPanel
-                    .allowsHitTesting(false)
-                HStack(spacing: 10) {
-                    shipsButton
-                    missionsButton
-                }
-                dailyRow
-            }
+            // nur die Endtafel; Schiffe, Missionen und Spielart gibt es danach auf dem Titel
+            gameOverPanel
+                .allowsHitTesting(false)
         }
     }
 
@@ -793,7 +876,7 @@ struct GameView: View {
                 label("+\(game.runShipParts) SCHIFFSTEILE · GESAMT \(game.profile.shipParts)")
                     .foregroundStyle(hsl(ItemKind.shipPart.hue, 0.8, 0.68))
             }
-            Text("TIPPEN FÜR NEUSTART")
+            Text("TIPPEN ZUM FORTFAHREN")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .tracking(2.5)
                 .foregroundStyle(signal)
@@ -930,4 +1013,32 @@ final class GameLoop: NSObject {
 #Preview {
     GameView()
         .preferredColorScheme(.dark)
+}
+
+
+/// Ausweichknopf: löst schon beim Berühren aus, nicht erst beim Loslassen
+private struct DodgeButton: View {
+    let side: CGFloat
+    let color: Color
+    let fill: Color
+    let action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: side < 0 ? "chevron.left.2" : "chevron.right.2")
+            .font(.system(size: 28, weight: .heavy))
+            .foregroundStyle(color)
+            .frame(width: 84, height: 84)
+            .background(Circle().fill(fill.opacity(pressed ? 0.95 : 0.7)))
+            .overlay(Circle().stroke(color.opacity(pressed ? 1 : 0.6), lineWidth: pressed ? 2 : 1))
+            .scaleEffect(pressed ? 0.92 : 1)
+            .contentShape(Circle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed else { return }
+                    pressed = true
+                    action()
+                }
+                .onEnded { _ in pressed = false })
+    }
 }
