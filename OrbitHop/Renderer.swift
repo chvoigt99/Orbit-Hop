@@ -20,29 +20,14 @@ extension Game {
         drawCometBanner(context, size)
     }
 
-    /// Komet zerstört: kurzer eisblauer Bildschirmblitz und ein großes Banner in der Bildmitte,
-    /// damit man es auch merkt, wenn der Komet weit voraus oder am Bildrand zerplatzt
+    /// Komet zerstört: kurzer eisblauer Bildschirmblitz. Die Meldung selbst erscheint wie alle anderen
+    /// als Schild an der Stelle des Kometen (Popup), damit sie Explosion und Brocken nicht verdeckt.
     private func drawCometBanner(_ c: GraphicsContext, _ size: CGSize) {
         let t = time - cometKilledAt
-        guard t >= 0, t < 2.2, phase != .over else { return }
+        guard t >= 0, t < 0.25, phase != .over else { return }
         let ice = Color(red: 0.6, green: 0.9, blue: 1)
-        if t < 0.35 {
-            let a = Double(0.35 * (1 - t / 0.35))
-            c.fill(Path(CGRect(origin: .zero, size: size)), with: .color(ice.opacity(a)))
-        }
-        let alpha = Double(min(1, min(t / 0.12, (2.2 - t) / 0.5)))
-        // springt groß herein und setzt sich dann
-        let pop = 1 + 0.35 * exp(-t * 9)
-        let text = c.resolve(Text("KOMET ZERSTÖRT")
-            .font(.system(size: 26 * pop, weight: .heavy, design: .monospaced))
-            .tracking(3)
-            .foregroundColor(ice.opacity(alpha)))
-        let ts = text.measure(in: size)
-        let center = CGPoint(x: size.width / 2, y: size.height * 0.36)
-        let plate = CGRect(x: center.x - ts.width / 2, y: center.y - ts.height / 2,
-                           width: ts.width, height: ts.height).insetBy(dx: -16, dy: -8)
-        drawPlate(c, plate, accent: ice, alpha: alpha, cut: 8)
-        c.draw(text, at: center)
+        let a = Double(0.2 * (1 - t / 0.25))
+        c.fill(Path(CGRect(origin: .zero, size: size)), with: .color(ice.opacity(a)))
     }
 
     /// Abtastbalken, Radar und Warnblitze: 30 Bilder pro Sekunde reichen. Beide Ebenen mit jedem Bild

@@ -2197,14 +2197,16 @@ final class Game {
         let shipPartChance: Double = a.kind == .wreck ? 0.2 : (a.kind == .comet ? 0.25 : 0)
         if Double.random(in: 0...1) < shipPartChance { spawnTech(from: a.center, kind: .shipPart) }
         if a.kind == .comet {
-            // Der Komet soll unübersehbar zerplatzen, aber ohne Nachleuchten (kurze Funken und Wellen): Eisbrocken, Lichtblitz, doppelte Druckwelle,
-            // Bildschirmblitz und Banner (Renderer), dazu ein kräftiger Ruck
+            // Der Komet soll unübersehbar zerplatzen: Eisbrocken, Lichtblitz, doppelte Druckwelle,
+            // kurzer Bildschirmblitz (Renderer), dazu ein kräftiger Ruck
             shatters.append(a)
             cometKilledAt = time
-            burst(at: a.center, count: 120, hue: 195, speed: 520, life: 0.6)
-            burst(at: a.center, count: 50, hue: 180, speed: 260, life: 0.8)
+            burst(at: a.center, count: 120, hue: 195, speed: 520, life: 1.6)
+            burst(at: a.center, count: 50, hue: 180, speed: 260, life: 2.2)
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
-            waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 0.8, hue: 185))
+            waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 1.4, hue: 185))
+            // Meldung wie bei allen anderen Treffern an der Stelle selbst, nicht groß über dem Bild
+            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0))
             shake = max(shake, 0.6)
             Haptics.launch(1)
         }
