@@ -426,6 +426,8 @@ final class World3D {
     private var chaseOn = false
     /// Ausgleiten ohne Energie: Kamera rückt noch dichter ans Schiff (0…1)
     private var coastClose: CGFloat = 0
+    /// Explosion: Kamera schaut auf das Wrack statt voraus und weicht etwas zurück (0…1)
+    private var blastView: CGFloat = 0
     private var releasing = false
     private var chasedThisFlight = false
     /// geglätteter Kurs für die Verfolgerkamera, damit Lenkkorrekturen nicht als Ruckler ankommen
@@ -1977,6 +1979,11 @@ final class World3D {
         } else {
             coastClose = 0
         }
+        if game.phase == .over && game.destroyed {
+            blastView = smoothApproach(blastView, 1, rate: 2.5, dt: dt)
+        } else {
+            blastView = 0
+        }
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
@@ -2621,7 +2628,8 @@ final class World3D {
         let ship = CGPoint(x: game.pos.x - lag.dx, y: game.pos.y - lag.dy)
         // beim Ausgleiten ohne Energie fährt sie langsam noch dichter heran
         let cc = coastClose * coastClose * (3 - 2 * coastClose)
-        let back = 190 - 95 * cc, height = Float(95 - 45 * cc), ahead = 260 - 130 * cc
+        let bv = blastView * blastView * (3 - 2 * blastView)
+        let back = 190 - 95 * cc + 70 * bv, height = Float(95 - 45 * cc + 55 * bv), ahead = (260 - 130 * cc) * (1 - bv)
         let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height, Float(ship.y - sin(hd) * back))
         let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), 0, Float(ship.y + sin(hd) * ahead))
 
