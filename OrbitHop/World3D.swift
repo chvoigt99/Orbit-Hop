@@ -424,6 +424,8 @@ final class World3D {
     /// 0 = Draufsicht, 1 = Verfolgerkamera hinter dem Schiff
     private(set) var chase: CGFloat = 0
     private var chaseOn = false
+    /// Ausgleiten ohne Energie: Kamera rückt noch dichter ans Schiff (0…1)
+    private var coastClose: CGFloat = 0
     private var releasing = false
     private var chasedThisFlight = false
     /// geglätteter Kurs für die Verfolgerkamera, damit Lenkkorrekturen nicht als Ruckler ankommen
@@ -1967,6 +1969,11 @@ final class World3D {
         // Im Orbit blendet eine Rest-Nahansicht zügig aus, sonst folgt die Kamera dem kreisenden Schiff
         let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : 3))
         chase = smoothApproach(chase, want, rate: chaseRate, dt: dt)
+        if game.phase == .over && !game.destroyed {
+            coastClose = smoothApproach(coastClose, 1, rate: 0.7, dt: dt)
+        } else {
+            coastClose = 0
+        }
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
@@ -2182,7 +2189,7 @@ final class World3D {
         }
         // Triebwerke aus (Spielende): Düsenglut klingt ab
         let glowTarget: CGFloat = game.phase == .over ? 0 : 1
-        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 2.5, dt: max(0, min(0.1, game.time - lastNozzleTime)))
+        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 0.8, dt: max(0, min(0.1, game.time - lastNozzleTime)))
         lastNozzleTime = game.time
         if game.phase != .over { nozzleGlow = 1 }
         if abs(nozzleGlow - appliedNozzleGlow) > 0.01 || (nozzleGlow == 1 && appliedNozzleGlow != 1) {
@@ -2453,8 +2460,11 @@ final class World3D {
         // beim Ausweichen zieht die Kamera seitlich verzögert nach
         let lag = game.dodgeCameraLag
         let ship = CGPoint(x: game.pos.x - lag.dx, y: game.pos.y - lag.dy)
-        let chasePos = SCNVector3(Float(ship.x - cos(hd) * 190), 95, Float(ship.y - sin(hd) * 190))
-        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * 260), 0, Float(ship.y + sin(hd) * 260))
+        // beim Ausgleiten ohne Energie fährt sie langsam noch dichter heran
+        let cc = coastClose * coastClose * (3 - 2 * coastClose)
+        let back = 190 - 95 * cc, height = Float(95 - 45 * cc), ahead = 260 - 130 * cc
+        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height, Float(ship.y - sin(hd) * back))
+        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), 0, Float(ship.y + sin(hd) * ahead))
 
         func mix(_ a: SCNVector3, _ b: SCNVector3) -> SCNVector3 {
             let f = Float(k)
