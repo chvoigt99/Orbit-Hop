@@ -486,6 +486,11 @@ final class World3D {
     private let damageSmoke = SCNParticleSystem()
     private let damageSparks = SCNParticleSystem()
     private let hitFlash = SCNNode()
+    private var hitShellMat: SCNMaterial?
+    private let impactSparks = SCNParticleSystem()
+    private var lastBrakeFlash: CGFloat = 0
+    private var hitAt: CGFloat = -10
+    private var appliedHit: Float = -1
 
     private let orbitGroup = SCNNode()
     private let orbitRing = SCNNode()
@@ -705,19 +710,48 @@ final class World3D {
         damageSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: sparkFade)]
         shipHolder.addParticleSystem(damageSparks)
 
-        let flash = SCNPlane(width: 9, height: 9)
+        // Treffer: kurz aufleuchtende Schildhülle um das Schiff, nur am Rand hell (Fresnel), dazu Funken.
+        // Bleibt immer in der Szene (mit Stärke 0), damit der Shader schon beim Laden übersetzt ist.
+        let shell = SCNSphere(radius: 3.4)
+        shell.segmentCount = 40
         let fm = SCNMaterial()
         fm.lightingModel = .constant
-        fm.diffuse.contents = WorldTextures.dot
-        fm.multiply.contents = UIColor(red: 1, green: 0.2, blue: 0.15, alpha: 1)
+        fm.diffuse.contents = UIColor.black
         fm.blendMode = .add
         fm.writesToDepthBuffer = false
-        flash.materials = [fm]
-        hitFlash.geometry = flash
-        hitFlash.constraints = [SCNBillboardConstraint()]
-        hitFlash.opacity = 0
+        fm.isDoubleSided = false
+        fm.shaderModifiers = [.fragment: """
+        #pragma arguments
+        float intensity;
+        #pragma body
+        float3 n = normalize(_surface.normal);
+        float3 v = normalize(_surface.view);
+        float rim = pow(1.0 - saturate(abs(dot(n, v))), 2.4);
+        float3 col = mix(float3(1.0, 0.25, 0.12), float3(1.0, 0.85, 0.6), rim * rim);
+        _output.color = float4(col * (rim * 1.6 + 0.04) * intensity, 0.0);
+        """]
+        fm.setValue(0.0 as Float, forKey: "intensity")
+        shell.materials = [fm]
+        hitShellMat = fm
+        hitFlash.geometry = shell
+        hitFlash.scale = SCNVector3(1.25, 0.6, 1.0)
         hitFlash.renderingOrder = 50
         shipHolder.addChildNode(hitFlash)
+
+        impactSparks.birthRate = 0
+        impactSparks.particleLifeSpan = 0.4
+        impactSparks.particleLifeSpanVariation = 0.2
+        impactSparks.spreadingAngle = 180
+        impactSparks.particleImage = WorldTextures.soft
+        impactSparks.stretchFactor = 0.1
+        impactSparks.blendMode = .additive
+        impactSparks.isLightingEnabled = false
+        impactSparks.isAffectedByGravity = false
+        impactSparks.particleColor = UIColor(red: 1, green: 0.6, blue: 0.3, alpha: 1)
+        let impactFade = CAKeyframeAnimation()
+        impactFade.values = [1, 0]
+        impactSparks.propertyControllers = [.opacity: SCNParticlePropertyController(animation: impactFade)]
+        shipHolder.addParticleSystem(impactSparks)
 
         exhaust.birthRate = 0
         exhaust.isLocal = true
@@ -2418,7 +2452,23 @@ final class World3D {
         damageSparks.particleVelocity = CGFloat(s) * 9
         damageSparks.particleVelocityVariation = CGFloat(s) * 5
         damageSparks.particleSize = CGFloat(s) * 0.2
-        hitFlash.opacity = min(1, game.brakeFlash / 0.6) * (alive ? 1 : 0)
+        // neuer Treffer: Schild blitzt auf und klingt in knapp einer halben Sekunde ab, Funken nur im ersten Moment
+        if game.brakeFlash > lastBrakeFlash + 0.05 { hitAt = game.time }
+        lastBrakeFlash = game.brakeFlash
+        let age = game.time - hitAt
+        let e = alive ? max(0, 1 - age / 0.45) : 0
+        let strength = Float(e * e * 1.4)
+        if abs(strength - appliedHit) > 0.01 || (strength == 0 && appliedHit != 0) {
+            appliedHit = strength
+            hitShellMat?.setValue(strength, forKey: "intensity")
+        }
+        // Schild weitet sich beim Abklingen leicht
+        let grow = Float(1 + 0.18 * (1 - e))
+        hitFlash.scale = SCNVector3(1.25 * grow, 0.6 * grow, 1.0 * grow)
+        impactSparks.birthRate = alive && age < 0.08 ? 900 : 0
+        impactSparks.particleVelocity = CGFloat(s) * 14
+        impactSparks.particleVelocityVariation = CGFloat(s) * 7
+        impactSparks.particleSize = CGFloat(s) * 0.18
     }
 
     private var lastObjectsTime: CGFloat = 0
