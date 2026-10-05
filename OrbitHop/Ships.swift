@@ -454,6 +454,9 @@ struct ShipShopView: View {
                 Text("SCHIFFE")
                     .font(.system(size: 28, weight: .heavy, design: .monospaced))
                     .tracking(3)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .layoutPriority(1)
                     .foregroundStyle(.white)
                     .shadow(color: signal.opacity(0.6), radius: 10)
             }
