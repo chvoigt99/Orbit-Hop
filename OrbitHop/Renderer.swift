@@ -955,7 +955,7 @@ extension Game {
             let sp = screenPoint(pp.pos, size)
             // Erst kurz nach oben gleiten, dann ruhig stehen bleiben, damit man lesen kann
             let rise = 1 - exp(-pp.age * 3)
-            let sy = sp.y - 18 - rise * 40
+            let sy = sp.y - 18 - pp.lift - rise * 40
             let alpha = Double(min(1, max(0, (Popup.lifetime - pp.age) / Popup.fade)))
             let text = c.resolve(Text(pp.text)
                 .font(.system(size: 17, weight: .bold, design: .monospaced))

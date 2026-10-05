@@ -235,6 +235,8 @@ struct Popup {
     let text: String
     let color: Color
     var age: CGFloat
+    /// zusätzlicher Abstand nach oben in Bildpunkten (Komet: Schild über der Explosion, nicht darauf)
+    var lift: CGFloat = 0
 
     /// So lange bleibt der Text voll sichtbar, danach blendet er über `fade` aus.
     static let hold: CGFloat = 1.4
@@ -2206,7 +2208,7 @@ final class Game {
             waves.append(Wave(center: a.center, r0: 30, age: 0, maxAge: 0.9, hue: 195))
             waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 1.4, hue: 185))
             // Meldung wie bei allen anderen Treffern an der Stelle selbst, nicht groß über dem Bild
-            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0))
+            popups.append(Popup(pos: a.center, text: "KOMET ZERSTÖRT", color: Color(red: 0.6, green: 0.9, blue: 1), age: 0, lift: 110))
             shake = max(shake, 0.6)
             Haptics.launch(1)
         }
