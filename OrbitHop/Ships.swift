@@ -631,9 +631,10 @@ struct ShipShopView: View {
     @ViewBuilder
     private func actionButton(_ m: ShipModel, owned: Bool, active: Bool) -> some View {
         if active {
-            buttonLabel("AKTIV", signal, filled: true)
+            buttonLabel("AUSGEWÄHLT", signal, filled: true)
         } else if owned {
-            Button { profile.select(m) } label: { buttonLabel("AUSWÄHLEN", signal, filled: false) }
+            // Wählen schließt die Schiffsauswahl und führt zurück in den Hangar
+            Button { profile.select(m); onClose() } label: { buttonLabel("WÄHLEN", signal, filled: false) }
                 .buttonStyle(.plain)
         } else {
             // zu wenig Schiffsteile: der Knopf führt zum Kauf
