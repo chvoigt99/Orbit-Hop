@@ -153,6 +153,10 @@ struct Ship {
     var armor: CGFloat { min(0.85, model.armor + 0.04 * l) }
     var drain: CGFloat { model.drain * (1 - 0.03 * l) }
     var weaponCostFactor: CGFloat { max(0.35, 1 - 0.07 * l) }
+    /// Reichweite der Waffe: +4 % je Stufe
+    var weaponRangeFactor: CGFloat { 1 + 0.04 * l }
+    /// Nachladezeit der Waffe: −5 % je Stufe (Stufe 10: halbe Zeit)
+    var weaponReloadFactor: CGFloat { 1 - 0.05 * l }
 
     /// Tech-Teile für die nächste Stufe: Grundpreis je Klasse, jede Stufe 25 % teurer als die vorige,
     /// auf 5 gerundet (Stufe 10 kostet gut das Siebenfache der ersten)

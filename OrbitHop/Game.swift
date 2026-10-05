@@ -482,6 +482,9 @@ final class Game {
     var maxEnergy: CGFloat { ship.maxEnergy }
     var weapon: WeaponKind { ship.weapon }
     var weaponCost: CGFloat { (weapon.cost * ship.weaponCostFactor).rounded() }
+    /// Reichweite wächst mit der Ausbaustufe; Geschosse fliegen entsprechend länger
+    var rangeFactor: CGFloat { ship.weaponRangeFactor }
+    var railReach: CGFloat { Game.railRange * rangeFactor }
     var runParts = 0                      // in diesem Flug gesammelte Tech-Teile
     var runShipParts = 0                  // in diesem Flug gefundene Schiffsteile
 
@@ -1909,7 +1912,7 @@ final class Game {
             return
         }
         energy -= weaponCost
-        weaponCooldown = weapon.cooldown
+        weaponCooldown = weapon.cooldown * ship.weaponReloadFactor
         let muzzle = point(from: pos, angle: heading, distance: 30)
         // Zielhilfe: nächstes Hindernis voraus anvisieren, mit Vorhalt bei bewegten Zielen
         let target = aimTarget()
@@ -1927,26 +1930,26 @@ final class Game {
 
         switch weapon {
         case .railgun:
-            let to = CGPoint(x: muzzle.x + fwd.dx * Game.railRange, y: muzzle.y + fwd.dy * Game.railRange)
+            let to = CGPoint(x: muzzle.x + fwd.dx * railReach, y: muzzle.y + fwd.dy * railReach)
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
                 // Strahl beginnt am Schiff schmal und wird nach vorn breiter
-                let along = max(0, min(Game.railRange, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
-                let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / Game.railRange
+                let along = max(0, min(railReach, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
+                let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / railReach
                 if distanceToSegment(a.center, muzzle, to) < a.radius + width { damageObstacle(i, 3, blast: false) }
             }
             shake = max(shake, 0.2)
         case .cannon:
             projectiles.append(Projectile(kind: .cannon, p: muzzle,
                                           v: CGVector(dx: fwd.dx * 1900 + vel.dx * 0.3, dy: fwd.dy * 1900 + vel.dy * 0.3),
-                                          maxAge: 1.6, target: target?.uid))
+                                          maxAge: 1.6 * rangeFactor, target: target?.uid))
         case .rocket:
             projectiles.append(Projectile(kind: .rocket, p: muzzle,
-                                          v: CGVector(dx: fwd.dx * 700 + vel.dx * 0.5, dy: fwd.dy * 700 + vel.dy * 0.5), maxAge: 2.5))
+                                          v: CGVector(dx: fwd.dx * 700 + vel.dx * 0.5, dy: fwd.dy * 700 + vel.dy * 0.5), maxAge: 2.5 * rangeFactor))
         case .bomb:
             projectiles.append(Projectile(kind: .bomb, p: muzzle,
-                                          v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9))
+                                          v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9 * rangeFactor))
         }
         Haptics.launch(0.3)
         switch weapon {
@@ -2030,10 +2033,10 @@ final class Game {
         // Reichweite je Waffe: so weit, wie ihre Geschosse fliegen
         let fanRange: CGFloat
         switch weapon {
-        case .railgun: fanRange = Game.railRange
-        case .cannon: fanRange = 1900 * 1.6
-        case .rocket: fanRange = 700 * 2.5
-        case .bomb: fanRange = 600 * 0.9 + 200
+        case .railgun: fanRange = railReach
+        case .cannon: fanRange = 1900 * 1.6 * rangeFactor
+        case .rocket: fanRange = 700 * 2.5 * rangeFactor
+        case .bomb: fanRange = 600 * 0.9 * rangeFactor + 200
         }
         let inArc = asteroids.filter { o in
             let d = hypot(o.center.x - muzzle.x, o.center.y - muzzle.y)
@@ -2058,7 +2061,7 @@ final class Game {
             return
         }
         energy -= cost
-        weaponCooldown = weapon.cooldown
+        weaponCooldown = weapon.cooldown * ship.weaponReloadFactor
         for t in picked {
             // Geschosse mit Vorhalt auf bewegte Ziele, der Railgun-Strahl trifft sofort
             let speed: CGFloat = weapon == .cannon ? 1900 : (weapon == .rocket ? 700 : 600)
@@ -2067,7 +2070,7 @@ final class Game {
             let dir = CGVector(dx: cos(ang), dy: sin(ang))
             switch weapon {
             case .railgun:
-                let to = CGPoint(x: muzzle.x + dir.dx * Game.railRange, y: muzzle.y + dir.dy * Game.railRange)
+                let to = CGPoint(x: muzzle.x + dir.dx * railReach, y: muzzle.y + dir.dy * railReach)
                 beams.append(Beam(from: muzzle, to: to))
                 for i in asteroids.indices.reversed() {
                     let o = asteroids[i]
@@ -2076,14 +2079,14 @@ final class Game {
                 }
             case .cannon:
                 projectiles.append(Projectile(kind: .cannon, p: muzzle, v: CGVector(dx: dir.dx * 1900, dy: dir.dy * 1900),
-                                              maxAge: 1.6, target: t.uid))
+                                              maxAge: 1.6 * rangeFactor, target: t.uid))
             case .rocket:
-                projectiles.append(Projectile(kind: .rocket, p: muzzle, v: CGVector(dx: dir.dx * 700, dy: dir.dy * 700), maxAge: 2.5))
+                projectiles.append(Projectile(kind: .rocket, p: muzzle, v: CGVector(dx: dir.dx * 700, dy: dir.dy * 700), maxAge: 2.5 * rangeFactor))
             case .bomb:
                 // Bombe fliegt höchstens bis kurz vor das Ziel und zündet dort
                 let d = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y)
                 projectiles.append(Projectile(kind: .bomb, p: muzzle, v: CGVector(dx: dir.dx * 600, dy: dir.dy * 600),
-                                              maxAge: min(0.9, d / 600)))
+                                              maxAge: min(0.9 * rangeFactor, d / 600)))
             }
         }
         shake = max(shake, 0.25)
@@ -2104,7 +2107,7 @@ final class Game {
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
     private func aimTarget() -> Asteroid? {
-        let reach: CGFloat = weapon == .railgun ? 1.8 : 1
+        let reach: CGFloat = (weapon == .railgun ? 1.8 : 1) * rangeFactor
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?
         var bestScore = CGFloat.infinity
