@@ -456,7 +456,7 @@ enum Ship3D {
         // Düsenglut nicht mitverschmelzen: flattenedClone verliert die Materialnamen, World3D findet sie sonst nicht
         var fires: [SCNNode] = []
         ship.enumerateHierarchy { n, _ in
-            if n.geometry?.materials.contains(where: { $0.name == "engineFire" }) == true { fires.append(n) }
+            if n.geometry?.materials.contains(where: { $0.name == "engineFire" || $0.name == "weaponGlow" }) == true { fires.append(n) }
         }
         let fireCopies = fires.map { n -> SCNNode in
             let c = n.clone()

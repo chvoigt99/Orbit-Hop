@@ -400,6 +400,7 @@ final class ShipKit {
         fire = ShipKit.glow(UIColor(red: 1, green: 0.5, blue: 0.12, alpha: 1))
         fire.name = "engineFire"   // Düsenglut: World3D schaltet sie aus, wenn die Triebwerke aus sind
         weaponGlow = ShipKit.glow(UIColor(hsl(weaponHue, 0.9, 0.6)))
+        weaponGlow.name = "weaponGlow"   // Leuchtringe der Waffe: erlöschen am Spielende wie die Düsenglut
     }
 
     static func glow(_ c: UIColor) -> SCNMaterial {

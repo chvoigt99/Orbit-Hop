@@ -472,6 +472,8 @@ final class World3D {
     private var exploded = false
     /// Teile mit Düsenglut und ihre aktuelle Helligkeit
     private var nozzleMats: [SCNMaterial] = []
+    /// Grundfarbe je Glut-Material (Düsenglut orange, Leuchtringe der Waffe in Waffenfarbe)
+    private var nozzleBase: [UIColor] = []
     private var nozzleHalos: [SCNNode] = []
     private var appliedNozzleGlow: CGFloat = 1
     private var nozzleGlow: CGFloat = 1
@@ -2326,18 +2328,22 @@ final class World3D {
             // Düsenglut dieses Schiffs: eigene Kopie der Glut-Materialien (das Modell ist zusammengefasst und teilt
             // seine Materialien), dazu die Glut-Sprites hinter den Düsen
             var mats: [SCNMaterial] = []
+            var bases: [UIColor] = []
+            let glowNames: Set<String> = ["engineFire", "weaponGlow"]
             n.enumerateHierarchy { node, _ in
-                guard let g = node.geometry, g.materials.contains(where: { $0.name == "engineFire" }) else { return }
+                guard let g = node.geometry, g.materials.contains(where: { glowNames.contains($0.name ?? "") }) else { return }
                 let own = g.copy() as! SCNGeometry
                 own.materials = g.materials.map { m in
-                    guard m.name == "engineFire" else { return m }
+                    guard glowNames.contains(m.name ?? "") else { return m }
                     let c = m.copy() as! SCNMaterial
                     mats.append(c)
+                    bases.append((m.diffuse.contents as? UIColor) ?? .orange)
                     return c
                 }
                 node.geometry = own
             }
             nozzleMats = mats
+            nozzleBase = bases
             nozzleHalos = Ship3D.outlets(of: n).flatMap { $0.0.childNodes }
             // Einzelteile für die Explosion vorhalten (Materialien sind ohnehin im ShipKit-Cache)
             let src = ShipDesigns.build(game.ship.model)
@@ -2354,8 +2360,14 @@ final class World3D {
             appliedNozzleGlow = nozzleGlow
             // Farbe direkt setzen (multiply wirkt beim konstanten Glut-Material nicht zuverlässig): von Orange zu kalt-dunkel
             let g = nozzleGlow
-            let ember = UIColor(red: 0.05 + 0.95 * g, green: 0.045 + 0.455 * g, blue: 0.04 + 0.08 * g, alpha: 1)
-            for m in nozzleMats { m.diffuse.contents = ember; m.emission.contents = ember }
+            for (m, base) in zip(nozzleMats, nozzleBase) {
+                var r: CGFloat = 0, gr: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                base.getRed(&r, green: &gr, blue: &b, alpha: &a)
+                // von der Grundfarbe zu kalt-dunkel
+                let ember = UIColor(red: 0.05 + (r - 0.05) * g, green: 0.045 + (gr - 0.045) * g, blue: 0.04 + (b - 0.04) * g, alpha: 1)
+                m.diffuse.contents = ember
+                m.emission.contents = ember
+            }
             for h in nozzleHalos { h.opacity = nozzleGlow }
         }
         // ohne Energie bleibt das Schiff sichtbar und gleitet aus, nur ein zerstörtes verschwindet in der Explosion
