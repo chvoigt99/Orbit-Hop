@@ -1995,15 +1995,15 @@ final class Game {
 
     // MARK: Streufeuer
 
-    /// Railgun-Fächer: bis zu so viele Strahlen, je einer pro Ziel im gewischten Bogen, je ein Schaden
+    /// Streufeuer: bis zu so viele Schüsse, je einer pro Ziel im gewischten Bogen (Railgun-Strahlen je ein Schaden)
     static let fanBeams = 5
     static let fanMinSpread: CGFloat = 0.35      // mindestens etwa 20° breit
     static let fanMaxSpread: CGFloat = 2.1       // höchstens etwa 120°
 
-    /// Wischbogen mit der Railgun: Start- und Endpunkt auf dem Bildschirm, vom Schiff aus gesehen
+    /// Wischbogen mit jeder Waffe: Start- und Endpunkt auf dem Bildschirm, vom Schiff aus gesehen
     /// ergibt das den Winkelbereich, über den der Fächer feuert.
     func swipe(from a: CGPoint, to b: CGPoint) {
-        guard !paused, !stationOpen, started, weapon == .railgun,
+        guard !paused, !stationOpen, started,
               phase == .flying || phase == .orbiting, weaponCooldown <= 0, let project,
               let ship = project(pos) else { return }
         // Bildschirmwinkel in Weltwinkel umrechnen: Kurs und Querrichtung projizieren
@@ -2024,11 +2024,20 @@ final class Game {
         }
         let muzzle = point(from: pos, angle: heading, distance: 30)
         // Jeder Strahl braucht ein eigenes Ziel im Bogen (etwas Rand dazu): Drohnen zuerst, dann die nächsten Hindernisse.
-        // Bei weniger Zielen feuern entsprechend weniger Strahlen, ohne Ziel gar keiner. Je Strahl 30 % eines Schusses.
+        // Bei weniger Zielen feuern entsprechend weniger Schüsse, ohne Ziel gar keiner. Ein Railgun-Strahl kostet 30 %
+        // eines Schusses (macht aber nur 1 statt 3 Schaden), Geschosse der anderen Waffen kosten wie ein normaler Schuss.
         let margin: CGFloat = 0.1
+        // Reichweite je Waffe: so weit, wie ihre Geschosse fliegen
+        let fanRange: CGFloat
+        switch weapon {
+        case .railgun: fanRange = Game.railRange
+        case .cannon: fanRange = 1900 * 1.6
+        case .rocket: fanRange = 700 * 2.5
+        case .bomb: fanRange = 600 * 0.9 + 200
+        }
         let inArc = asteroids.filter { o in
             let d = hypot(o.center.x - muzzle.x, o.center.y - muzzle.y)
-            guard d < Game.railRange else { return false }
+            guard d < fanRange else { return false }
             let ang = atan2(o.center.y - muzzle.y, o.center.x - muzzle.x)
             return abs(wrap(ang - mid)) < span / 2 + margin
         }
@@ -2041,7 +2050,7 @@ final class Game {
             popups.append(Popup(pos: pos, text: "KEIN ZIEL IN REICHWEITE", color: Color(red: 0.75, green: 0.8, blue: 0.9), age: 0))
             return
         }
-        let cost = weaponCost * 0.3 * CGFloat(picked.count)
+        let cost = weaponCost * (weapon == .railgun ? 0.3 : 1) * CGFloat(picked.count)
         guard energy > cost else {
             noEnergyFlash = 0.5
             Haptics.miss()
@@ -2051,19 +2060,40 @@ final class Game {
         energy -= cost
         weaponCooldown = weapon.cooldown
         for t in picked {
-            let ang = atan2(t.center.y - muzzle.y, t.center.x - muzzle.x)
+            // Geschosse mit Vorhalt auf bewegte Ziele, der Railgun-Strahl trifft sofort
+            let speed: CGFloat = weapon == .cannon ? 1900 : (weapon == .rocket ? 700 : 600)
+            let lead = weapon == .railgun ? 0 : hypot(t.center.x - muzzle.x, t.center.y - muzzle.y) / speed
+            let ang = atan2(t.center.y + t.vel.dy * lead - muzzle.y, t.center.x + t.vel.dx * lead - muzzle.x)
             let dir = CGVector(dx: cos(ang), dy: sin(ang))
-            let to = CGPoint(x: muzzle.x + dir.dx * Game.railRange, y: muzzle.y + dir.dy * Game.railRange)
-            beams.append(Beam(from: muzzle, to: to))
-            for i in asteroids.indices.reversed() {
-                let o = asteroids[i]
-                // Fächerstrahlen sind schmal: gleich breit wie der Hauptstrahl direkt am Schiff
-                if distanceToSegment(o.center, muzzle, to) < o.radius + Game.railWidthNear { damageObstacle(i, 1, blast: false) }
+            switch weapon {
+            case .railgun:
+                let to = CGPoint(x: muzzle.x + dir.dx * Game.railRange, y: muzzle.y + dir.dy * Game.railRange)
+                beams.append(Beam(from: muzzle, to: to))
+                for i in asteroids.indices.reversed() {
+                    let o = asteroids[i]
+                    // Fächerstrahlen sind schmal: gleich breit wie der Hauptstrahl direkt am Schiff
+                    if distanceToSegment(o.center, muzzle, to) < o.radius + Game.railWidthNear { damageObstacle(i, 1, blast: false) }
+                }
+            case .cannon:
+                projectiles.append(Projectile(kind: .cannon, p: muzzle, v: CGVector(dx: dir.dx * 1900, dy: dir.dy * 1900),
+                                              maxAge: 1.6, target: t.uid))
+            case .rocket:
+                projectiles.append(Projectile(kind: .rocket, p: muzzle, v: CGVector(dx: dir.dx * 700, dy: dir.dy * 700), maxAge: 2.5))
+            case .bomb:
+                // Bombe fliegt höchstens bis kurz vor das Ziel und zündet dort
+                let d = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y)
+                projectiles.append(Projectile(kind: .bomb, p: muzzle, v: CGVector(dx: dir.dx * 600, dy: dir.dy * 600),
+                                              maxAge: min(0.9, d / 600)))
             }
         }
         shake = max(shake, 0.25)
         Haptics.launch(0.4)
-        SoundFX.shared.play(.railgun)
+        switch weapon {
+        case .cannon: SoundFX.shared.play(.cannon)
+        case .rocket: SoundFX.shared.play(.rocket)
+        case .railgun: SoundFX.shared.play(.railgun)
+        case .bomb: SoundFX.shared.play(.bomb)
+        }
     }
 
     /// Railgun: Reichweite und halbe Breite des Strahls am Ende (gleicht die lange Ladezeit aus)
