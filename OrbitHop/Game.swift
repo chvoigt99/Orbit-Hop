@@ -2061,7 +2061,7 @@ final class Game {
             return
         }
         energy -= cost
-        weaponCooldown = weapon.cooldown * ship.weaponReloadFactor
+        weaponCooldown = weapon.cooldown * self.ship.weaponReloadFactor
         for t in picked {
             // Geschosse mit Vorhalt auf bewegte Ziele, der Railgun-Strahl trifft sofort
             let speed: CGFloat = weapon == .cannon ? 1900 : (weapon == .rocket ? 700 : 600)
