@@ -2189,7 +2189,7 @@ final class World3D {
         }
         // Triebwerke aus (Spielende): Düsenglut klingt ab
         let glowTarget: CGFloat = game.phase == .over ? 0 : 1
-        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 0.8, dt: max(0, min(0.1, game.time - lastNozzleTime)))
+        nozzleGlow = smoothApproach(nozzleGlow, glowTarget, rate: 2.2, dt: max(0, min(0.1, game.time - lastNozzleTime)))
         lastNozzleTime = game.time
         if game.phase != .over { nozzleGlow = 1 }
         if abs(nozzleGlow - appliedNozzleGlow) > 0.01 || (nozzleGlow == 1 && appliedNozzleGlow != 1) {

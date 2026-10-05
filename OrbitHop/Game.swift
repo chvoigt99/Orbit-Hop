@@ -612,7 +612,7 @@ final class Game {
     }
     var overAt: CGFloat = 0
     /// Die Ende-Tafel kommt erst, wenn man das Ausgleiten bzw. die Explosion gesehen hat
-    var overPanelDelay: CGFloat { destroyed ? 1.6 : 4.2 }
+    var overPanelDelay: CGFloat { destroyed ? 1.6 : 5.5 }
     var overPanelShown: Bool { phase == .over && time - overAt >= overPanelDelay }
     var lastAccuracy: CGFloat = 0
     var lastLaunchTime: CGFloat = -10
@@ -1748,7 +1748,7 @@ final class Game {
     /// Spielende ohne Energie: Triebwerke aus, das Schiff gleitet mit dem letzten Schwung weiter und bremst ab
     private func coast(_ dt: CGFloat) {
         guard !destroyed else { return }
-        let k = exp(-0.4 * dt)
+        let k = exp(-0.3 * dt)
         vel = CGVector(dx: vel.dx * k, dy: vel.dy * k)
         pos.x += vel.dx * dt
         pos.y += vel.dy * dt
