@@ -834,17 +834,9 @@ struct GameView: View {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-            VStack(spacing: 18) {
-                gameOverPanel
-                    .allowsHitTesting(false)
-                HStack(spacing: 10) {
-                    shipsButton
-                    missionsButton
-                }
-                .frame(width: Self.menuRowWidth)
-                dailyRow.frame(width: Self.menuRowWidth)
-                    .padding(.top, 18)
-            }
+            // nur die Endtafel; Schiffe, Missionen und Spielart gibt es danach auf dem Titel
+            gameOverPanel
+                .allowsHitTesting(false)
         }
     }
 
@@ -884,7 +876,7 @@ struct GameView: View {
                 label("+\(game.runShipParts) SCHIFFSTEILE · GESAMT \(game.profile.shipParts)")
                     .foregroundStyle(hsl(ItemKind.shipPart.hue, 0.8, 0.68))
             }
-            Text("TIPPEN FÜR NEUSTART")
+            Text("TIPPEN ZUM FORTFAHREN")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .tracking(2.5)
                 .foregroundStyle(signal)

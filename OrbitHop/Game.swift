@@ -1518,7 +1518,11 @@ final class Game {
             // beim Anflug auf eine Station und im Stationsmenü startet ein Tipp nichts
             if arriveAt == nil { depart() }
         case .over:
-            if overPanelShown && time - overAt > overPanelDelay + 0.4 { reset() }
+            // zurück zum Titel: dort liegen Schiffe, Missionen und die Wahl zwischen freiem Spiel und Tagesflug
+            if overPanelShown && time - overAt > overPanelDelay + 0.4 {
+                started = false
+                reset()
+            }
         case .flying:
             fire()
         case .orbiting:
