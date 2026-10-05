@@ -452,7 +452,7 @@ struct ShipShopView: View {
             VStack(alignment: .leading, spacing: 2) {
                 label("HANGAR // FLOTTE").foregroundStyle(signal.opacity(0.8))
                 Text("SCHIFFE")
-                    .font(.system(size: 28, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 24, weight: .heavy, design: .monospaced))
                     .tracking(3)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -462,20 +462,24 @@ struct ShipShopView: View {
             .layoutPriority(1)
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                label("SCHIFFSTEILE").foregroundStyle(dim)
+                label("SCHIFFSTEILE").foregroundStyle(dim).lineLimit(1).fixedSize()
                 HStack(spacing: 5) {
                     Image(systemName: "puzzlepiece.fill").font(.system(size: 14))
                     Text("\(profile.shipParts)")
                         .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 .foregroundStyle(shipPartColor)
             }
             VStack(alignment: .trailing, spacing: 2) {
-                label("TECH-TEILE").foregroundStyle(dim)
+                label("TECH-TEILE").foregroundStyle(dim).lineLimit(1).fixedSize()
                 HStack(spacing: 5) {
                     Image(systemName: "gearshape.fill").font(.system(size: 14))
                     Text("\(profile.parts)")
                         .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 .foregroundStyle(gold)
             }
