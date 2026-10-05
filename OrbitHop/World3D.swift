@@ -2170,9 +2170,12 @@ final class World3D {
     private func explodeShip(_ game: Game) {
         guard let model = shipModelNode, let src = debrisSource else { return }
         let base = model.worldTransform
-        let root = SCNNode()
-        scene.rootNode.addChildNode(root)
         let center = SCNVector3(base.m41, base.m42, base.m43)
+        // Wrack um die Schiffsmitte aufhängen: in der Draufsicht (Orbit) ist das Schiff größer gezeichnet als in der
+        // Nahaufnahme; beim Heranfahren der Kamera schrumpft das Wrack auf Nahaufnahme-Maß, damit Teile und Tempo passen
+        let root = SCNNode()
+        root.position = center
+        scene.rootNode.addChildNode(root)
         // Größe des Schiffs in Weltkoordinaten (für Tempo der Teile und Abstand der Feuerbälle)
         let probe = SCNNode()
         probe.transform = base
@@ -2195,10 +2198,10 @@ final class World3D {
         for (i, n) in pieces.enumerated() {
             let local = src.convertTransform(SCNMatrix4Identity, from: n)
             let c = SCNNode(geometry: n.geometry)
-            c.transform = SCNMatrix4Mult(local, base)
+            c.transform = root.convertTransform(SCNMatrix4Mult(local, base), from: nil)
             root.addChildNode(c)
             // nach außen, weg von der Schiffsmitte, mit etwas Zufall und Auftrieb
-            var dx = CGFloat(c.position.x - center.x), dz = CGFloat(c.position.z - center.z)
+            var dx = CGFloat(c.position.x), dz = CGFloat(c.position.z)
             let len = max(0.001, hypot(dx, dz))
             dx /= len; dz /= len
             let ang = atan2(dz, dx) + CGFloat.random(in: -0.6...0.6)
@@ -2246,10 +2249,10 @@ final class World3D {
             let delay = k == 0 ? 0 : Double.random(in: 0.05...1.1)
             let off = SCNVector3(Float(size * CGFloat.random(in: -0.7...0.7)), Float(size * CGFloat.random(in: -0.2...0.4)),
                                  Float(size * CGFloat.random(in: -0.7...0.7)))
-            let at = SCNVector3(center.x + off.x, center.y + off.y, center.z + off.z)
-            let big: CGFloat = k == 0 ? 1.6 : CGFloat.random(in: 0.6...1.1)
+            // deutlich größer als die Funken, damit man die einzelnen Feuerbälle erkennt
+            let big: CGFloat = k == 0 ? 2.6 : CGFloat.random(in: 1.3...2.0)
             let ball = SCNNode()
-            ball.position = at
+            ball.position = off
             ball.opacity = 0
             root.addChildNode(ball)
             for (scale, color, additive) in [(1.0, UIColor(red: 1, green: 0.42, blue: 0.08, alpha: 1), true),
@@ -2282,7 +2285,28 @@ final class World3D {
             ball.runAction(.sequence([.wait(duration: delay), .fadeIn(duration: 0.04),
                                       .wait(duration: 0.7), .fadeOut(duration: 0.5), .removeFromParentNode()]))
         }
+        let f = Float(min(1, 5 / max(0.1, lastShipScale)))
+        if f < 0.99 {
+            let shrink = SCNAction.scale(to: CGFloat(f), duration: 0.9)
+            shrink.timingMode = .easeInEaseOut
+            root.runAction(shrink)
+        }
         root.runAction(.sequence([.wait(duration: 3.0), .removeFromParentNode()]))
+    }
+
+    /// Materialien, Partikel und Wrackteile der Explosion einmal vorab auf die GPU laden, sonst hängt das erste Bild
+    private func prepareExplosion(_ src: SCNNode) {
+        let warm = SCNNode()
+        warm.addChildNode(src.clone())
+        for blend in [SCNBlendMode.add, .alpha] {
+            let plane = SCNNode(geometry: SCNPlane(width: 1, height: 1))
+            let m = spriteMat(WorldTextures.soft)
+            m.multiply.contents = UIColor.orange
+            m.blendMode = blend
+            plane.geometry?.materials = [m]
+            warm.addChildNode(plane)
+        }
+        upload(warm) {}
     }
 
     private func syncShip(_ game: Game, px: CGFloat, k: CGFloat, ka: CGFloat, kh: CGFloat) {
@@ -2309,7 +2333,9 @@ final class World3D {
             nozzleMats = mats
             nozzleHalos = Ship3D.outlets(of: n).flatMap { $0.0.childNodes }
             // Einzelteile für die Explosion vorhalten (Materialien sind ohnehin im ShipKit-Cache)
-            debrisSource = ShipDesigns.build(game.ship.model)
+            let src = ShipDesigns.build(game.ship.model)
+            debrisSource = src
+            prepareExplosion(src)
 
         }
         // Triebwerke aus (Spielende): Düsenglut klingt ab

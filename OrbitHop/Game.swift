@@ -1778,8 +1778,9 @@ final class Game {
             phase = .over
             overAt = time
             if destroyed {
-                burst(at: pos, count: 70, hue: 12, speed: 340, life: 1.3)
-                burst(at: pos, count: 40, hue: 38, speed: 180, life: 1.6)
+                // weniger Funken: Feuerbälle und Wrackteile der 3D-Explosion sollen sichtbar bleiben
+                burst(at: pos, count: 30, hue: 12, speed: 340, life: 1.0)
+                burst(at: pos, count: 15, hue: 38, speed: 180, life: 1.2)
                 waves.append(Wave(center: pos, r0: 20, age: 0, maxAge: 0.8, hue: 20))
                 shake = 0.6
             } else {
