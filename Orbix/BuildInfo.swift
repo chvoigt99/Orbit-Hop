@@ -2,7 +2,8 @@ import SwiftUI
 
 // Vorlage: Apps/_tools/BuildInfo.swift – unverändert in jedes App-Target kopieren.
 // Die Schlüssel CHVBuildID und CHVBuildSource schreibt die Run-Script-Phase „Build-ID setzen“
-// bei jedem Build ins Info.plist (siehe _tools/set-build-id.sh).
+// bei jedem Build ins Info.plist (siehe _tools/add-build-id-phase.py), CHVBuildSource immer "Claude/Xcode".
+// Nur nas-build.sh setzt beim Export für die Website "Website".
 
 /// Woher dieser Build stammt: 4-stellige Build-ID, Installationsweg und Version
 enum BuildInfo {
@@ -11,7 +12,7 @@ enum BuildInfo {
     static let version = info("CFBundleShortVersionString") ?? "?"
     static let build = info("CFBundleVersion") ?? "?"
 
-    /// "Website" (Archiv, Ad-hoc über die Download-Seite), "Xcode", "TestFlight" oder "App Store"
+    /// "Website" (Ad-hoc über nas-build.sh und die Download-Seite), "Claude/Xcode", "TestFlight" oder "App Store"
     static let source: String = {
         #if os(iOS) && !targetEnvironment(simulator)
         // Store-signierte Builds haben kein embedded.mobileprovision; dasselbe Archiv kann
@@ -24,7 +25,9 @@ enum BuildInfo {
             return receipt.lastPathComponent == "sandboxReceipt" ? "TestFlight" : "App Store"
         }
         #endif
-        return info("CHVBuildSource") ?? "Xcode"
+        // ältere Builds schrieben "Xcode"
+        let src = info("CHVBuildSource") ?? "Claude/Xcode"
+        return src == "Xcode" ? "Claude/Xcode" : src
     }()
 
     /// im App Store keine Testinfo zeigen

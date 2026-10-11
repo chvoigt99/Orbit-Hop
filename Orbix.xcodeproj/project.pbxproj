@@ -142,7 +142,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Neue 4-stellige Build-ID und Installationsweg ins Info.plist (Vorlage: Apps/_tools/BuildInfo.swift)\nID=$(LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 4)\nif [ \"$ACTION\" = \"install\" ]; then SRC=Website; else SRC=Xcode; fi\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nfor K in CHVBuildID CHVBuildSource; do /usr/libexec/PlistBuddy -c \"Delete :$K\" \"$PLIST\" 2>/dev/null || true; done\n/usr/libexec/PlistBuddy -c \"Add :CHVBuildID string $ID\" -c \"Add :CHVBuildSource string $SRC\" \"$PLIST\"\necho \"Build-ID $ID ($SRC)\"\n";
+			shellScript = "# Neue 4-stellige Build-ID und Installationsweg ins Info.plist (Vorlage: Apps/_tools/BuildInfo.swift)\nID=$(LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 4)\nSRC=Claude/Xcode   # \"Website\" setzt nur nas-build.sh beim Export\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nfor K in CHVBuildID CHVBuildSource; do /usr/libexec/PlistBuddy -c \"Delete :$K\" \"$PLIST\" 2>/dev/null || true; done\n/usr/libexec/PlistBuddy -c \"Add :CHVBuildID string $ID\" -c \"Add :CHVBuildSource string $SRC\" \"$PLIST\"\necho \"Build-ID $ID ($SRC)\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
