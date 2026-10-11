@@ -65,5 +65,14 @@
    <ArchiveAction
       buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
+         <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Ad-hoc-Build aufs NAS"
+               scriptText = "nohup &quot;$HOME/Library/Mobile Documents/com~apple~CloudDocs/Apps/_tools/nas-build.sh&quot; Orbix --archive &quot;$ARCHIVE_PATH&quot; &gt; /tmp/nas-build-Orbix.log 2&gt;&amp;1 &amp;&#10;">
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
    </ArchiveAction>
 </Scheme>

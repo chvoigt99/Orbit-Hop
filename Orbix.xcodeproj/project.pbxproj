@@ -55,6 +55,7 @@
 				0000000000001A2B3C000007 /* Sources */,
 				0000000000001A2B3C000003 /* Frameworks */,
 				0000000000001A2B3C000008 /* Resources */,
+				3F4A084C01A36E84AEBAB51E /* Build-ID setzen */,
 			);
 			buildRules = (
 			);
@@ -122,6 +123,30 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		3F4A084C01A36E84AEBAB51E /* Build-ID setzen */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Build-ID setzen";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Neue 4-stellige Build-ID und Installationsweg ins Info.plist (Vorlage: Apps/_tools/BuildInfo.swift)\nID=$(LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 4)\nif [ \"$ACTION\" = \"install\" ]; then SRC=Website; else SRC=Xcode; fi\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nfor K in CHVBuildID CHVBuildSource; do /usr/libexec/PlistBuddy -c \"Delete :$K\" \"$PLIST\" 2>/dev/null || true; done\n/usr/libexec/PlistBuddy -c \"Add :CHVBuildID string $ID\" -c \"Add :CHVBuildSource string $SRC\" \"$PLIST\"\necho \"Build-ID $ID ($SRC)\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0000000000001A2B3C000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -179,6 +204,7 @@
 		0000000000001A2B3C00000C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Orbix.entitlements;
@@ -212,6 +238,7 @@
 		0000000000001A2B3C00000D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Orbix.entitlements;

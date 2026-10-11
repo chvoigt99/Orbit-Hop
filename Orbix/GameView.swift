@@ -83,6 +83,9 @@ struct GameView: View {
                         }
                         if !game.started {
                             titleView
+                            BuildInfoButton(tint: signal.opacity(0.55))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                                .padding(.trailing, 6)
                         }
                         if game.started && game.phase != .over && !game.paused && !game.stationOpen && game.hudAlpha > 0 {
                             pauseButton
