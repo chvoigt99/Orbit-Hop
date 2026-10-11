@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "0000000000001A2B3C000006"
-               BuildableName = "OrbitHop.app"
-               BlueprintName = "OrbitHop"
-               ReferencedContainer = "container:OrbitHop.xcodeproj">
+               BuildableName = "Orbix.app"
+               BlueprintName = "Orbix"
+               ReferencedContainer = "container:Orbix.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -43,13 +43,13 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0000000000001A2B3C000006"
-            BuildableName = "OrbitHop.app"
-            BlueprintName = "OrbitHop"
-            ReferencedContainer = "container:OrbitHop.xcodeproj">
+            BuildableName = "Orbix.app"
+            BlueprintName = "Orbix"
+            ReferencedContainer = "container:Orbix.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <StoreKitConfigurationFileReference
-         identifier = "../../OrbitHop.storekit">
+         identifier = "../../Orbix.storekit">
       </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction

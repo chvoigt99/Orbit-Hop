@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct OrbitHopApp: App {
+struct OrbixApp: App {
     var body: some Scene {
         WindowGroup {
             GameView()

@@ -5,7 +5,7 @@ import StoreKit
 
 /// Schiffsteile werden genau in der fehlenden Menge gekauft: als Zehnerpakete plus Einzelteile,
 /// jeweils mit Stückzahl (StoreKit erlaubt bis 10 Stück pro Kauf). Die Produkt-IDs müssen in
-/// App Store Connect (und in OrbitHop.storekit für Tests) genau so angelegt sein.
+/// App Store Connect (und in Orbix.storekit für Tests) genau so angelegt sein.
 enum ShipPartPack: String, CaseIterable {
     case single = "com.chv.OrbitHop.shipparts.1"
     case ten = "com.chv.OrbitHop.shipparts.10"
