@@ -46,7 +46,8 @@ extension Game {
     private func drawObstacleHP(_ c: GraphicsContext, _ size: CGSize) {
         if phase == .combat { drawRaiderArrows(c, size) }
         for a in asteroids where a.maxHP > 1 {
-            guard let sp = project?(CGPoint(x: a.center.x, y: a.center.y)) else { continue }
+            let projected = a.kind == .raider ? project3?(a.center, 6 + a.alt) : project?(a.center)
+            guard let sp = projected else { continue }
             guard sp.x > -40, sp.x < size.width + 40, sp.y > insets.top + 120, sp.y < size.height - 120 else { continue }
             if a.kind == .raider {
                 drawRaiderBar(c, a, sp)
@@ -71,8 +72,8 @@ extension Game {
 
     /// Gefecht in der Verfolgerkamera: rote Pfeile um das Schiff zeigen Piraten außerhalb des Blickfelds
     private func drawRaiderArrows(_ c: GraphicsContext, _ size: CGSize) {
-        guard let project, let ship = project(pos),
-              let side = project(point(from: pos, angle: heading + .pi / 2, distance: 60)) else { return }
+        guard let project3, let ship = project3(pos, altitude),
+              let side = project3(point(from: pos, angle: heading + .pi / 2, distance: 60), altitude) else { return }
         // liegt +90° rechts oder links auf dem Bildschirm?
         let sign: CGFloat = side.x >= ship.x ? 1 : -1
         let red = Color(red: 1, green: 0.32, blue: 0.3)

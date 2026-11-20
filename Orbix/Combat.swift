@@ -81,7 +81,8 @@ extension Game {
         if arenaNextWaveAt != nil { return "NÄCHSTE WELLE IM ANFLUG" }
         let n = arenaRaiders
         let wave = arenaWaves.count > 1 ? " · WELLE \(arenaWave + 1)/\(arenaWaves.count)" : ""
-        return "GEFECHT\(wave) · \(n) \(n == 1 ? "PIRAT" : "PIRATEN")"
+        let h = Int((altitude / 10).rounded()) * 10
+        return "GEFECHT\(wave) · \(n) \(n == 1 ? "PIRAT" : "PIRATEN") · HÖHE \(h > 0 ? "+" : "")\(h)"
     }
 
     /// Wellen je Gefechtsart; Patrouillen verteilen ihre Piraten auf mehrere Wellen
@@ -116,9 +117,11 @@ extension Game {
         arenaNextWaveAt = nil
         arenaReturning = false
         arenaWon = false
-        steerAngle = nil
+        stick = nil
         fireHeld = false
         combatBank = 0
+        altitude = 0
+        climb = 0
         // Schwung aus dem Anflug mitnehmen
         let sp = hypot(vel.dx, vel.dy)
         if sp > 1 { heading = atan2(vel.dy, vel.dx) }
@@ -171,20 +174,22 @@ extension Game {
         }
     }
 
-    /// Finger auf dem Bildschirm: dorthin lenken (Bildschirmrichtung vom Schiff aus in Weltrichtung umrechnen)
-    func steer(toward p: CGPoint) {
-        guard phase == .combat, !arenaReturning, !paused, let project,
-              let s = project(pos),
-              let ex = project(CGPoint(x: pos.x + 200, y: pos.y)),
-              let ey = project(CGPoint(x: pos.x, y: pos.y + 200)) else { return }
-        let fx = p.x - s.x, fy = p.y - s.y
-        guard hypot(fx, fy) > 14 else { return }
-        let ax = ex.x - s.x, ay = ex.y - s.y, bx = ey.x - s.x, by = ey.y - s.y
-        let det = ax * by - bx * ay
-        guard abs(det) > 0.0001 else { return }
-        let u = (fx * by - bx * fy) / det
-        let v = (ax * fy - ay * fx) / det
-        steerAngle = atan2(v, u)
+    /// Höchster Abstand über bzw. unter der Bahnebene im Gefecht
+    static let altLimit: CGFloat = 380
+    /// größter Steigwinkel
+    static let maxClimb: CGFloat = 0.7
+
+    /// Steuerknüppel: Finger zieht vom Aufsetzpunkt weg. Seitlich lenkt, hoch/runter steigt bzw. sinkt.
+    /// Die Seite wird über die Kamera bestimmt, damit „nach rechts ziehen“ auf dem Bildschirm rechts herum fliegt.
+    func setStick(from start: CGPoint, to p: CGPoint) {
+        guard phase == .combat, !arenaReturning, !paused else { return }
+        var sx = max(-1, min(1, (p.x - start.x) / 70))
+        let sy = max(-1, min(1, (p.y - start.y) / 70))
+        if let project3, let s = project3(pos, altitude),
+           let side = project3(point(from: pos, angle: heading + .pi / 2, distance: 60), altitude), side.x < s.x {
+            sx = -sx
+        }
+        stick = CGVector(dx: sx, dy: sy)
     }
 
     /// Abdrehen: Gefecht verlassen und zurück in den Orbit (die Piraten entkommen)
@@ -202,31 +207,42 @@ extension Game {
         let p = planets[arenaIndex]
         let toC = CGVector(dx: p.center.x - pos.x, dy: p.center.y - pos.y)
         let dc = max(1, hypot(toC.dx, toC.dy))
-        var want = steerAngle
-        var throttle = steerAngle != nil
-        // Testflüge: auf den nächsten Piraten zu und feuern
+        // Lenkung: Steuerknüppel (Gierrate und Steigwinkel) oder ein Wunschkurs (Testflug, Rückkehr, Rand)
+        var want: CGFloat? = nil
+        var yaw: CGFloat = stick.map { $0.dx } ?? 0
+        var climbWant: CGFloat = stick.map { -$0.dy * Game.maxClimb } ?? 0
+        var throttle = stick != nil
+        // Testflüge: auf den nächsten Piraten zu (auch in der Höhe) und feuern
         if (Game.autopilot || Game.bot) && !arenaReturning {
             let foe = asteroids.filter { $0.kind == .raider && !$0.retreating }
                 .min { hypot($0.center.x - pos.x, $0.center.y - pos.y) < hypot($1.center.x - pos.x, $1.center.y - pos.y) }
-            if let f = foe { want = atan2(f.center.y - pos.y, f.center.x - pos.x) }
+            if let f = foe {
+                want = atan2(f.center.y - pos.y, f.center.x - pos.x)
+                let d = max(1, hypot(f.center.x - pos.x, f.center.y - pos.y))
+                climbWant = max(-Game.maxClimb, min(Game.maxClimb, atan2(f.alt - altitude, d)))
+            }
             throttle = true
             fireHeld = foe != nil && energy > weaponCost + 10
         }
         if arenaReturning {
-            // zurück auf die Bahn: auf den Tangentenpunkt zu, wie die Lenkhilfe im normalen Flug
+            // zurück auf die Bahn: auf den Tangentenpunkt zu, wie die Lenkhilfe im normalen Flug, und zurück auf Höhe 0
             let phi = atan2(toC.dy, toC.dx)
             let al = asin(min(1, p.orbitRadius / max(dc, p.orbitRadius * 1.01)))
             let a1 = phi + al, a2 = phi - al
             want = abs(wrap(a1 - heading)) < abs(wrap(a2 - heading)) ? a1 : a2
+            climbWant = max(-0.5, min(0.5, -altitude / 250))
             throttle = true
-            if dc < p.orbitRadius + 30 {
+            if dc < p.orbitRadius + 30 && abs(altitude) < 25 {
                 arenaReturning = false
+                altitude = 0
+                climb = 0
+                stick = nil
                 capture(arenaIndex, dx: pos.x - p.center.x, dy: pos.y - p.center.y)
                 arenaIndex = -1
-                steerAngle = nil
                 fireHeld = false
                 return
             }
+            if dc < p.orbitRadius + 30 { want = heading }   // auf Höhe warten, Bahn halten
         } else if dc > p.orbitRadius + Game.arenaReach {
             // Rand des Gefechtsfelds: zurück zum Planeten
             want = atan2(toC.dy, toC.dx)
@@ -235,30 +251,41 @@ extension Game {
                 popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
             }
         }
-        if let w = want {
-            let turn = combatTurn
-            let d = wrap(w - heading)
-            heading += max(-turn * dt, min(turn * dt, d))
-            combatBank += (max(-1, min(1, d * 1.4)) - combatBank) * min(1, dt * 6)
-        } else {
-            combatBank += (0 - combatBank) * min(1, dt * 4)
+        // Höhengrenze: sanft zurückdrücken
+        if abs(altitude) > Game.altLimit {
+            climbWant = altitude > 0 ? -0.4 : 0.4
+            if time - boundaryWarnAt > 3 {
+                boundaryWarnAt = time
+                popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
+            }
         }
+        let turn = combatTurn
+        if let w = want {
+            yaw = max(-1, min(1, wrap(w - heading) * 2.5))
+        }
+        heading += yaw * turn * dt
+        combatBank += (yaw - combatBank) * min(1, dt * 6)
+        climb += (climbWant - climb) * min(1, dt * 3)
         let target = throttle ? combatTop : combatCruise
         combatSpeed += (target - combatSpeed) * min(1, dt * 1.6)
-        vel = CGVector(dx: cos(heading) * combatSpeed, dy: sin(heading) * combatSpeed)
+        let flat = combatSpeed * cos(climb)
+        vel = CGVector(dx: cos(heading) * flat, dy: sin(heading) * flat)
         pos.x += vel.dx * dt
         pos.y += vel.dy * dt
+        altitude += sin(climb) * combatSpeed * dt
 
-        // Planet: abprallen statt hindurchfliegen
+        // Planet (Kugel): abprallen statt hindurchfliegen
         let ox = pos.x - p.center.x, oy = pos.y - p.center.y
-        let od = max(1, hypot(ox, oy))
+        let od3 = max(1, sqrt(ox * ox + oy * oy + altitude * altitude))
         let skin = p.radius + 22
-        if od < skin {
-            let nx = ox / od, ny = oy / od
+        if od3 < skin {
+            let nx = ox / od3, ny = oy / od3, nz = altitude / od3
             pos = CGPoint(x: p.center.x + nx * skin, y: p.center.y + ny * skin)
+            altitude = nz * skin
             let vx = cos(heading), vy = sin(heading)
             let dot = vx * nx + vy * ny
             if dot < 0 { heading = atan2(vy - 2 * dot * ny, vx - 2 * dot * nx) }
+            if nz * climb < 0 { climb = -climb }
             combatSpeed *= 0.6
             if time - planetBumpAt > 0.8 {
                 planetBumpAt = time
@@ -273,7 +300,7 @@ extension Game {
         // Rammstöße mit Piraten
         for i in asteroids.indices.reversed() where asteroids[i].kind == .raider {
             let a = asteroids[i]
-            if time >= a.bumpUntil && hypot(a.center.x - pos.x, a.center.y - pos.y) < a.radius + 10 {
+            if time >= a.bumpUntil && hypot(a.center.x - pos.x, a.center.y - pos.y) < a.radius + 10 && abs(a.alt - altitude) < a.radius + 10 {
                 hitAsteroid(i)
                 combatSpeed *= 0.6
                 break
@@ -307,7 +334,7 @@ extension Game {
     func endArena(won: Bool) {
         arenaReturning = true
         arenaWon = won
-        steerAngle = nil
+        stick = nil
         fireHeld = false
         if won {
             let bonus = max(1, Int((CGFloat(1 + arenaWaves.count) * ship.bountyFactor).rounded()))
@@ -345,6 +372,7 @@ extension Game {
             let planet = planets[max(0, min(a.gap, planets.count - 1))]
 
             var want: CGVector
+            var altTarget = a.alt
             if a.retreating {
                 want = CGVector(dx: -dx / d * 640, dy: -dy / d * 640)
                 if d > 2400 { gone.append(a.uid) }
@@ -365,6 +393,8 @@ extension Game {
                 let r: CGFloat = diving ? 140 : a.orbitR
                 let offset: CGFloat = diving ? 0.25 * sin(a.phase) : 0.6 * sin(a.orbitA)
                 let target = point(from: pos, angle: heading + offset, distance: r)
+                // Höhe: um die Schiffshöhe pendelnd, beim Angriffsflug genau auf Höhe
+                altTarget = diving ? altitude : altitude + 140 * sin(a.orbitA * 0.8 + a.phase)
                 var vx = vel.dx + (target.x - c.x) * 1.8
                 var vy = vel.dy + (target.y - c.y) * 1.8
                 // ausweichen, wenn das Schiff direkt auf sie zielt (Haken quer zur Schusslinie)
@@ -394,6 +424,7 @@ extension Game {
                 }
                 want = CGVector(dx: vx, dy: vy)
             }
+            a.alt += max(-220, min(220, (altTarget - a.alt) * 1.6)) * dt
             let k = min(1, dt * 3.2)
             a.vel.dx += (want.dx - a.vel.dx) * k
             a.vel.dy += (want.dy - a.vel.dy) * k
@@ -410,6 +441,7 @@ extension Game {
             }
             // Salven, sobald das Schiff vor dem Bug liegt und der Planet nicht dazwischen ist
             if fighting && !a.retreating && d < Raider.range && abs(wrap(toShip - a.facing)) < 0.45 && time >= a.fireAt
+                && abs(altitude - a.alt) < d * 0.55
                 && distanceToSegment(planet.center, c, pos) > planet.radius {
                 fireRaiderShot(&a, dist: d)
             }
@@ -431,8 +463,12 @@ extension Game {
         for k in 0..<count {
             let off = count == 1 ? 0 : (CGFloat(k) - 1) * 0.13
             let ang = base + off + CGFloat.random(in: -spread...spread)
+            // Höhe: auf die Schiffshöhe mit Vorhalt der Steigrate, leicht gestreut
+            let flight = max(0.1, dist / Raider.shotSpeed)
+            let aimAlt = altitude + sin(climb) * combatSpeed * flight * 0.8 + CGFloat.random(in: -18...18)
             enemyShots.append(EnemyShot(p: muzzle, v: CGVector(dx: cos(ang) * Raider.shotSpeed, dy: sin(ang) * Raider.shotSpeed),
-                                        damage: Raider.shotDamage(a.variant), raider: true))
+                                        damage: Raider.shotDamage(a.variant), raider: true,
+                                        alt: a.alt, valt: (aimAlt - a.alt) / flight))
         }
         a.burstLeft -= 1
         if a.burstLeft > 0 {
@@ -455,7 +491,7 @@ extension Game {
             let absorbed = min(asteroids[i].shield, dmg)
             asteroids[i].shield -= absorbed
             dmg -= absorbed
-            burst(at: c, count: 8, hue: 200, speed: 170, life: 0.4)
+            burst(at: c, count: 8, hue: 200, speed: 170, life: 0.4, alt: asteroids[i].alt)
         }
         // Bruchteile zählen als Zufall, damit auch kleine Treffer wirken
         var whole = Int(dmg)
@@ -465,7 +501,7 @@ extension Game {
         if asteroids[i].hp <= 0 {
             destroyAsteroid(i, blast: blast)
         } else {
-            burst(at: c, count: 10, hue: 25, speed: 190, life: 0.5)
+            burst(at: c, count: 10, hue: 25, speed: 190, life: 0.5, alt: asteroids.indices.contains(i) ? asteroids[i].alt : 0)
             shake = max(shake, 0.06)
             if !blast { SoundFX.shared.play(.crack, volume: 0.4) }
         }
@@ -492,9 +528,9 @@ extension Game {
 
         // Explosion: Feuerball, Trümmerfunken, Druckwelle
         let big: CGFloat = boss ? 1.8 : (a.variant == 1 ? 1.3 : 1)
-        burst(at: a.center, count: Int(50 * big), hue: 18, speed: 340 * big, life: 1.0)
-        burst(at: a.center, count: Int(26 * big), hue: 40, speed: 170 * big, life: 1.3)
-        burst(at: a.center, count: Int(14 * big), hue: 200, speed: 260, life: 0.6)
+        burst(at: a.center, count: Int(50 * big), hue: 18, speed: 340 * big, life: 1.0, alt: a.alt)
+        burst(at: a.center, count: Int(26 * big), hue: 40, speed: 170 * big, life: 1.3, alt: a.alt)
+        burst(at: a.center, count: Int(14 * big), hue: 200, speed: 260, life: 0.6, alt: a.alt)
         waves.append(Wave(center: a.center, r0: 20, age: 0, maxAge: 0.7 * big, hue: 20))
         if boss { waves.append(Wave(center: a.center, r0: 10, age: 0, maxAge: 1.3, hue: 48)) }
         shake = max(shake, boss ? 0.6 : 0.3)

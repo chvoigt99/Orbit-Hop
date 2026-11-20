@@ -387,7 +387,7 @@ struct GameView: View {
     // MARK: Gefecht
 
     private var combatHint: some View {
-        Text("Finger links oder rechts vom Schiff lenkt, festhalten gibt Schub. Feuerknopf rechts gedrückt halten. Rote Pfeile zeigen Piraten außer Sicht, der Planet ist Deckung.")
+        Text("Finger aufsetzen und ziehen: seitlich lenken, nach oben steigen, nach unten sinken. Feuerknopf rechts gedrückt halten. Rote Pfeile zeigen Piraten außer Sicht, der Planet ist Deckung.")
             .font(.system(size: 11, design: .monospaced))
             .multilineTextAlignment(.center)
             .foregroundStyle(warn)
@@ -399,12 +399,33 @@ struct GameView: View {
     /// Steuerfläche über dem ganzen Bild, darüber Feuerknopf und (nach einer Weile) Abdrehen
     private var combatControls: some View {
         ZStack {
+          ZStack {
             Color.clear
                 .contentShape(Rectangle())
-                .ignoresSafeArea()
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { v in game.steer(toward: v.location) }
-                    .onEnded { _ in game.steerAngle = nil })
+                    .onChanged { v in
+                        game.stickOrigin = v.startLocation
+                        game.stickPoint = v.location
+                        game.setStick(from: v.startLocation, to: v.location)
+                    }
+                    .onEnded { _ in
+                        game.stick = nil
+                        game.stickOrigin = nil
+                        game.stickPoint = nil
+                    })
+            // Steuerknüppel unter dem Finger
+            if let o = game.stickOrigin, let p = game.stickPoint {
+                let dx = max(-70, min(70, p.x - o.x)), dy = max(-70, min(70, p.y - o.y))
+                ZStack {
+                    Circle().stroke(signal.opacity(0.5), lineWidth: 1.5).frame(width: 140, height: 140)
+                    Circle().fill(signal.opacity(0.35)).frame(width: 44, height: 44).offset(x: dx, y: dy)
+                }
+                .position(o)
+                .allowsHitTesting(false)
+            }
+          }
+          // ganze Bildschirmfläche: Fingerkoordinaten (global) und Anzeige passen dann zusammen
+          .ignoresSafeArea()
             VStack {
                 Spacer()
                 HStack(alignment: .bottom) {
@@ -1196,6 +1217,7 @@ final class GameLoop: NSObject {
         game.step(date: Date(timeIntervalSinceReferenceDate: link.targetTimestamp), size: size)
         if let world {
             game.project = world.project
+            game.project3 = world.project3
             world.sync(game, size: size)
         }
         PerfLog.frame(main: CACurrentMediaTime() - start, orbiting: game.phase == .orbiting)

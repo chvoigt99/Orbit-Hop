@@ -2021,7 +2021,7 @@ final class World3D {
         anim.keyTimes = [0, 0.5, 1]
         ps.propertyControllers = [.opacity: SCNParticlePropertyController(animation: anim)]
         let n = SCNNode()
-        n.position = v3(b.pos)
+        n.position = v3(b.pos, b.alt)
         n.addParticleSystem(ps)
         scene.rootNode.addChildNode(n)
         n.runAction(.sequence([.wait(duration: Double(b.life) * 1.6 + 0.2), .removeFromParentNode()]))
@@ -2473,12 +2473,14 @@ final class World3D {
             exploded = false
         }
         shipHolder.isHidden = game.phase == .over && game.destroyed
-        shipHolder.position = v3(game.pos, 4 + game.liftHeight)
+        shipHolder.position = v3(game.pos, 4 + game.liftHeight + game.altitude)
         // leichte Schräglage in Kurven
         let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35
             : (game.phase == .combat ? -game.combatBank * 0.5 : game.dodgeBank * 0.6)
         shipHolder.eulerAngles.y = Float(-game.heading)
         bankNode.eulerAngles.x = Float(bank)
+        // Steigen und Sinken im 3D-Gefecht: Nase hoch oder runter
+        bankNode.eulerAngles.z = Float(game.phase == .combat ? game.climb : 0)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten
         let topScale = min(8.4 * px, 14)
         var sc = topScale + (5.0 - topScale) * k
@@ -2564,6 +2566,7 @@ final class World3D {
                 }
                 // Piraten: Bug zeigt in Blickrichtung, Schildblase blitzt bei Treffern auf den Schild
                 if a.kind == .raider {
+                    n.position.y = Float(6 + a.alt)
                     n.eulerAngles.y = Float(-a.facing)
                     if let sh = n.childNode(withName: "shield", recursively: false) {
                         let age = game.time - a.hitAt
@@ -2619,7 +2622,7 @@ final class World3D {
             let grow = 0.4 + 0.9 * sin(t * .pi) + 0.3 * (1 - t)
             let s = Float(30 * px * grow)
             n.scale = SCNVector3(s, s, s)
-            n.position = v3(it.p, 8)
+            n.position = v3(it.p, 8 + game.altitude * min(1, it.age / Item.flyTime))
         }
         for (id, n) in itemNodes where !alive.contains(id) {
             n.removeFromParentNode()
@@ -2636,7 +2639,7 @@ final class World3D {
                 scene.rootNode.addChildNode(n)
                 projectileNodes[pr.uid] = n
             }
-            n.position = v3(pr.p, 4)
+            n.position = v3(pr.p, 4 + pr.alt)
             if let b = n.childNode(withName: "bolt", recursively: false) {
                 let size: CGFloat = pr.kind == .bomb ? 12 : 10
                 let s = Float(size * px)
@@ -2659,7 +2662,7 @@ final class World3D {
                 scene.rootNode.addChildNode(n)
                 enemyShotNodes[sh.uid] = n
             }
-            n.position = v3(sh.p, 5)
+            n.position = v3(sh.p, 5 + sh.alt)
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
             n.removeFromParentNode()
@@ -2763,8 +2766,11 @@ final class World3D {
         let cc = coastClose * coastClose * (3 - 2 * coastClose)
         let bv = blastView * blastView * (3 - 2 * blastView)
         let back = 190 - 95 * cc + 70 * bv, height = Float(95 - 45 * cc + 55 * bv), ahead = (260 - 130 * cc) * (1 - bv)
-        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height, Float(ship.y - sin(hd) * back))
-        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), 0, Float(ship.y + sin(hd) * ahead))
+        // 3D-Gefecht: Kamera steigt und sinkt mit dem Schiff und blickt etwas in Steigrichtung
+        let alt = game.altitude
+        let lookUp = game.phase == .combat ? sin(game.climb) * ahead * 0.6 : 0
+        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height + Float(alt), Float(ship.y - sin(hd) * back))
+        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), Float(alt + lookUp), Float(ship.y + sin(hd) * ahead))
 
         func mix(_ a: SCNVector3, _ b: SCNVector3) -> SCNVector3 {
             let f = Float(k)
@@ -2885,6 +2891,13 @@ final class World3D {
     }
 
     // MARK: Projektion für das HUD
+
+    func project3(_ p: CGPoint, _ y: CGFloat) -> CGPoint? {
+        guard let view else { return nil }
+        let v = view.projectPoint(v3(p, y))
+        guard v.z > 0, v.z < 1 else { return nil }
+        return CGPoint(x: CGFloat(v.x), y: CGFloat(v.y))
+    }
 
     func project(_ p: CGPoint) -> CGPoint? {
         guard let view else { return nil }

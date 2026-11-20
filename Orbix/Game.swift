@@ -272,6 +272,8 @@ struct Burst {
     let hue: Double
     let speed: CGFloat
     let life: CGFloat
+    /// Höhe (nur im 3D-Gefecht nicht null)
+    var alt: CGFloat = 0
 }
 
 // MARK: - Bonus-Items
@@ -393,6 +395,8 @@ struct Asteroid {
     var orbitA: CGFloat = 0
     var diveUntil: CGFloat = 0
     var ringChangeAt: CGFloat = 0
+    /// Höhe über der Bahnebene (3D-Gefecht)
+    var alt: CGFloat = 0
 }
 
 /// Plasmaschuss einer Drohne
@@ -405,6 +409,9 @@ struct EnemyShot {
     var damage: CGFloat = 9
     /// von einem Piratenschiff (andere Farbe)
     var raider = false
+    /// Höhe und Steigrate (3D-Gefecht)
+    var alt: CGFloat = 0
+    var valt: CGFloat = 0
     static let maxAge: CGFloat = 2.6
     static let speed: CGFloat = 430
 }
@@ -484,6 +491,9 @@ struct Projectile {
     var age: CGFloat = 0
     let maxAge: CGFloat
     var target: Int? = nil     // uid des anvisierten Hindernisses
+    /// Höhe und Steigrate (3D-Gefecht)
+    var alt: CGFloat = 0
+    var valt: CGFloat = 0
 }
 
 struct Beam {
@@ -552,12 +562,20 @@ final class Game {
     /// Gefecht vorbei, das Schiff fliegt zurück in den Orbit (gewonnen oder abgedreht)
     var arenaReturning = false
     var arenaWon = false
-    /// Steuerung im Gefecht: gewünschte Flugrichtung (Weltwinkel), solange der Finger liegt
-    var steerAngle: CGFloat? = nil
+    /// Steuerknüppel-Anzeige: Aufsetzpunkt und aktuelle Fingerposition auf dem Bildschirm
+    var stickOrigin: CGPoint? = nil
+    var stickPoint: CGPoint? = nil
     /// Feuerknopf gedrückt: Dauerfeuer
     var fireHeld = false
     var combatSpeed: CGFloat = 0
     var combatBank: CGFloat = 0
+    /// 3D-Gefecht: Höhe über der Bahnebene und Steigwinkel des Schiffs
+    var altitude: CGFloat = 0
+    var climb: CGFloat = 0
+    /// Steuerknüppel unter dem Finger: x lenkt, y steigt/sinkt (je -1...1), nil ohne Finger
+    var stick: CGVector? = nil
+    /// Welt → Bildschirm mit Höhe
+    var project3: ((CGPoint, CGFloat) -> CGPoint?)?
     var boundaryWarnAt: CGFloat = -10
     var planetBumpAt: CGFloat = -10
 
@@ -1076,9 +1094,13 @@ final class Game {
         arenaNextWaveAt = nil
         arenaReturning = false
         arenaWon = false
-        steerAngle = nil
+        stickOrigin = nil
+        stickPoint = nil
         fireHeld = false
         combatBank = 0
+        altitude = 0
+        climb = 0
+        stick = nil
         shieldHP = ship.shieldMax
         shieldHitAt = -10
         hull = Game.hullTest ? 20 : Game.maxHull
@@ -1436,20 +1458,22 @@ final class Game {
             enemyShots[i].age += dt
             enemyShots[i].p.x += enemyShots[i].v.dx * dt
             enemyShots[i].p.y += enemyShots[i].v.dy * dt
+            enemyShots[i].alt += enemyShots[i].valt * dt
             let p = enemyShots[i].p
+            let dAlt = enemyShots[i].alt - altitude
             // im Gefecht ist der Planet Deckung: Schüsse verglühen an ihm
             if arenaIndex >= 0 && arenaIndex < planets.count {
                 let pc = planets[arenaIndex].center
-                if hypot(p.x - pc.x, p.y - pc.y) < planets[arenaIndex].radius {
+                if hypot(hypot(p.x - pc.x, p.y - pc.y), enemyShots[i].alt) < planets[arenaIndex].radius {
                     enemyShots.remove(at: i)
                     continue
                 }
             }
-            if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 {
+            if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 && abs(dAlt) < 22 {
                 let shot = enemyShots.remove(at: i)
                 let damage = takeHit(shot.damage, armorFactor: 0.6)
                 brakeFlash = max(brakeFlash, 0.6)
-                burst(at: p, count: 18, hue: damage > 0 ? 355 : 200, speed: 200, life: 0.6)
+                burst(at: p, count: 18, hue: damage > 0 ? 355 : 200, speed: 200, life: 0.6, alt: altitude)
                 popups.append(Popup(pos: pos, text: damage > 0 ? "PLASMATREFFER -\(Int(damage))" : "SCHILD HÄLT",
                                     color: damage > 0 ? Color(red: 1, green: 0.45, blue: 0.45) : Color(red: 0.5, green: 0.8, blue: 1), age: 0))
                 shake = max(shake, 0.25)
@@ -1541,8 +1565,8 @@ final class Game {
 
     // MARK: Effekte
 
-    func burst(at p: CGPoint, count: Int, hue: Double, speed: CGFloat, life: CGFloat) {
-        bursts.append(Burst(pos: p, count: count, hue: hue, speed: speed, life: life))
+    func burst(at p: CGPoint, count: Int, hue: Double, speed: CGFloat, life: CGFloat, alt: CGFloat = 0) {
+        bursts.append(Burst(pos: p, count: count, hue: hue, speed: speed, life: life, alt: alt))
     }
 
     // MARK: Eingabe
@@ -2093,12 +2117,14 @@ final class Game {
             fwd = CGVector(dx: cos(hd), dy: sin(hd))
         }
 
+        let firstNew = projectiles.count
         switch weapon {
         case .railgun:
             let to = CGPoint(x: muzzle.x + fwd.dx * railReach, y: muzzle.y + fwd.dy * railReach)
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
+                if a.kind == .raider && abs(a.alt - altitude) > a.radius + 40 { continue }
                 // Strahl beginnt am Schiff schmal und wird nach vorn breiter
                 let along = max(0, min(railReach, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
                 let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / railReach
@@ -2122,6 +2148,21 @@ final class Game {
         case .bomb:
             projectiles.append(Projectile(kind: .bomb, p: muzzle,
                                           v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9 * rangeFactor))
+        }
+        // 3D-Gefecht: Geschosse starten in Schiffshöhe; mit Ziel gleicht die Zielhilfe den Höhenunterschied aus,
+        // solange er nicht zu steil ist, sonst fliegen sie im Steigwinkel des Schiffs
+        if phase == .combat {
+            for k in firstNew..<projectiles.count {
+                let sp = hypot(projectiles[k].v.dx, projectiles[k].v.dy)
+                var valt = sin(climb) * sp
+                if let t = target, t.kind == .raider {
+                    let d = max(1, hypot(t.center.x - muzzle.x, t.center.y - muzzle.y))
+                    let dAlt = t.alt - altitude
+                    if abs(dAlt) < d * 0.6 { valt = dAlt / (d / max(1, sp)) }
+                }
+                projectiles[k].alt = altitude
+                projectiles[k].valt = valt
+            }
         }
         Haptics.launch(0.3)
         switch weapon {
@@ -2291,6 +2332,8 @@ final class Game {
             let mobile = a.kind == .drone || a.kind == .raider
             let range: CGFloat = (a.kind == .comet ? 1700 : (mobile ? 950 : 750)) * reach
             guard d > 1, d < range + a.radius else { continue }
+            // 3D-Gefecht: zu steil über oder unter dem Schiff wird nicht erfasst
+            if a.kind == .raider && abs(a.alt - altitude) > d * 0.6 { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
             // Drohnen greifen von der Seite an: weiter Erfassungswinkel
             guard cosA > (mobile ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
@@ -2339,9 +2382,12 @@ final class Game {
 
             pr.p.x += pr.v.dx * dt
             pr.p.y += pr.v.dy * dt
+            pr.alt += pr.valt * dt
 
             let reach: CGFloat = pr.kind == .bomb ? 24 : 12
-            let hit = asteroids.firstIndex { hypot($0.center.x - pr.p.x, $0.center.y - pr.p.y) < $0.radius + reach }
+            // im 3D-Gefecht muss auch die Höhe passen
+            let hit = asteroids.firstIndex { hypot($0.center.x - pr.p.x, $0.center.y - pr.p.y) < $0.radius + reach
+                && ($0.kind != .raider || abs($0.alt - pr.alt) < $0.radius + reach + 6) }
             if hit != nil || pr.age >= pr.maxAge {
                 switch pr.kind {
                 case .cannon:
