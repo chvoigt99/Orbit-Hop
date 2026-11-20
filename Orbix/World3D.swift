@@ -2841,8 +2841,11 @@ final class World3D {
         let back = 190 - 95 * cc + 70 * bv, height = Float(95 - 45 * cc + 55 * bv), ahead = (260 - 130 * cc) * (1 - bv)
         // 3D-Gefecht: Kamera steigt und sinkt mit dem Schiff und blickt etwas in Steigrichtung
         let alt = game.altitude
-        let lookUp = game.phase == .combat ? sin(game.climb) * ahead * 0.6 : 0
-        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height + Float(alt), Float(ship.y - sin(hd) * back))
+        // beim Steigen nur wenig nach oben blicken und die Kamera hinter dem Schiff absenken (beim Sinken anheben),
+        // damit das Schiff mittig bleibt statt an den unteren Bildrand zu rutschen
+        let lookUp = game.phase == .combat ? sin(game.climb) * ahead * 0.2 : 0
+        let trail = game.phase == .combat ? -sin(game.climb) * back * 0.6 : 0
+        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height + Float(alt + trail), Float(ship.y - sin(hd) * back))
         let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), Float(alt + lookUp), Float(ship.y + sin(hd) * ahead))
 
         func mix(_ a: SCNVector3, _ b: SCNVector3) -> SCNVector3 {
@@ -2851,6 +2854,17 @@ final class World3D {
         }
         var pos = mix(topPos, chasePos)
         var look = mix(target, chaseLook)
+        // 3D-Gefecht: Kamera nie im Gefechtsplaneten
+        if game.phase == .combat, game.planets.indices.contains(game.arenaIndex) {
+            let pl = game.planets[game.arenaIndex]
+            let vx = pos.x - Float(pl.center.x), vy = pos.y, vz = pos.z - Float(pl.center.y)
+            let d = max(1, (vx * vx + vy * vy + vz * vz).squareRoot())
+            let minD = Float(pl.radius + 45)
+            if d < minD {
+                let f = minD / d
+                pos = SCNVector3(Float(pl.center.x) + vx * f, vy * f, Float(pl.center.y) + vz * f)
+            }
+        }
         // Beim Herauszoomen gleitet die Kamera zugleich nach vorn, statt nach hinten wegzufahren
         if releasing {
             let bump = Float(sin(k * .pi) * topDist * 0.15)

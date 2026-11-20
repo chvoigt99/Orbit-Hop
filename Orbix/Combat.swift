@@ -54,7 +54,7 @@ extension Game {
     /// Bildausschnitt im Gefecht (Weltbreite)
     static let combatView: CGFloat = 1500
     /// so weit vom Planeten reicht das Gefechtsfeld
-    static let arenaReach: CGFloat = 2200
+    static let arenaReach: CGFloat = 3000
     /// ab dann darf man abdrehen
     static let fleeAfter: CGFloat = 20
 
@@ -305,6 +305,21 @@ extension Game {
             if time - boundaryWarnAt > 3 {
                 boundaryWarnAt = time
                 popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
+            }
+        }
+        // Kollisionswarnung Planet: Fliegt das Schiff auf ihn zu, lenkt die Hilfe seitlich und in der Höhe vorbei
+        do {
+            let ox = pos.x - p.center.x, oy = pos.y - p.center.y
+            let od = max(1, sqrt(ox * ox + oy * oy + altitude * altitude))
+            let toward = -(ox * cos(heading) + oy * sin(heading)) / od
+            let margin = od - p.radius
+            if margin < 260 && toward > 0.2 && want == nil {
+                let k = min(1, (260 - margin) / 200) * toward
+                // zur Seite, auf der das Schiff ohnehin schon vorbeizielt
+                let side: CGFloat = wrap(atan2(-oy, -ox) - heading) > 0 ? -1 : 1
+                yaw = max(-1, min(1, yaw + side * k * 1.2))
+                let up: CGFloat = altitude >= 0 ? 1 : -1
+                climbWant = max(-Game.maxClimb, min(Game.maxClimb, climbWant + up * k * 0.5))
             }
         }
         let turn = combatTurn
