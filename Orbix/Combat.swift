@@ -8,8 +8,8 @@ enum Raider {
     static func radius(_ v: Int) -> CGFloat { pick(v, [24, 30, 40] as [CGFloat]) }
     /// so viel schneller als das Spielerschiff dürfen sie werden
     static func speedBonus(_ v: Int) -> CGFloat { pick(v, [120, 60, 90] as [CGFloat]) }
-    static func shotDamage(_ v: Int) -> CGFloat { pick(v, [6, 8, 10] as [CGFloat]) }
-    static func burstCount(_ v: Int) -> Int { pick(v, [2, 3, 3]) }
+    static func shotDamage(_ v: Int) -> CGFloat { pick(v, [7, 9, 12] as [CGFloat]) }
+    static func burstCount(_ v: Int) -> Int { pick(v, [3, 3, 4]) }
     static func title(_ v: Int) -> String { pick(v, ["PIRAT", "KANONENBOOT", "ANFÜHRER"]) }
     static let shotSpeed: CGFloat = 520
     static let range: CGFloat = 900
@@ -17,9 +17,10 @@ enum Raider {
     /// Rumpf und Schild je Klasse, Schwierigkeit und Auftragsstufe
     static func stats(_ v: Int, lvl: CGFloat, tier: Int) -> (hp: Int, shield: CGFloat) {
         switch v {
-        case 2: return (24 + Int(14 * lvl) + 4 * tier, 12 + 8 * lvl + 2 * CGFloat(tier))
-        case 1: return (9 + Int(6 * lvl), 5 + 3 * lvl)
-        default: return (4 + Int(3 * lvl), 2 + 2 * lvl)
+        // zäh: Gefechte sollen eine Herausforderung sein (Christian, 2026-11-20)
+        case 2: return (60 + Int(30 * lvl) + 8 * tier, 30 + 15 * lvl + 4 * CGFloat(tier))
+        case 1: return (22 + Int(12 * lvl) + 2 * tier, 14 + 6 * lvl + CGFloat(tier))
+        default: return (10 + Int(6 * lvl) + tier, 6 + 4 * lvl)
         }
     }
 }
@@ -89,18 +90,19 @@ extension Game {
         let lvl = level
         switch kind {
         case .ambush:
-            return [[0, 0] + (lvl > 0.4 ? [1] : [])]
+            let first: [Int] = [0, 0] + (lvl > 0.3 ? [1] : [])
+            return lvl > 0.5 ? [first, [0, 1]] : [first]
         case .patrol:
             var left = contracts.active?.kind == .patrol ? max(3, contracts.active?.kills ?? 4) : 4
             var waves: [[Int]] = []
             while left > 0 {
-                let n = min(left, waves.isEmpty ? 2 : 3)
+                let n = min(left, waves.isEmpty ? 3 : 3)
                 waves.append((0..<n).map { j in !waves.isEmpty && j == 0 ? 1 : 0 })
                 left -= n
             }
             return waves
         case .boss:
-            return [[0, 0] + (lvl > 0.5 ? [0] : []), tier >= 3 ? [2, 1, 0] : [2, 0]]
+            return [[0, 0, 1], [0, 1] + (lvl > 0.5 ? [0] : []), tier >= 3 ? [2, 1, 0, 0] : [2, 0, 0]]
         }
     }
 
@@ -276,6 +278,8 @@ extension Game {
                 break
             }
         }
+        // Bordgenerator lädt im Gefecht langsam nach, damit man nicht ohne Waffe dasteht
+        if !arenaReturning { energy = min(maxEnergy, energy + 3 * dt) }
         // Dauerfeuer, solange der Knopf gedrückt ist (ohne Energie nur ab und zu ein Hinweis)
         if fireHeld && !arenaReturning && weaponCooldown <= 0 && (energy > weaponCost || noEnergyFlash <= 0) { fire() }
         updateArena()
@@ -358,6 +362,13 @@ extension Game {
                 let target = point(from: pos, angle: a.orbitA, distance: r)
                 var vx = vel.dx + (target.x - c.x) * 1.8
                 var vy = vel.dy + (target.y - c.y) * 1.8
+                // ausweichen, wenn das Schiff direkt auf sie zielt (Haken quer zur Schusslinie)
+                let aimedAt = abs(wrap(atan2(-dy, -dx) - heading)) < 0.3 && d < 750
+                if aimedAt {
+                    let side: CGFloat = sin(time * 1.7 + a.phase) > 0 ? 1 : -1
+                    vx += -dy / d * 300 * side
+                    vy += dx / d * 300 * side
+                }
                 // nicht rammen
                 if d < 110 {
                     vx -= dx / d * 380
@@ -423,7 +434,7 @@ extension Game {
             a.fireAt = time + 0.15
         } else {
             a.burstLeft = Raider.burstCount(a.variant)
-            a.fireAt = time + CGFloat.random(in: 1.6...2.4) + (a.variant == 1 ? 0.4 : 0)
+            a.fireAt = time + CGFloat.random(in: 1.2...1.9) + (a.variant == 1 ? 0.3 : 0)
         }
     }
 
@@ -469,7 +480,7 @@ extension Game {
         // Beute: Frachtcontainer, Energiezellen, selten Schiffsteile (Bergungsdrohne erhöht die Chancen)
         let salvage = Double(ship.salvageFactor)
         if Double.random(in: 0...1) < (boss ? 1 : 0.35) * salvage { spawnTech(from: a.center, kind: .cargo) }
-        if Double.random(in: 0...1) < 0.35 { spawnTech(from: a.center, kind: .energy) }
+        if Double.random(in: 0...1) < 0.5 { spawnTech(from: a.center, kind: .energy) }
         let basePart: Double = boss ? 0.35 : (a.variant == 1 ? 0.04 : 0.015)
         let partChance = basePart * salvage
         if Double.random(in: 0...1) < partChance { spawnTech(from: a.center, kind: .shipPart) }
