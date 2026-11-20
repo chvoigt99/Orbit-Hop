@@ -816,6 +816,25 @@ enum ShipDesigns {
         return k.root
     }
 
+    /// Piratenschiffe: bekannte Rümpfe in dunklem Lack mit roten Akzenten (0 Jäger, 1 Kanonenboot, 2 Anführer)
+    static func pirate(_ variant: Int) -> SCNNode {
+        let id: String
+        let base: UIColor, acc: UIColor, sec: UIColor
+        switch variant {
+        case 1: id = "bastion"; base = gunmetal; acc = red; sec = night
+        case 2: id = "titan"; base = night; acc = red; sec = gold
+        default: id = "viper"; base = night; acc = red; sec = gunmetal
+        }
+        let m = ShipModel.with(id: id) ?? ShipModel.all[0]
+        let k = ShipKit(seed: "pirate\(variant)", base: base, accent: acc, second: sec, weaponHue: WeaponKind.cannon.hue, marking: "PX")
+        switch variant {
+        case 1: bastion(k, m)
+        case 2: titan(k, m)
+        default: viper(k, m)
+        }
+        return k.root
+    }
+
     private static func kit(_ m: ShipModel, _ base: UIColor, _ acc: UIColor, _ sec: UIColor, _ code: String) -> ShipKit {
         ShipKit(seed: m.id, base: base, accent: acc, second: sec, weaponHue: m.weapon.hue, marking: code)
     }

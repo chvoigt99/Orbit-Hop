@@ -47,6 +47,10 @@ extension Game {
         for a in asteroids where a.maxHP > 1 {
             guard let sp = project?(CGPoint(x: a.center.x, y: a.center.y)) else { continue }
             guard sp.x > -40, sp.x < size.width + 40, sp.y > insets.top + 120, sp.y < size.height - 120 else { continue }
+            if a.kind == .raider {
+                drawRaiderBar(c, a, sp)
+                continue
+            }
             let col = a.kind == .comet ? Color(red: 0.55, green: 0.85, blue: 1)
                 : (a.kind == .drone ? Color(red: 1, green: 0.35, blue: 0.35) : Color(red: 1, green: 0.6, blue: 0.3))
             let segW: CGFloat = 7
@@ -62,6 +66,30 @@ extension Game {
                     .foregroundColor(col),
                    at: CGPoint(x: sp.x, y: y - 4), anchor: .bottom)
         }
+    }
+
+    /// Piratenschiff: durchgehende Rumpfleiste, darüber der Schild, darüber Klasse oder Name des Kopfgeldziels
+    private func drawRaiderBar(_ c: GraphicsContext, _ a: Asteroid, _ sp: CGPoint) {
+        let boss = a.variant == 2
+        let red = Color(red: 1, green: 0.32, blue: 0.3)
+        let cyan = Color(red: 0.4, green: 0.78, blue: 1)
+        let w: CGFloat = boss ? 92 : (a.variant == 1 ? 66 : 52)
+        let x0 = sp.x - w / 2
+        let y = sp.y - (boss ? 64 : 50)
+        let hpFrac = max(0, min(1, CGFloat(a.hp) / CGFloat(max(1, a.maxHP))))
+        c.fill(Path(CGRect(x: x0, y: y, width: w, height: 5)), with: .color(Color.white.opacity(0.15)))
+        c.fill(Path(CGRect(x: x0, y: y, width: w * hpFrac, height: 5)), with: .color(red))
+        var top = y
+        if a.maxShield > 0 {
+            top = y - 5
+            let shFrac = max(0, min(1, a.shield / a.maxShield))
+            c.fill(Path(CGRect(x: x0, y: top, width: w, height: 3)), with: .color(Color.white.opacity(0.1)))
+            c.fill(Path(CGRect(x: x0, y: top, width: w * shFrac, height: 3)), with: .color(cyan))
+        }
+        c.draw(Text(boss ? bountyName : Raider.title(a.variant))
+                .font(.system(size: boss ? 10 : 9, weight: .bold, design: .monospaced))
+                .foregroundColor(boss ? Color(red: 1, green: 0.78, blue: 0.4) : red),
+               at: CGPoint(x: sp.x, y: top - 3), anchor: .bottom)
     }
 
     private func toScreen(_ p: CGPoint, _ size: CGSize) -> CGPoint {
@@ -613,6 +641,16 @@ extension Game {
             p.addLine(to: CGPoint(x: -6, y: 7))
             p.closeSubpath()
             c.fill(p, with: .color(col))
+        case .cargo:
+            // Container mit Rippen
+            let box = Path(roundedRect: CGRect(x: -7, y: -5, width: 14, height: 10), cornerRadius: 1.5)
+            c.fill(box, with: .color(col.opacity(0.35)))
+            c.stroke(box, with: .color(col), lineWidth: 1.6)
+            for x in [-3.0, 0.0, 3.0] as [CGFloat] {
+                p.move(to: CGPoint(x: x, y: -4))
+                p.addLine(to: CGPoint(x: x, y: 4))
+            }
+            c.stroke(p, with: .color(col), lineWidth: 1)
         case .rescue:
             p.move(to: CGPoint(x: -5, y: 0))
             p.addLine(to: CGPoint(x: 0, y: -5))
@@ -1065,8 +1103,9 @@ extension Game {
         for a in asteroids {
             let rel = CGPoint(x: (a.center.x - pos.x) * scale, y: (a.center.y - pos.y) * scale)
             guard hypot(rel.x, rel.y) < R - 2 else { continue }
-            inner.fill(circlePath(CGPoint(x: center.x + rel.x, y: center.y + rel.y), 1.2),
-                       with: .color(Color(red: 1, green: 0.65, blue: 0.45).opacity(0.8)))
+            let hostile = a.kind == .raider
+            inner.fill(circlePath(CGPoint(x: center.x + rel.x, y: center.y + rel.y), hostile ? 2.2 : 1.2),
+                       with: .color(hostile ? Color(red: 1, green: 0.25, blue: 0.25) : Color(red: 1, green: 0.65, blue: 0.45).opacity(0.8)))
         }
 
         for it in items {

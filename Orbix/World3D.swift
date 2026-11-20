@@ -348,6 +348,7 @@ extension ItemKind {
         case .rescue: return "flame.fill"
         case .tech: return "gearshape.fill"
         case .shipPart: return "puzzlepiece.fill"
+        case .cargo: return "shippingbox.fill"
         }
     }
 }
@@ -1324,6 +1325,62 @@ final class World3D {
         case .wreck: return makeWreck(a)
         case .comet: return makeComet(a)
         case .drone: return makeDrone(a)
+        case .raider: return makeRaider(a)
+        }
+    }
+
+    /// Piratenschiff: bekannter Rumpf in Piratenlack, roter Schein, Schildblase für Treffer auf den Schild
+    private func makeRaider(_ a: Asteroid) -> SCNNode {
+        let root = SCNNode()
+        root.position = v3(a.center, 6)
+        root.eulerAngles.y = Float(-a.facing)
+        let s = Float(a.radius / 3.6)
+        withPirateModel(a.variant) { [weak root] model in
+            guard let root else { return }
+            let hull = model.clone()
+            hull.scale = SCNVector3(s, s, s)
+            hull.name = "body"
+            root.addChildNode(hull)
+        }
+        let glow = SCNNode(geometry: SCNPlane(width: a.radius * 3, height: a.radius * 3))
+        let gm = spriteMat(WorldTextures.soft)
+        gm.multiply.contents = UIColor(red: 1, green: 0.22, blue: 0.12, alpha: a.variant == 2 ? 0.45 : 0.3)
+        glow.geometry?.materials = [gm]
+        glow.constraints = [SCNBillboardConstraint()]
+        glow.renderingOrder = -1
+        root.addChildNode(glow)
+        let bubble = SCNSphere(radius: a.radius * 1.3)
+        bubble.segmentCount = 24
+        bubble.materials = [glowMat(UIColor(red: 0.35, green: 0.7, blue: 1, alpha: 0.4))]
+        let bn = SCNNode(geometry: bubble)
+        bn.name = "shield"
+        bn.opacity = 0
+        root.addChildNode(bn)
+        return root
+    }
+
+    private var pirateModels: [Int: SCNNode] = [:]
+    private var pirateWaiting: [Int: [(SCNNode) -> Void]] = [:]
+
+    /// Piratenmodell je Klasse einmal im Hintergrund bauen, hochladen und danach klonen (wie bei den Wracks)
+    private func withPirateModel(_ variant: Int, _ use: @escaping (SCNNode) -> Void) {
+        if let m = pirateModels[variant] { use(m); return }
+        if pirateWaiting[variant] != nil {
+            pirateWaiting[variant]?.append(use)
+            return
+        }
+        pirateWaiting[variant] = [use]
+        Self.textureQueue.async { [weak self] in
+            let model = Ship3D.simplified(ShipDesigns.pirate(variant))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.upload(model) { [weak self] in
+                    guard let self else { return }
+                    self.pirateModels[variant] = model
+                    let waiting = self.pirateWaiting.removeValue(forKey: variant) ?? []
+                    waiting.forEach { $0(model) }
+                }
+            }
         }
     }
 
@@ -1504,15 +1561,15 @@ final class World3D {
         return root
     }
 
-    /// Plasmaschuss der Drohnen: rote Kugel mit Schein
-    private func makeEnemyShot() -> SCNNode {
+    /// Plasmaschuss der Drohnen: rote Kugel mit Schein (Piraten: orange)
+    private func makeEnemyShot(raider: Bool = false) -> SCNNode {
         let n = SCNNode()
         let core = SCNSphere(radius: 5)
         core.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
         n.addChildNode(SCNNode(geometry: core))
         let glow = SCNNode(geometry: SCNPlane(width: 34, height: 34))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
+        gm.multiply.contents = raider ? UIColor(red: 1, green: 0.5, blue: 0.1, alpha: 1) : UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         n.addChildNode(glow)
@@ -2502,6 +2559,14 @@ final class World3D {
                     }
                     animateDrone(n, a, game, dt: dt)
                 }
+                // Piraten: Bug zeigt in Blickrichtung, Schildblase blitzt bei Treffern auf den Schild
+                if a.kind == .raider {
+                    n.eulerAngles.y = Float(-a.facing)
+                    if let sh = n.childNode(withName: "shield", recursively: false) {
+                        let age = game.time - a.hitAt
+                        sh.opacity = a.shield > 0.5 && age >= 0 && age < 0.35 ? 1 - age / 0.35 : 0
+                    }
+                }
             } else {
                 let n = makeObstacle(a)
                 scene.rootNode.addChildNode(n)
@@ -2517,6 +2582,9 @@ final class World3D {
         // Wrack-Modelle nur vorhalten, solange ein Wrackfeld in der Nähe ist (je Typ etwa 10 MB Lacktexturen)
         if !wreckModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .wreck }) {
             wreckModels.removeAll()
+        }
+        if !pirateModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .raider }) {
+            pirateModels.removeAll()
         }
 
         // Nebel
@@ -2584,7 +2652,7 @@ final class World3D {
             alive.insert(sh.uid)
             let n: SCNNode
             if let e = enemyShotNodes[sh.uid] { n = e } else {
-                n = makeEnemyShot()
+                n = makeEnemyShot(raider: sh.raider)
                 scene.rootNode.addChildNode(n)
                 enemyShotNodes[sh.uid] = n
             }
