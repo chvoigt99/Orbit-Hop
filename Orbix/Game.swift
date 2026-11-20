@@ -836,6 +836,8 @@ final class Game {
     }
 
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
+    /// Testflug: Autopilot fliegt bis zum Gefecht, dort lenkt der Finger (für Lenktests im Simulator)
+    static let manualCombat = ProcessInfo.processInfo.arguments.contains("-manualCombat")
     /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
     static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
     /// Nur für Tests: Flug startet mit 20 % Panzerung, um Rauch und Funken zu sehen

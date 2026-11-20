@@ -258,7 +258,7 @@ extension Game {
         var climbWant: CGFloat = stick.map { -$0.dy * Game.maxClimb } ?? 0
         var throttle = stick != nil
         // Testflüge: auf den nächsten Piraten zu (auch in der Höhe) und feuern
-        if (Game.autopilot || Game.bot) && !arenaReturning {
+        if (Game.autopilot || Game.bot) && !Game.manualCombat && !arenaReturning {
             let foe = asteroids.filter { $0.kind == .raider && !$0.retreating }
                 .min { hypot($0.center.x - pos.x, $0.center.y - pos.y) < hypot($1.center.x - pos.x, $1.center.y - pos.y) }
             if let f = foe {
