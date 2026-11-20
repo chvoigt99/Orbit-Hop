@@ -1565,11 +1565,12 @@ final class World3D {
     private func makeEnemyShot(raider: Bool = false) -> SCNNode {
         let n = SCNNode()
         let core = SCNSphere(radius: 5)
-        core.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
+        // Piratenschüsse klar rot, damit man sie von den eigenen gelben Leuchtspuren unterscheidet
+        core.materials = [glowMat(raider ? UIColor(red: 1, green: 0.25, blue: 0.2, alpha: 1) : UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
         n.addChildNode(SCNNode(geometry: core))
         let glow = SCNNode(geometry: SCNPlane(width: 34, height: 34))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = raider ? UIColor(red: 1, green: 0.5, blue: 0.1, alpha: 1) : UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
+        gm.multiply.contents = raider ? UIColor(red: 1, green: 0.1, blue: 0.15, alpha: 1) : UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         n.addChildNode(glow)
@@ -2643,7 +2644,7 @@ final class World3D {
             if let b = n.childNode(withName: "bolt", recursively: false) {
                 let size: CGFloat = pr.kind == .bomb ? 12 : 10
                 // im Gefecht feste, große Leuchtspur, damit man die Schüsse in der Verfolgerkamera sieht
-                let s = game.phase == .combat ? Float(46) : Float(size * px)
+                let s = game.phase == .combat ? Float(32) : Float(size * px)
                 b.scale = SCNVector3(s, s, s)
                 b.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
                 if game.phase == .combat {
@@ -2667,7 +2668,7 @@ final class World3D {
                 enemyShotNodes[sh.uid] = n
             }
             n.position = v3(sh.p, 5 + sh.alt)
-            let es: Float = game.phase == .combat ? 1.9 : 1
+            let es: Float = game.phase == .combat ? 2.6 : 1
             if n.scale.x != es { n.scale = SCNVector3(es, es, es) }
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
