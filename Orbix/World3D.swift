@@ -2702,7 +2702,7 @@ final class World3D {
                 let dist = sqrt(dx * dx + dy * dy + dz * dz)
                 // und sobald der Schuss am Schiff vorbei ist (hinter dem Schiff, zwischen Schiff und Kamera)
                 let along = (sh.p.x - game.pos.x) * cos(game.heading) + (sh.p.y - game.pos.y) * sin(game.heading)
-                let o = min(CGFloat(max(0, min(1, (dist - 90) / 110))), max(0, min(1, (along + 10) / 60)))
+                let o = min(CGFloat(max(0, min(1, (dist - 90) / 110))), max(0, min(1, (along - 30) / 70)))
                 if abs(n.opacity - o) > 0.02 { n.opacity = o }
             } else if n.opacity != 1 {
                 n.opacity = 1
