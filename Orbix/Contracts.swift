@@ -4,7 +4,8 @@ import Observation
 // MARK: - Aufträge
 
 /// Aufträge geben einem Flug ein Ziel: Fracht zustellen, ein Kopfgeld kassieren oder eine Route von Piraten säubern.
-/// Man nimmt sie im Hangar oder an einer Raumstation an; sie gelten bis zum Ende des Flugs (Christian, 2026-11-20).
+/// Man nimmt sie im Kommandoraum einer Raumstation an; sie gelten bis zum Ende des Flugs. Kopfgeld und Piraten
+/// beseitigen führen zu einem Gefechtsplaneten auf der Strecke, dort wird frei gekämpft (Christian, 2026-11-20).
 enum ContractKind: String, Codable {
     case cargo, bounty, patrol
 }
@@ -39,10 +40,10 @@ struct Contract: Codable, Identifiable, Equatable {
     let kind: ContractKind
     /// Schwierigkeit und Lohnstufe, wächst mit dem Pilotenrang
     let tier: Int
-    /// Fracht: Sprünge bis zum Zielplaneten; Kopfgeld: Sprünge, bis das Ziel auftaucht
+    /// Fracht: Sprünge bis zum Zielplaneten; Kopfgeld und Piraten beseitigen: Sprünge bis zum Gefechtsplaneten
     let jumps: Int
     var cargo: CargoType = .standard
-    /// Patrouille: so viele Piraten in einem Flug abschießen
+    /// Piraten beseitigen: so viele Piraten warten am Gefechtsplaneten
     var kills: Int = 0
     /// Ware (Fracht) oder Name des Kopfgeldziels
     var subject: String = ""
@@ -67,7 +68,7 @@ struct Contract: Codable, Identifiable, Equatable {
             return Contract(kind: .bounty, tier: t, jumps: Int.random(in: 4...7),
                             subject: targets.randomElement() ?? "ROTE NATTER", client: clients.randomElement() ?? "")
         case .patrol:
-            return Contract(kind: .patrol, tier: t, jumps: 0, kills: min(10, 3 + t + Int.random(in: 0...1)),
+            return Contract(kind: .patrol, tier: t, jumps: Int.random(in: 3...6), kills: min(10, 3 + t + Int.random(in: 0...1)),
                             client: clients.randomElement() ?? "")
         }
     }
@@ -117,7 +118,7 @@ struct Contract: Codable, Identifiable, Equatable {
         switch kind {
         case .cargo: return "FRACHT · \(subject)"
         case .bounty: return "KOPFGELD · \(subject)"
-        case .patrol: return "PATROUILLE"
+        case .patrol: return "PIRATEN BESEITIGEN"
         }
     }
 
@@ -127,9 +128,9 @@ struct Contract: Codable, Identifiable, Equatable {
             let extra = cargo == .express ? " · IN \(Int(expressTime)) S +50 %" : (cargo == .fragile ? " · TREFFER KOSTEN DOPPELT" : "")
             return "\(cargo.title) · ZIEL IN \(jumps) SPRÜNGEN\(extra)"
         case .bounty:
-            return "PIRATENANFÜHRER · TAUCHT IN \(jumps) SPRÜNGEN AUF"
+            return "PIRATENANFÜHRER · VERSTECK BEI EINEM PLANETEN IN \(jumps) SPRÜNGEN"
         case .patrol:
-            return "ZERSTÖRE \(kills) PIRATEN IN EINEM FLUG"
+            return "\(kills) PIRATEN BEI EINEM PLANETEN IN \(jumps) SPRÜNGEN · GEFECHT"
         }
     }
 
@@ -571,13 +572,12 @@ extension Game {
             cargoLoaded = cargoStart
             cargoDest = score + c.jumps
             popups.append(Popup(pos: pos, text: "\(cargoStart) CONTAINER \(c.subject) GELADEN", color: c.color, age: 0))
-        case .bounty:
-            // erst auf einer Strecke, die noch nicht erzeugt ist
+        case .bounty, .patrol:
+            // Gefechtsplanet: erst ein Planet, der noch nicht erzeugt ist
             bountyPlanet = max(score + c.jumps, planetBase + planets.count)
-            popups.append(Popup(pos: pos, text: "KOPFGELDZIEL \(c.subject) GEORTET", color: c.color, age: 0))
-        case .patrol:
             patrolKills = 0
-            popups.append(Popup(pos: pos, text: "PATROUILLE · \(c.kills) PIRATEN", color: c.color, age: 0))
+            let text = c.kind == .bounty ? "\(c.subject) GEORTET · PLANET \(bountyPlanet)" : "PIRATEN BEI PLANET \(bountyPlanet)"
+            popups.append(Popup(pos: pos, text: text, color: c.color, age: 0))
         }
         blog("contract begin \(c.kind) tier=\(c.tier)")
     }
@@ -587,7 +587,7 @@ extension Game {
         switch contracts.active?.kind {
         case .cargo: return "FRACHT NICHT ZUGESTELLT"
         case .bounty: return "ZIEL NICHT GESTELLT"
-        case .patrol: return "PATROUILLE ABGEBROCHEN"
+        case .patrol: return "PIRATEN NICHT BESEITIGT"
         case nil: return "ABGEBROCHEN"
         }
     }
@@ -672,7 +672,6 @@ extension Game {
         switch c.kind {
         case .patrol:
             patrolKills += 1
-            if patrolKills >= c.kills { completeContract(c, reward: c.reward(ship)) }
         case .bounty:
             if boss { completeContract(c, reward: c.reward(ship), note: " · \(c.subject)") }
         case .cargo:
@@ -680,11 +679,19 @@ extension Game {
         }
     }
 
-    /// Anführer ist entkommen: er taucht ein paar Strecken später wieder auf
-    func bossEscaped() {
-        guard contractRunning, contracts.active?.kind == .bounty else { return }
+    /// Gefechtsplanet des Auftrags gesäubert
+    func patrolCleared() {
+        guard contractRunning, let c = contracts.active, c.kind == .patrol else { return }
+        completeContract(c, reward: c.reward(ship))
+    }
+
+    /// Abgedreht: Anführer bzw. Piraten sind entkommen und warten ein paar Planeten weiter wieder
+    func contractTargetEscaped() {
+        guard contractRunning, let c = contracts.active, c.kind != .cargo else { return }
         bountyPlanet = max(score + 3, planetBase + planets.count)
-        popups.append(Popup(pos: pos, text: "\(bountyName) ENTKOMMEN · NEUE SPUR", color: Color(red: 1, green: 0.55, blue: 0.4), age: 0, lift: 40))
+        let who = c.kind == .bounty ? bountyName : "PIRATEN"
+        popups.append(Popup(pos: pos, text: "\(who) ENTKOMMEN · NEUE SPUR: PLANET \(bountyPlanet)",
+                            color: Color(red: 1, green: 0.55, blue: 0.4), age: 0, lift: 70))
     }
 
     /// kurze Zeile fürs HUD, nil ohne laufenden Auftrag
@@ -699,11 +706,12 @@ extension Game {
                 t += rest > 0 ? String(format: " · EXPRESS %d:%02d", rest / 60, rest % 60) : " · EXPRESS VERPASST"
             }
             return t
-        case .bounty:
+        case .bounty, .patrol:
             let left = bountyPlanet - score
-            return "KOPFGELD · \(c.subject) · " + (left <= 1 ? "ZIEL AUF DIESER STRECKE" : "IN \(left) SPRÜNGEN")
-        case .patrol:
-            return "PATROUILLE · \(patrolKills)/\(c.kills) PIRATEN"
+            let head = c.kind == .bounty ? "KOPFGELD · \(c.subject)" : "PIRATEN BESEITIGEN"
+            let where_ = phase == .combat && arenaIndex >= 0 ? "GEFECHT LÄUFT"
+                : (left <= 1 ? "PLANET \(bountyPlanet) VORAUS" : "PLANET \(bountyPlanet) · NOCH \(left) SPRÜNGE")
+            return "\(head) · \(where_)"
         }
     }
 }

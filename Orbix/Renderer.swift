@@ -737,7 +737,7 @@ extension Game {
     }
 
     private func drawTargetLabel(_ c: GraphicsContext, _ size: CGSize) {
-        guard phase != .over, !inHangarView else { return }
+        guard phase != .over, phase != .combat, !inHangarView else { return }
         let t = planets[currentIndex + 1]
         let sp = screenPoint(t.center, size)
         let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
@@ -762,9 +762,10 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", planetBase + currentIndex + 1))")
+        let number = String(format: "%02d", planetBase + currentIndex + 1)
+        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : (t.arena.map { "\($0.title) · PLANET \(number)" } ?? "ZIEL \(number)"))
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(amber))
+                .foregroundColor(t.arena != nil ? Color(red: 1, green: 0.42, blue: 0.37) : amber))
         let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(amber.opacity(0.85)))
@@ -935,7 +936,7 @@ extension Game {
     // MARK: Bildschirm-Ebene
 
     private func drawIndicator(_ c: GraphicsContext, _ size: CGSize) {
-        guard phase != .over, !inHangarView else { return }
+        guard phase != .over, phase != .combat, !inHangarView else { return }
         let t = planets[currentIndex + 1]
         let sp = toScreen(t.center, size)
         let margin: CGFloat = 34

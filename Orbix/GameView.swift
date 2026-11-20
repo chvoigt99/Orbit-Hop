@@ -86,6 +86,10 @@ struct GameView: View {
                         if !game.started {
                             titleView
                         }
+                        // Gefecht: Finger lenkt, Feuerknopf schießt (liegt unter dem Pausenknopf)
+                        if game.phase == .combat && !game.paused {
+                            combatControls
+                        }
                         if game.started && game.phase != .over && !game.paused && !game.stationOpen && game.hudAlpha > 0 {
                             pauseButton
                         }
@@ -184,6 +188,7 @@ struct GameView: View {
     private var status: (String, Color) {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
+        if game.phase == .combat { return (game.combatStatus, game.arenaReturning && game.arenaWon ? gold : warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.dockArriving { return ("ANFLUG · STATION \(game.currentStationName ?? "")", signal) }
         if game.atStation { return ("STATION \(game.currentStationName ?? "") · ANGEDOCKT", signal) }
@@ -201,8 +206,9 @@ struct GameView: View {
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
         if game.phase == .flying {
-            let n = game.raidersOnRoute
-            if n > 0 { return ("FEINDKONTAKT · \(n) \(n == 1 ? "PIRAT" : "PIRATEN")", warn) }
+            if game.planets[min(game.originIndex + 1, game.planets.count - 1)].arena != nil {
+                return ("ANFLUG AUF GEFECHTSZONE", warn)
+            }
             return ("TRANSIT · SCHUB AKTIV", gold)
         }
         if game.inCone { return ("STARTFENSTER OFFEN", signal) }
@@ -235,12 +241,16 @@ struct GameView: View {
                 Color.clear.frame(height: 42)
             }
             Spacer()
-            if game.hintShown && game.started && game.phase != .docked && game.phase != .over && !game.dodgeAvailable {
+            if game.hintShown && game.started && game.phase != .docked && game.phase != .over && game.phase != .combat && !game.dodgeAvailable {
                 hint
+            }
+            if game.phase == .combat && game.time - game.arenaStart < 5 {
+                combatHint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
             // in der Hindernispassage sitzen dort die Ausweichknöpfe
-            bottomBar.opacity(game.stationOpen || game.dodgeAvailable ? 0 : 1)
+            // im Gefecht liegt dort der Feuerknopf
+            bottomBar.opacity(game.stationOpen || game.dodgeAvailable || game.phase == .combat ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -372,6 +382,75 @@ struct GameView: View {
             Spacer().frame(height: 14)
         }
         .transition(.opacity)
+    }
+
+    // MARK: Gefecht
+
+    private var combatHint: some View {
+        Text("Finger auf den Bildschirm: dorthin lenken, festhalten gibt Schub. Feuerknopf rechts gedrückt halten. Der Planet ist Deckung.")
+            .font(.system(size: 11, design: .monospaced))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(warn)
+            .padding(10)
+            .background(panelBackground(cut: 8, edge: warn))
+            .padding(.bottom, 110)
+    }
+
+    /// Steuerfläche über dem ganzen Bild, darüber Feuerknopf und (nach einer Weile) Abdrehen
+    private var combatControls: some View {
+        ZStack {
+            Color.clear
+                .contentShape(Rectangle())
+                .ignoresSafeArea()
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { v in game.steer(toward: v.location) }
+                    .onEnded { _ in game.steerAngle = nil })
+            VStack {
+                Spacer()
+                HStack(alignment: .bottom) {
+                    if game.canFlee {
+                        Button { game.flee() } label: {
+                            VStack(spacing: 3) {
+                                Image(systemName: "arrow.uturn.backward").font(.system(size: 15, weight: .bold))
+                                label("ABDREHEN")
+                            }
+                            .foregroundStyle(dim)
+                            .frame(width: 84, height: 56)
+                            .background(Chamfer(cut: 8).fill(panel.opacity(0.8)))
+                            .overlay(Chamfer(cut: 8).stroke(dim.opacity(0.7), lineWidth: 1))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                    } else if let left = game.fleeCountdown {
+                        label("ABDREHEN IN \(left) S")
+                            .foregroundStyle(dim.opacity(0.8))
+                            .padding(.bottom, 8)
+                    }
+                    Spacer()
+                    if !game.arenaReturning { fireButton }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+        }
+    }
+
+    private var fireButton: some View {
+        let held = game.fireHeld
+        return VStack(spacing: 4) {
+            Image(systemName: game.weapon.symbol).font(.system(size: 22, weight: .bold))
+            label("FEUER")
+        }
+        .foregroundStyle(warn)
+        .frame(width: 92, height: 92)
+        .background(Circle().fill(warn.opacity(held ? 0.35 : 0.14)))
+        .overlay(Circle().stroke(warn.opacity(0.9), lineWidth: 2))
+        .contentShape(Circle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in game.fireHeld = true }
+            .onEnded { _ in game.fireHeld = false })
+        .accessibilityLabel("Feuer")
     }
 
     private var pauseButton: some View {

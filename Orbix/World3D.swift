@@ -2199,7 +2199,7 @@ final class World3D {
         }
 
         // Zielerfassung
-        lockGroup.isHidden = game.phase == .over || game.inHangarView
+        lockGroup.isHidden = game.phase == .over || game.phase == .combat || game.inHangarView
         let ti = game.currentIndex + 1
         if ti < game.planets.count {
             let t = game.planets[ti]
@@ -2473,7 +2473,8 @@ final class World3D {
         shipHolder.isHidden = game.phase == .over && game.destroyed
         shipHolder.position = v3(game.pos, 4 + game.liftHeight)
         // leichte Schräglage in Kurven
-        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : game.dodgeBank * 0.6
+        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35
+            : (game.phase == .combat ? -game.combatBank * 0.5 : game.dodgeBank * 0.6)
         shipHolder.eulerAngles.y = Float(-game.heading)
         bankNode.eulerAngles.x = Float(bank)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten
@@ -2485,7 +2486,7 @@ final class World3D {
         let s = Float(sc)
         shipHolder.scale = SCNVector3(s, s, s)
 
-        let flying = game.phase == .flying
+        let flying = game.phase == .flying || game.phase == .combat
         let boost = game.boostTime > 0
         for (ps, r) in exhausts {
             // im Hangar aus, beim Abheben leise, beim Anrollen voll
