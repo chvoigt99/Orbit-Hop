@@ -337,6 +337,7 @@ extension Game {
         stick = nil
         fireHeld = false
         if won {
+            enemyShots.removeAll()   // nach dem Sieg trifft nichts mehr nach
             let bonus = max(1, Int((CGFloat(1 + arenaWaves.count) * ship.bountyFactor).rounded()))
             for _ in 0..<bonus { spawnTech(from: pos) }
             addEnergy(30, from: pos)

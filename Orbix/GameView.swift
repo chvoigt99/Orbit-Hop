@@ -240,12 +240,13 @@ struct GameView: View {
             } else {
                 Color.clear.frame(height: 42)
             }
+            // Gefechtshinweis oben, damit er die Piraten voraus nicht verdeckt
+            if game.phase == .combat && game.time - game.arenaStart < 5 {
+                combatHint
+            }
             Spacer()
             if game.hintShown && game.started && game.phase != .docked && game.phase != .over && game.phase != .combat && !game.dodgeAvailable {
                 hint
-            }
-            if game.phase == .combat && game.time - game.arenaStart < 5 {
-                combatHint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
             // in der Hindernispassage sitzen dort die Ausweichknöpfe
@@ -393,7 +394,6 @@ struct GameView: View {
             .foregroundStyle(warn)
             .padding(10)
             .background(panelBackground(cut: 8, edge: warn))
-            .padding(.bottom, 110)
     }
 
     /// Steuerfläche über dem ganzen Bild, darüber Feuerknopf und (nach einer Weile) Abdrehen
