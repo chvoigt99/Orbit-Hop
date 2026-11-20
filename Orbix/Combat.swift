@@ -78,8 +78,9 @@ extension Game {
             let d = max(1, hypot(t.center.x - muzzle.x, t.center.y - muzzle.y))
             let lead = d / Game.boardShotSpeed
             let want = atan2(t.center.y + t.vel.dy * lead - muzzle.y, t.center.x + t.vel.dx * lead - muzzle.x)
-            // Zielhilfe nur in einem Kegel voraus: anfliegen muss man selbst
-            let limit = min(0.45, 0.22 * ship.aimAssistFactor)
+            // schwenkbare Bordkanonen: zielen bis etwa 55° zur Seite selbst, damit man nicht frontal in die
+            // Schüsse fliegen muss, um zu treffen; man kann seitlich vorbeiziehen und dabei feuern (Christian, 2026-11-20)
+            let limit = min(1.15, 0.95 * ship.aimAssistFactor)
             hd = heading + max(-limit, min(limit, wrap(want - heading)))
             let dAlt = t.alt - altitude
             if abs(dAlt) < d * 0.5 { valt = dAlt / lead }
