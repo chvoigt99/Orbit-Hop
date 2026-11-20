@@ -21,6 +21,32 @@ private func glowMat(_ color: UIColor, additive: Bool = true) -> SCNMaterial {
     return m
 }
 
+/// Leuchtspur: von hinten durchsichtig über die Farbe zu einem hellen Kopf (additiv, Schwarz = unsichtbar)
+private func tracerMat(_ color: UIColor) -> SCNMaterial {
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    color.getRed(&r, green: &g, blue: &b, alpha: &a)
+    let img = textureRenderer(CGSize(width: 128, height: 4)).image { ctx in
+        let cols = [UIColor.black.cgColor,
+                    UIColor(red: r * 0.35, green: g * 0.35, blue: b * 0.35, alpha: 1).cgColor,
+                    color.cgColor,
+                    UIColor(red: min(1, r * 0.5 + 0.5), green: min(1, g * 0.5 + 0.5), blue: min(1, b * 0.5 + 0.5), alpha: 1).cgColor] as CFArray
+        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: cols, locations: [0, 0.45, 0.85, 1])!
+        ctx.cgContext.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 128, y: 0), options: [])
+    }
+    return spriteMat(img)
+}
+
+/// schlanke Leuchtspur mit dem Kopf im Ursprung, entlang +x
+private func makeTracer(_ mat: SCNMaterial, length: CGFloat, width: CGFloat) -> SCNNode {
+    let box = SCNBox(width: length, height: width, length: width, chamferRadius: 0)
+    box.materials = [mat]
+    let n = SCNNode(geometry: box)
+    n.position.x = Float(-length / 2)
+    let holder = SCNNode()
+    holder.addChildNode(n)
+    return holder
+}
+
 private func spriteMat(_ image: UIImage) -> SCNMaterial {
     let m = SCNMaterial()
     m.lightingModel = .constant
@@ -1567,23 +1593,11 @@ final class World3D {
         if raider {
             // Piratenschuss: längliche rote Spur mit hellem Kern, klar anders als die gelben eigenen Spuren
             // und anders als der Leuchtkreis der Piratenschiffe; die Form zeigt die Flugrichtung
-            let streak = SCNBox(width: 30, height: 4.5, length: 4.5, chamferRadius: 2.2)
-            streak.materials = [glowMat(UIColor(red: 1, green: 0.12, blue: 0.1, alpha: 0.85))]
-            let sn = SCNNode(geometry: streak)
-            sn.position.x = -9
-            n.addChildNode(sn)
-            let tip = SCNSphere(radius: 3.2)
-            tip.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
-            let tn = SCNNode(geometry: tip)
-            tn.position.x = 5
-            n.addChildNode(tn)
-            let glow = SCNNode(geometry: SCNPlane(width: 16, height: 16))
-            let gm = spriteMat(WorldTextures.soft)
-            gm.multiply.contents = UIColor(red: 1, green: 0.1, blue: 0.1, alpha: 1)
-            glow.geometry?.materials = [gm]
-            glow.constraints = [SCNBillboardConstraint()]
-            glow.position.x = 4
-            n.addChildNode(glow)
+            // filigran: dünne Spur mit Farbverlauf, hinten durchsichtig, vorn ein kleiner heller Kopf
+            n.addChildNode(makeTracer(World3D.enemyTracer, length: 46, width: 2.4))
+            let tip = SCNSphere(radius: 1.8)
+            tip.materials = [glowMat(UIColor(red: 1, green: 0.75, blue: 0.7, alpha: 1))]
+            n.addChildNode(SCNNode(geometry: tip))
             return n
         }
         let core = SCNSphere(radius: 5)
@@ -1597,6 +1611,9 @@ final class World3D {
         n.addChildNode(glow)
         return n
     }
+
+    static let ownTracer = tracerMat(UIColor(red: 1, green: 0.85, blue: 0.35, alpha: 1))
+    static let enemyTracer = tracerMat(UIColor(red: 1, green: 0.18, blue: 0.12, alpha: 1))
 
     private static let foil: SCNMaterial = {
         let m = SCNMaterial()
@@ -1900,6 +1917,13 @@ final class World3D {
         let bolt = SCNNode()
         bolt.name = "bolt"
         n.addChildNode(bolt)
+        if pr.kind == .cannon {
+            // im Gefecht: filigrane Leuchtspur statt des großen Bolzens
+            let tr = makeTracer(World3D.ownTracer, length: 60, width: 2.2)
+            tr.name = "tracer"
+            tr.isHidden = true
+            n.addChildNode(tr)
+        }
         switch pr.kind {
         case .cannon, .railgun:
             // Spur hinten, heller Kern vorn
@@ -2106,7 +2130,7 @@ final class World3D {
             chaseHeading.snap(to: game.heading)
         } else if game.phase == .flying || game.phase == .combat {
             // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
-            chaseHeading.update(to: game.heading, smoothTime: game.phase == .combat ? 0.25 : 0.18, dt: dt)
+            chaseHeading.update(to: game.heading, smoothTime: game.phase == .combat ? 0.09 : 0.18, dt: dt)
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, passageDone: passageDone)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
@@ -2664,12 +2688,19 @@ final class World3D {
             n.position = v3(pr.p, 4 + pr.alt)
             if let b = n.childNode(withName: "bolt", recursively: false) {
                 let size: CGFloat = pr.kind == .bomb ? 12 : 10
-                // im Gefecht feste, große Leuchtspur, damit man die Schüsse in der Verfolgerkamera sieht
-                let s = game.phase == .combat ? Float(32) : Float(size * px)
+                let s = Float(size * px)
                 b.scale = SCNVector3(s, s, s)
                 b.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
-                if game.phase == .combat {
-                    b.eulerAngles.z = Float(atan2(pr.valt, max(1, hypot(pr.v.dx, pr.v.dy))))
+                // im Gefecht filigrane Leuchtspur mit Farbverlauf statt Bolzen
+                let tracer = n.childNode(withName: "tracer", recursively: false)
+                let combat = game.phase == .combat && tracer != nil
+                b.isHidden = combat
+                if let t = tracer {
+                    t.isHidden = !combat
+                    if combat {
+                        t.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
+                        t.eulerAngles.z = Float(atan2(pr.valt, max(1, hypot(pr.v.dx, pr.v.dy))))
+                    }
                 }
             }
         }
@@ -2689,8 +2720,6 @@ final class World3D {
                 enemyShotNodes[sh.uid] = n
             }
             n.position = v3(sh.p, 5 + sh.alt)
-            let es: Float = game.phase == .combat ? 1.5 : 1
-            if n.scale.x != es { n.scale = SCNVector3(es, es, es) }
             if sh.raider {
                 n.eulerAngles.y = Float(-atan2(sh.v.dy, sh.v.dx))
                 n.eulerAngles.z = Float(atan2(sh.valt, max(1, hypot(sh.v.dx, sh.v.dy))))

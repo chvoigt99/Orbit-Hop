@@ -564,6 +564,8 @@ final class Game {
     var arenaWon = false
     /// Steuerknüppel-Anzeige: Aufsetzpunkt und aktuelle Fingerposition auf dem Bildschirm
     var stickOrigin: CGPoint? = nil
+    /// Lenkrichtung, beim Aufsetzen des Fingers einmal festgelegt (wechselt nie mitten im Ziehen)
+    var stickSign: CGFloat = 1
     var stickPoint: CGPoint? = nil
     /// Feuerknopf gedrückt: Dauerfeuer
     var fireHeld = false

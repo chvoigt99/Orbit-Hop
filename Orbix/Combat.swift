@@ -54,15 +54,15 @@ extension Game {
     /// Bildausschnitt im Gefecht (Weltbreite)
     static let combatView: CGFloat = 1500
     /// so weit vom Planeten reicht das Gefechtsfeld
-    static let arenaReach: CGFloat = 1700
+    static let arenaReach: CGFloat = 2200
     /// ab dann darf man abdrehen
     static let fleeAfter: CGFloat = 20
 
     // ruhiges Tempo, damit man zielen und taktieren kann statt Autoscooter zu fahren (Christian, 2026-11-20)
-    var combatCruise: CGFloat { 110 * ship.speed }
-    var combatTop: CGFloat { 150 * ship.speed }
+    var combatCruise: CGFloat { 120 * ship.speed }
+    var combatTop: CGFloat { 120 * ship.speed }
     /// schnelle Schiffe sind auch wendiger
-    var combatTurn: CGFloat { 1.25 + 0.8 * max(0, ship.speed - 0.8) }
+    var combatTurn: CGFloat { 1.7 + 0.8 * max(0, ship.speed - 0.8) }
 
     /// Bordkanonen: im Gefecht immer verfügbar, ohne Energie; Jäger mit starken Kanonen treffen härter
     static let boardShotSpeed: CGFloat = 900
@@ -196,7 +196,7 @@ extension Game {
             a.awake = true
             a.fireAt = time + 2.5 + CGFloat.random(in: 0...1.5)
             a.orbitR = CGFloat.random(in: 520...760) + 50 * CGFloat(v)
-            a.orbitW = (Bool.random() ? 1 : -1) * CGFloat.random(in: 0.25...0.45)
+            a.orbitW = (Bool.random() ? 1 : -1) * CGFloat.random(in: 0.14...0.26)
             a.orbitA = atan2(c.y - pos.y, c.x - pos.x)
             a.ringChangeAt = time + CGFloat.random(in: 3...5)
             a.facing = atan2(pos.y - c.y, pos.x - c.x)
@@ -219,13 +219,21 @@ extension Game {
     /// Die Seite wird über die Kamera bestimmt, damit „nach rechts ziehen“ auf dem Bildschirm rechts herum fliegt.
     func setStick(from start: CGPoint, to p: CGPoint) {
         guard phase == .combat, !arenaReturning, !paused else { return }
-        var sx = max(-1, min(1, (p.x - start.x) / 90))
-        let sy = max(-1, min(1, (p.y - start.y) / 90))
-        if let project3, let s = project3(pos, altitude),
-           let side = project3(point(from: pos, angle: heading + .pi / 2, distance: 60), altitude), side.x < s.x {
-            sx = -sx
+        // kleine tote Zone, damit ruhiges Halten geradeaus fliegt
+        func axis(_ v: CGFloat) -> CGFloat {
+            let a = abs(v)
+            return a < 8 ? 0 : (v > 0 ? 1 : -1) * min(1, (a - 8) / 62)
         }
-        stick = CGVector(dx: sx, dy: sy)
+        if stick == nil {
+            // Seite einmal beim Aufsetzen bestimmen; früher wurde sie bei jeder Bewegung neu berechnet
+            // und konnte mitten im Ziehen umspringen
+            stickSign = 1
+            if let project3, let s = project3(pos, altitude),
+               let side = project3(point(from: pos, angle: heading + .pi / 2, distance: 60), altitude), side.x < s.x - 2 {
+                stickSign = -1
+            }
+        }
+        stick = CGVector(dx: axis(p.x - start.x) * stickSign, dy: axis(p.y - start.y))
     }
 
     /// Abdrehen: Gefecht verlassen und zurück in den Orbit (die Piraten entkommen)
@@ -280,8 +288,11 @@ extension Game {
             }
             if dc < p.orbitRadius + 30 { want = heading }   // auf Höhe warten, Bahn halten
         } else if dc > p.orbitRadius + Game.arenaReach {
-            // Rand des Gefechtsfelds: zurück zum Planeten
-            want = atan2(toC.dy, toC.dx)
+            // Rand des Gefechtsfelds: sanft zum Planeten zurückdrehen; ohne Finger übernimmt die Lenkhilfe ganz,
+            // mit Finger wird nur mitgelenkt, damit man die Kontrolle behält
+            let back = max(-1, min(1, wrap(atan2(toC.dy, toC.dx) - heading) * 2))
+            let over = min(1, (dc - p.orbitRadius - Game.arenaReach) / 400)
+            if stick == nil { want = atan2(toC.dy, toC.dx) } else { yaw = max(-1, min(1, yaw + back * over)) }
             if time - boundaryWarnAt > 3 {
                 boundaryWarnAt = time
                 popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
@@ -289,7 +300,7 @@ extension Game {
         }
         // Höhengrenze: sanft zurückdrücken
         if abs(altitude) > Game.altLimit {
-            climbWant = altitude > 0 ? -0.4 : 0.4
+            climbWant = altitude > 0 ? min(climbWant, -0.3) : max(climbWant, 0.3)
             if time - boundaryWarnAt > 3 {
                 boundaryWarnAt = time
                 popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
@@ -428,8 +439,15 @@ extension Game {
                 }
                 a.orbitA += a.orbitW * dt
                 let flanking = time < a.diveUntil
-                let offset: CGFloat = flanking ? (a.orbitW > 0 ? 1.25 : -1.25) : 0.5 * sin(a.orbitA)
-                let target = point(from: pos, angle: heading + offset, distance: a.orbitR)
+                // Bahn um das Schiff in festen Weltwinkeln: Sie bleiben nicht vor dem Bug kleben, man muss sie
+                // anfliegen und ihnen nachdrehen. Beim Flankenmanöver kreisen sie schneller.
+                a.orbitA += a.orbitW * dt * (flanking ? 1.2 : 0)
+                var target = point(from: pos, angle: a.orbitA, distance: a.orbitR)
+                // im Gefechtsfeld bleiben
+                let tp = CGVector(dx: target.x - planet.center.x, dy: target.y - planet.center.y)
+                let tl = max(1, hypot(tp.dx, tp.dy))
+                let maxR = planet.orbitRadius + Game.arenaReach * 0.85
+                if tl > maxR { target = CGPoint(x: planet.center.x + tp.dx / tl * maxR, y: planet.center.y + tp.dy / tl * maxR) }
                 altTarget = altitude + 110 * sin(a.orbitA * 0.8 + a.phase)
                 var vx = vel.dx + (target.x - c.x) * 0.9
                 var vy = vel.dy + (target.y - c.y) * 0.9
