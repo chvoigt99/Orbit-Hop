@@ -387,7 +387,7 @@ struct GameView: View {
     // MARK: Gefecht
 
     private var combatHint: some View {
-        Text("Finger auf den Bildschirm: dorthin lenken, festhalten gibt Schub. Feuerknopf rechts gedrückt halten. Der Planet ist Deckung.")
+        Text("Finger links oder rechts vom Schiff lenkt, festhalten gibt Schub. Feuerknopf rechts gedrückt halten. Rote Pfeile zeigen Piraten außer Sicht, der Planet ist Deckung.")
             .font(.system(size: 11, design: .monospaced))
             .multilineTextAlignment(.center)
             .foregroundStyle(warn)
@@ -428,7 +428,8 @@ struct GameView: View {
                             .padding(.bottom, 8)
                     }
                     Spacer()
-                    if !game.arenaReturning { fireButton }
+                    // über dem Radar
+                    if !game.arenaReturning { fireButton.padding(.bottom, 96) }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)

@@ -2056,6 +2056,8 @@ final class World3D {
             chasedThisFlight = true
         }
         if game.phase != .flying || passageDone { chaseOn = false }
+        // Gefecht: Verfolgerkamera hinter dem Schiff, bis es zurück in den Orbit fliegt
+        if game.phase == .combat { chaseOn = !game.arenaReturning }
         // Spielende: Nahaufnahme für das Ausgleiten bzw. die Explosion
         if game.phase == .over { chaseOn = true }
         lastPhase = game.phase
@@ -2065,7 +2067,7 @@ final class World3D {
         // Der Vorwärts-Schub beim Herauszoomen gilt nur im Flug; im Orbit würde er mit dem Schiff im Kreis laufen
         releasing = !danger && chase > 0.001 && game.phase == .flying
         // Im Orbit blendet eine Rest-Nahansicht zügig aus, sonst folgt die Kamera dem kreisenden Schiff
-        let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : 3))
+        let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : (game.phase == .combat ? 0.8 : 3)))
         chase = smoothApproach(chase, want, rate: chaseRate, dt: dt)
         if game.phase == .over && !game.destroyed {
             coastClose = smoothApproach(coastClose, 1, rate: 0.7, dt: dt)
@@ -2080,9 +2082,9 @@ final class World3D {
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
-        } else if game.phase == .flying {
+        } else if game.phase == .flying || game.phase == .combat {
             // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
-            chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
+            chaseHeading.update(to: game.heading, smoothTime: game.phase == .combat ? 0.25 : 0.18, dt: dt)
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, passageDone: passageDone)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus

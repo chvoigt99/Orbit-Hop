@@ -44,6 +44,7 @@ extension Game {
 
     /// Trefferanzeige über Hindernissen, die mehrere Treffer brauchen
     private func drawObstacleHP(_ c: GraphicsContext, _ size: CGSize) {
+        if phase == .combat { drawRaiderArrows(c, size) }
         for a in asteroids where a.maxHP > 1 {
             guard let sp = project?(CGPoint(x: a.center.x, y: a.center.y)) else { continue }
             guard sp.x > -40, sp.x < size.width + 40, sp.y > insets.top + 120, sp.y < size.height - 120 else { continue }
@@ -65,6 +66,31 @@ extension Game {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundColor(col),
                    at: CGPoint(x: sp.x, y: y - 4), anchor: .bottom)
+        }
+    }
+
+    /// Gefecht in der Verfolgerkamera: rote Pfeile um das Schiff zeigen Piraten außerhalb des Blickfelds
+    private func drawRaiderArrows(_ c: GraphicsContext, _ size: CGSize) {
+        guard let project, let ship = project(pos),
+              let side = project(point(from: pos, angle: heading + .pi / 2, distance: 60)) else { return }
+        // liegt +90° rechts oder links auf dem Bildschirm?
+        let sign: CGFloat = side.x >= ship.x ? 1 : -1
+        let red = Color(red: 1, green: 0.32, blue: 0.3)
+        for a in asteroids where a.kind == .raider && !a.retreating {
+            let rel = wrap(atan2(a.center.y - pos.y, a.center.x - pos.x) - heading)
+            guard abs(rel) > 0.32 else { continue }
+            let ang = -CGFloat.pi / 2 + sign * rel
+            let r: CGFloat = 110
+            let tip = CGPoint(x: ship.x + cos(ang) * (r + 12), y: ship.y + sin(ang) * (r + 12))
+            let l = CGPoint(x: ship.x + cos(ang - 0.12) * r, y: ship.y + sin(ang - 0.12) * r)
+            let rr = CGPoint(x: ship.x + cos(ang + 0.12) * r, y: ship.y + sin(ang + 0.12) * r)
+            var tri = Path()
+            tri.move(to: tip)
+            tri.addLine(to: l)
+            tri.addLine(to: rr)
+            tri.closeSubpath()
+            let near = hypot(a.center.x - pos.x, a.center.y - pos.y) < Raider.range
+            c.fill(tri, with: .color(red.opacity(near ? 0.95 : 0.5)))
         }
     }
 

@@ -141,11 +141,12 @@ extension Game {
         guard arenaWaves.indices.contains(arenaWave) else { return }
         let tier = contracts.active?.tier ?? 0
         let list = arenaWaves[arenaWave]
-        let from = CGFloat.random(in: 0...(2 * .pi))
+        // von vorn, damit man sie in der Verfolgerkamera anfliegen sieht
+        let from = heading + CGFloat.random(in: -0.5...0.5)
         for (k, v) in list.enumerated() {
             let st = Raider.stats(v, lvl: level, tier: tier)
-            let ang = from + CGFloat(k) * 0.4
-            let c = point(from: pos, angle: ang, distance: 1050 + 70 * CGFloat(k))
+            let ang = from + (CGFloat(k) - CGFloat(list.count - 1) / 2) * 0.25
+            let c = point(from: pos, angle: ang, distance: 1100 + 70 * CGFloat(k))
             var a = Asteroid(center: c, radius: Raider.radius(v), shape: Array(repeating: 1, count: 9),
                              spin: 0, phase: CGFloat.random(in: 0...(2 * .pi)),
                              tone: 0.5, gap: arenaIndex, kind: .raider, hp: st.hp, maxHP: st.hp)
@@ -155,7 +156,7 @@ extension Game {
             a.burstLeft = Raider.burstCount(v)
             a.awake = true
             a.fireAt = time + 1.6 + CGFloat.random(in: 0...1)
-            a.orbitR = CGFloat.random(in: 300...480) + 40 * CGFloat(v)
+            a.orbitR = CGFloat.random(in: 380...600) + 40 * CGFloat(v)
             a.orbitW = (Bool.random() ? 1 : -1) * CGFloat.random(in: 0.5...0.85)
             a.orbitA = atan2(c.y - pos.y, c.x - pos.x)
             a.ringChangeAt = time + CGFloat.random(in: 3...5)
@@ -353,13 +354,17 @@ extension Game {
                     if a.variant != 2 && Double.random(in: 0...1) < 0.4 {
                         a.diveUntil = time + 1.8   // Angriffsflug dicht am Schiff vorbei
                     } else {
-                        a.orbitR = CGFloat.random(in: 300...500) + 40 * CGFloat(a.variant)
+                        a.orbitR = CGFloat.random(in: 380...620) + 40 * CGFloat(a.variant)
                     }
                     if Double.random(in: 0...1) < 0.3 { a.orbitW = -a.orbitW }
                 }
+                // Verband vor dem Schiff (in der Verfolgerkamera sichtbar): seitlich webend im Bereich von etwa ±35°,
+                // beim Angriffsflug frontal dicht heran und am Schiff vorbei
                 a.orbitA += a.orbitW * dt
-                let r: CGFloat = time < a.diveUntil ? 130 : a.orbitR
-                let target = point(from: pos, angle: a.orbitA, distance: r)
+                let diving = time < a.diveUntil
+                let r: CGFloat = diving ? 140 : a.orbitR
+                let offset: CGFloat = diving ? 0.25 * sin(a.phase) : 0.6 * sin(a.orbitA)
+                let target = point(from: pos, angle: heading + offset, distance: r)
                 var vx = vel.dx + (target.x - c.x) * 1.8
                 var vy = vel.dy + (target.y - c.y) * 1.8
                 // ausweichen, wenn das Schiff direkt auf sie zielt (Haken quer zur Schusslinie)
