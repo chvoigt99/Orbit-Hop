@@ -2695,6 +2695,16 @@ final class World3D {
                 n.eulerAngles.y = Float(-atan2(sh.v.dy, sh.v.dx))
                 n.eulerAngles.z = Float(atan2(sh.valt, max(1, hypot(sh.v.dx, sh.v.dy))))
             }
+            // ganz nah an der Kamera ausblenden, sonst ziehen dicke rote Balken übers Bild
+            if game.phase == .combat {
+                let cp = cameraNode.position, np = n.position
+                let dx = np.x - cp.x, dy = np.y - cp.y, dz = np.z - cp.z
+                let dist = sqrt(dx * dx + dy * dy + dz * dz)
+                let o = CGFloat(max(0, min(1, (dist - 90) / 110)))
+                if abs(n.opacity - o) > 0.02 { n.opacity = o }
+            } else if n.opacity != 1 {
+                n.opacity = 1
+            }
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
             n.removeFromParentNode()
