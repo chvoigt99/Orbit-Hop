@@ -2094,6 +2094,11 @@ final class Game {
 
     func fire() {
         guard started, phase != .over, weaponCooldown <= 0 else { return }
+        // im Gefecht schießen die Bordkanonen, ohne Flugenergie zu verbrauchen
+        if phase == .combat {
+            fireBoardCannons()
+            return
+        }
         guard energy > weaponCost else {
             noEnergyFlash = 0.5
             Haptics.miss()
@@ -2320,7 +2325,7 @@ final class Game {
     static let railWidthNear: CGFloat = 12
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
-    private func aimTarget() -> Asteroid? {
+    func aimTarget() -> Asteroid? {
         let reach: CGFloat = (weapon == .railgun ? 1.8 : 1) * rangeFactor
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?

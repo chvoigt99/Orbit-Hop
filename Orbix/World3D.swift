@@ -2642,9 +2642,13 @@ final class World3D {
             n.position = v3(pr.p, 4 + pr.alt)
             if let b = n.childNode(withName: "bolt", recursively: false) {
                 let size: CGFloat = pr.kind == .bomb ? 12 : 10
-                let s = Float(size * px)
+                // im Gefecht feste, große Leuchtspur, damit man die Schüsse in der Verfolgerkamera sieht
+                let s = game.phase == .combat ? Float(46) : Float(size * px)
                 b.scale = SCNVector3(s, s, s)
                 b.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
+                if game.phase == .combat {
+                    b.eulerAngles.z = Float(atan2(pr.valt, max(1, hypot(pr.v.dx, pr.v.dy))))
+                }
             }
         }
         for (id, n) in projectileNodes where !alive.contains(id) {
@@ -2663,6 +2667,8 @@ final class World3D {
                 enemyShotNodes[sh.uid] = n
             }
             n.position = v3(sh.p, 5 + sh.alt)
+            let es: Float = game.phase == .combat ? 1.9 : 1
+            if n.scale.x != es { n.scale = SCNVector3(es, es, es) }
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
             n.removeFromParentNode()

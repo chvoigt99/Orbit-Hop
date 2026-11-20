@@ -388,7 +388,7 @@ struct GameView: View {
     // MARK: Gefecht
 
     private var combatHint: some View {
-        Text("Finger aufsetzen und ziehen: seitlich lenken, nach oben steigen, nach unten sinken. Feuerknopf rechts gedrückt halten. Rote Pfeile zeigen Piraten außer Sicht, der Planet ist Deckung.")
+        Text("Finger aufsetzen und ziehen: seitlich lenken, nach oben steigen, nach unten sinken. Feuerknopf halten: Die Bordkanonen kosten keine Energie. Rote Pfeile zeigen Piraten außer Sicht, der Planet ist Deckung.")
             .font(.system(size: 11, design: .monospaced))
             .multilineTextAlignment(.center)
             .foregroundStyle(warn)
