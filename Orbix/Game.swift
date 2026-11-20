@@ -2490,6 +2490,7 @@ final class Game {
         }
         hull = max(0, hull - damage)
         if damage > 0 { loseCargo(damage) }
+        blog("hit raw=\(Int(raw)) damage=\(Int(damage)) hull=\(Int(hull)) shield=\(Int(shieldHP))")
         return damage
     }
 

@@ -8,8 +8,8 @@ enum Raider {
     static func radius(_ v: Int) -> CGFloat { pick(v, [24, 30, 40] as [CGFloat]) }
     /// so viel schneller als das Spielerschiff dürfen sie werden
     static func speedBonus(_ v: Int) -> CGFloat { pick(v, [120, 60, 90] as [CGFloat]) }
-    static func shotDamage(_ v: Int) -> CGFloat { pick(v, [7, 9, 12] as [CGFloat]) }
-    static func burstCount(_ v: Int) -> Int { pick(v, [3, 3, 4]) }
+    static func shotDamage(_ v: Int) -> CGFloat { pick(v, [5, 6, 9] as [CGFloat]) }
+    static func burstCount(_ v: Int) -> Int { pick(v, [2, 3, 3]) }
     static func title(_ v: Int) -> String { pick(v, ["PIRAT", "KANONENBOOT", "ANFÜHRER"]) }
     static let shotSpeed: CGFloat = 520
     static let range: CGFloat = 900
@@ -20,7 +20,7 @@ enum Raider {
         // zäh: Gefechte sollen eine Herausforderung sein (Christian, 2026-11-20)
         case 2: return (60 + Int(30 * lvl) + 8 * tier, 30 + 15 * lvl + 4 * CGFloat(tier))
         case 1: return (22 + Int(12 * lvl) + 2 * tier, 14 + 6 * lvl + CGFloat(tier))
-        default: return (10 + Int(6 * lvl) + tier, 6 + 4 * lvl)
+        default: return (14 + Int(6 * lvl) + tier, 8 + 4 * lvl)
         }
     }
 }
@@ -90,7 +90,7 @@ extension Game {
         let lvl = level
         switch kind {
         case .ambush:
-            let first: [Int] = [0, 0] + (lvl > 0.3 ? [1] : [])
+            let first: [Int] = [0, 0, 1]
             return lvl > 0.5 ? [first, [0, 1]] : [first]
         case .patrol:
             var left = contracts.active?.kind == .patrol ? max(3, contracts.active?.kills ?? 4) : 4
@@ -421,7 +421,7 @@ extension Game {
         let muzzle = point(from: a.center, angle: a.facing, distance: a.radius)
         let lead = dist / (Raider.shotSpeed + 250)
         let base = atan2(pos.y + vel.dy * lead - muzzle.y, pos.x + vel.dx * lead - muzzle.x)
-        let spread = 0.05 + 0.14 * max(0, ship.speed - 0.8)
+        let spread = 0.1 + 0.14 * max(0, ship.speed - 0.8)
         let count = a.variant == 2 ? 3 : 1
         for k in 0..<count {
             let off = count == 1 ? 0 : (CGFloat(k) - 1) * 0.13
@@ -434,7 +434,7 @@ extension Game {
             a.fireAt = time + 0.15
         } else {
             a.burstLeft = Raider.burstCount(a.variant)
-            a.fireAt = time + CGFloat.random(in: 1.2...1.9) + (a.variant == 1 ? 0.3 : 0)
+            a.fireAt = time + CGFloat.random(in: 1.8...2.6) + (a.variant == 1 ? 0.3 : 0)
         }
     }
 
