@@ -241,7 +241,7 @@ struct GameView: View {
                 Color.clear.frame(height: 42)
             }
             // Gefechtshinweis oben, damit er die Piraten voraus nicht verdeckt
-            if game.phase == .combat && game.time - game.arenaStart < 5 {
+            if game.phase == .combat && game.time - game.arenaStart < 3.5 {
                 combatHint
             }
             Spacer()
