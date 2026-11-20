@@ -232,8 +232,10 @@ final class ContractBoard {
     }
 }
 
-// MARK: - Ansicht
+// MARK: - Ansicht: Auftragsterminal im Kommandoraum der Station
 
+/// Das Auftragsbrett gibt es nur an Bord einer Raumstation: ein eigener Raum mit einer alten Computerkonsole.
+/// Phosphorgrüne Schrift, Rasterlinien und ein kurzer Startvorgang beim Einloggen.
 struct ContractBoardView: View {
     let board: ContractBoard
     let profile: Profile
@@ -241,190 +243,296 @@ struct ContractBoardView: View {
     let running: Bool
     /// im Tagesflug gibt es keine Aufträge
     let daily: Bool
+    /// Name der Station, an der das Terminal steht
+    var station: String = "RAUMSTATION"
     let onClose: () -> Void
 
-    private let signal = Color(red: 79 / 255, green: 227 / 255, blue: 193 / 255)
-    private let gold = Color(red: 1, green: 0.85, blue: 0.42)
-    private let dim = Color(red: 0.55, green: 0.6, blue: 0.72)
-    private let warn = Color(red: 1, green: 0.42, blue: 0.37)
-    private let panel = Color(red: 0.02, green: 0.07, blue: 0.11)
-    private let shipPartColor = hsl(ItemKind.shipPart.hue, 0.8, 0.68)
+    @State private var bootLines = 0
+    @State private var ready = false
 
-    private func label(_ text: String) -> Text {
+    private let phosphor = Color(red: 0.42, green: 1, blue: 0.58)
+    private let amber = Color(red: 1, green: 0.74, blue: 0.3)
+    private let alarm = Color(red: 1, green: 0.4, blue: 0.35)
+    private let screen = Color(red: 0.01, green: 0.045, blue: 0.025)
+    private let shipPartColor = hsl(ItemKind.shipPart.hue, 0.8, 0.68)
+    private var faint: Color { phosphor.opacity(0.55) }
+
+    private func mono(_ text: String, _ size: CGFloat = 10, _ weight: Font.Weight = .medium) -> Text {
         Text(text)
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .tracking(1.4)
+            .font(.system(size: size, weight: weight, design: .monospaced))
+            .tracking(size < 12 ? 1.2 : 2)
     }
 
     var body: some View {
-        let ship = profile.selected
-        VStack(spacing: 12) {
-            header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    rankPanel
-                    if let c = board.active {
-                        label(running ? "LAUFENDER AUFTRAG" : "ANGENOMMEN · BEGINNT BEIM NÄCHSTEN START")
-                            .foregroundStyle(signal.opacity(0.8))
-                            .padding(.top, 6)
-                        card(c, ship: ship, active: true)
-                    }
-                    label(daily ? "IM TAGESFLUG GIBT ES KEINE AUFTRÄGE" : "ANGEBOTE · \(ship.name) · \(ship.model.role.title)")
-                        .foregroundStyle(daily ? warn : signal.opacity(0.8))
-                        .padding(.top, 6)
-                    ForEach(board.offers) { c in card(c, ship: ship, active: false) }
-                    label("FRACHTER VERDIENEN AN FRACHT, SCHNELLE JÄGER MIT KANONEN AN KOPFGELD. JEDER ERFÜLLTE AUFTRAG BRINGT RUF UND MIT GLÜCK EIN SCHIFFSTEIL.")
-                        .foregroundStyle(dim)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+        ZStack {
+            room
+            VStack(spacing: 0) {
+                roomHeader
+                console
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
             }
         }
-        .padding(.top, 8)
-        .background(
-            LinearGradient(colors: [Color(red: 0.03, green: 0.045, blue: 0.1), Color(red: 0.01, green: 0.015, blue: 0.04)],
-                           startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
-        )
         .statusBarHidden(true)
+        .task { await boot() }
     }
 
-    private var header: some View {
-        HStack {
+    // MARK: Raum
+
+    /// dunkler Kommandoraum: Wandpaneele, gedämpftes Licht von oben, die Konsole leuchtet
+    private var room: some View {
+        ZStack {
+            LinearGradient(colors: [Color(red: 0.07, green: 0.08, blue: 0.1), Color(red: 0.02, green: 0.02, blue: 0.03)],
+                           startPoint: .top, endPoint: .bottom)
+            // Wandpaneele
+            HStack(spacing: 0) {
+                ForEach(0..<6, id: \.self) { _ in
+                    Rectangle().fill(Color.white.opacity(0.018))
+                        .overlay(Rectangle().fill(Color.black.opacity(0.5)).frame(width: 1), alignment: .trailing)
+                }
+            }
+            RadialGradient(colors: [phosphor.opacity(0.10), .clear], center: .center, startRadius: 40, endRadius: 420)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var roomHeader: some View {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                label("FUNK // AUFTRAGSBRETT").foregroundStyle(signal.opacity(0.8))
-                Text("AUFTRÄGE")
-                    .font(.system(size: 26, weight: .heavy, design: .monospaced))
-                    .tracking(3)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .foregroundStyle(.white)
-                    .shadow(color: signal.opacity(0.6), radius: 10)
+                mono("\(station) · DECK 3").foregroundStyle(Color.white.opacity(0.45))
+                mono("KOMMANDORAUM", 15, .heavy).foregroundStyle(Color.white.opacity(0.85))
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                label("TECH-TEILE").foregroundStyle(dim)
-                HStack(spacing: 5) {
-                    Image(systemName: "gearshape.fill").font(.system(size: 14))
-                    Text("\(profile.parts)")
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                .foregroundStyle(gold)
-            }
             Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(signal)
-                    .frame(width: 40, height: 40)
-                    .background(Chamfer(cut: 8).fill(panel))
-                    .overlay(Chamfer(cut: 8).stroke(signal.opacity(0.6), lineWidth: 1))
+                HStack(spacing: 6) {
+                    Image(systemName: "door.left.hand.open").font(.system(size: 13, weight: .bold))
+                    mono("ZURÜCK ZUM DOCK", 10, .bold)
+                }
+                .foregroundStyle(Color.white.opacity(0.8))
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.leading, 8)
+            .accessibilityLabel("Kommandoraum verlassen")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+    }
+
+    // MARK: Konsole
+
+    /// Gehäuse mit Bildschirm: Metallrahmen, Schrauben, Kontrollleuchten
+    private var console: some View {
+        VStack(spacing: 8) {
+            screenView
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black, lineWidth: 3))
+            HStack(spacing: 10) {
+                light(phosphor, on: true)
+                light(amber, on: board.active != nil)
+                light(alarm, on: running)
+                mono("ORBIX-NET TERMINAL MK IV", 8).foregroundStyle(Color.white.opacity(0.35))
+                Spacer()
+                mono("⚙ \(profile.parts)", 11, .bold).foregroundStyle(amber)
+            }
+            .padding(.horizontal, 8)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(LinearGradient(colors: [Color(white: 0.24), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
+        )
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.18), lineWidth: 1))
+        .overlay(alignment: .topLeading) { screw.padding(6) }
+        .overlay(alignment: .topTrailing) { screw.padding(6) }
+        .overlay(alignment: .bottomLeading) { screw.padding(6) }
+        .overlay(alignment: .bottomTrailing) { screw.padding(6) }
+        .shadow(color: phosphor.opacity(0.15), radius: 24)
+    }
+
+    private var screw: some View {
+        Circle().fill(Color(white: 0.35)).frame(width: 5, height: 5)
+            .overlay(Rectangle().fill(Color.black.opacity(0.6)).frame(width: 4, height: 1))
+    }
+
+    private func light(_ c: Color, on: Bool) -> some View {
+        Circle().fill(on ? c : c.opacity(0.15)).frame(width: 7, height: 7)
+            .shadow(color: on ? c : .clear, radius: 4)
+    }
+
+    private var screenView: some View {
+        ZStack {
+            screen
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    bootText
+                    if ready { terminalContent.transition(.opacity) }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+            scanlines.allowsHitTesting(false)
+            // leichte Wölbung des Bildschirms
+            RadialGradient(colors: [.clear, .black.opacity(0.45)], center: .center, startRadius: 160, endRadius: 520)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Rasterlinien wie auf einem Röhrenbildschirm (statisch, kostet nichts)
+    private var scanlines: some View {
+        Canvas { ctx, size in
+            var y: CGFloat = 0
+            var path = Path()
+            while y < size.height {
+                path.addRect(CGRect(x: 0, y: y, width: size.width, height: 1))
+                y += 3
+            }
+            ctx.fill(path, with: .color(.black.opacity(0.28)))
+        }
+    }
+
+    // MARK: Startvorgang
+
+    private var bootMessages: [String] {
+        let ship = profile.selected
+        return [
+            "> VERBINDE MIT STATIONSNETZ ......... OK",
+            "> PILOT ERKANNT · RANG \(PilotRank.title(profile.rank)) · RUF \(profile.reputation)",
+            "> SCHIFF \(ship.name) · \(ship.model.role.title) · \(ship.cargoCapacity) CONTAINER",
+            daily ? "> TAGESFLUG: KEINE AUFTRÄGE FREIGEGEBEN" : "> \(board.offers.count) AUFTRÄGE IM NETZ",
+        ]
+    }
+
+    private var bootText: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(bootMessages.prefix(bootLines).enumerated()), id: \.offset) { _, line in
+                mono(line, 10).foregroundStyle(faint)
+            }
+            if !ready {
+                TimelineView(.periodic(from: .now, by: 0.45)) { t in
+                    let on = Int(t.date.timeIntervalSinceReferenceDate / 0.45) % 2 == 0
+                    mono("▌", 11).foregroundStyle(phosphor.opacity(on ? 1 : 0))
+                }
+            }
+        }
+        .shadow(color: phosphor.opacity(0.5), radius: 3)
+    }
+
+    @MainActor
+    private func boot() async {
+        guard !ready else { return }
+        for i in 1...bootMessages.count {
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            bootLines = i
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        withAnimation(.easeOut(duration: 0.25)) { ready = true }
+    }
+
+    // MARK: Inhalt
+
+    private var terminalContent: some View {
+        let ship = profile.selected
+        return VStack(alignment: .leading, spacing: 10) {
+            divider("AUFTRAGSTERMINAL")
+            rankPanel
+            if let c = board.active {
+                divider(running ? "LAUFENDER AUFTRAG" : "ANGENOMMEN")
+                card(c, ship: ship, active: true, number: 0)
+            }
+            divider(daily ? "GESPERRT" : "ANGEBOTE")
+            if daily {
+                mono("IM TAGESFLUG GIBT ES KEINE AUFTRÄGE.", 10).foregroundStyle(alarm)
+            }
+            ForEach(Array(board.offers.enumerated()), id: \.element.id) { i, c in
+                card(c, ship: ship, active: false, number: i + 1)
+            }
+            mono("// FRACHTER VERDIENEN AN FRACHT, SCHNELLE JÄGER MIT KANONEN AN KOPFGELD. JEDER ERFÜLLTE AUFTRAG BRINGT RUF UND MIT GLÜCK EIN SCHIFFSTEIL.", 9)
+                .foregroundStyle(faint)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+        }
+        .shadow(color: phosphor.opacity(0.45), radius: 3)
+    }
+
+    private func divider(_ title: String) -> some View {
+        HStack(spacing: 6) {
+            mono("== \(title) ", 10, .bold).foregroundStyle(phosphor)
+            Rectangle().fill(phosphor.opacity(0.35)).frame(height: 1)
+        }
+        .padding(.top, 4)
     }
 
     private var rankPanel: some View {
         let rep = profile.reputation
         let rank = profile.rank
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: "star.circle.fill").font(.system(size: 14, weight: .bold))
-                Text("RANG \(PilotRank.title(rank))")
-                    .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                    .tracking(2)
-                Spacer()
-                label("RUF \(rep)").foregroundStyle(dim)
-            }
-            .foregroundStyle(gold)
-            GeometryReader { g in
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(gold.opacity(0.15))
-                    Rectangle().fill(gold).frame(width: g.size.width * PilotRank.progress(for: rep))
-                }
-            }
-            .frame(height: 4)
-            let missing = PilotRank.missing(for: rep)
-            label(missing > 0 ? "NOCH \(missing) RUF BIS \(PilotRank.title(rank + 1)) · \(board.completed) AUFTRÄGE ERFÜLLT"
-                              : "HÖCHSTER RANG · \(board.completed) AUFTRÄGE ERFÜLLT")
-                .foregroundStyle(dim)
+        let blocks = 20
+        let filled = Int((PilotRank.progress(for: rep) * CGFloat(blocks)).rounded(.down))
+        let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: blocks - filled)
+        let missing = PilotRank.missing(for: rep)
+        return VStack(alignment: .leading, spacing: 4) {
+            mono("RANG  \(PilotRank.title(rank))", 13, .heavy).foregroundStyle(amber)
+            mono("[\(bar)]", 10).foregroundStyle(amber.opacity(0.85))
+            mono(missing > 0 ? "NOCH \(missing) RUF BIS \(PilotRank.title(rank + 1)) · \(board.completed) AUFTRÄGE ERFÜLLT"
+                             : "HÖCHSTER RANG · \(board.completed) AUFTRÄGE ERFÜLLT", 9)
+                .foregroundStyle(faint)
         }
-        .padding(12)
-        .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-        .overlay(Chamfer(cut: 8).stroke(gold.opacity(0.45), lineWidth: 1))
     }
 
-    private func card(_ c: Contract, ship: Ship, active: Bool) -> some View {
+    private func card(_ c: Contract, ship: Ship, active: Bool, number: Int) -> some View {
         let reward = c.reward(ship)
         let fits = ship.model.role == c.bestRole
         let canAccept = !active && board.active == nil && !running && !daily
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 10) {
-                Image(systemName: c.symbol)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(c.color)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(c.title)
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                        .tracking(1)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .foregroundStyle(.white)
-                    label(c.client.isEmpty ? "STUFE \(c.tier + 1)" : "\(c.client) · STUFE \(c.tier + 1)").foregroundStyle(dim)
-                }
-                Spacer()
+        let tag = active ? "**" : String(format: "%02d", number)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                mono("[\(tag)]", 11, .bold).foregroundStyle(faint)
+                Image(systemName: c.symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(c.color)
+                mono(c.title, 12, .heavy)
+                    .foregroundStyle(phosphor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 0)
             }
-            label(c.detail).foregroundStyle(c.color.opacity(0.9)).fixedSize(horizontal: false, vertical: true)
+            mono(c.client.isEmpty ? "STUFE \(c.tier + 1)" : "AUFTRAGGEBER \(c.client) · STUFE \(c.tier + 1)", 9)
+                .foregroundStyle(faint)
+            mono(c.detail, 10).foregroundStyle(phosphor.opacity(0.9)).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    Image(systemName: "gearshape.fill").font(.system(size: 11))
-                    Text("\(reward)").font(.system(size: 15, weight: .bold, design: .monospaced))
-                }
-                .foregroundStyle(gold)
-                label("+\(c.reputation) RUF").foregroundStyle(gold.opacity(0.8))
-                label("SCHIFFSTEIL \(Int((c.shipPartChance * 100).rounded())) %").foregroundStyle(shipPartColor)
-                Spacer()
+                mono("LOHN ⚙ \(reward)", 12, .bold).foregroundStyle(amber)
+                mono("+\(c.reputation) RUF", 9).foregroundStyle(amber.opacity(0.8))
+                mono("TEIL \(Int((c.shipPartChance * 100).rounded())) %", 9).foregroundStyle(shipPartColor)
+                Spacer(minLength: 0)
             }
-            // Rollenhinweis: welches Schiff hier am meisten verdient
-            label(roleHint(c, ship: ship, fits: fits))
-                .foregroundStyle(fits ? c.bestRole.color : dim)
+            mono("> " + roleHint(c, ship: ship, fits: fits), 9)
+                .foregroundStyle(fits ? phosphor : faint)
                 .fixedSize(horizontal: false, vertical: true)
             if canAccept {
-                Button { board.accept(c) } label: {
-                    Text("ANNEHMEN")
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .tracking(2)
-                        .foregroundStyle(c.color)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Chamfer(cut: 6).fill(c.color.opacity(0.12)))
-                        .overlay(Chamfer(cut: 6).stroke(c.color.opacity(0.8), lineWidth: 1.2))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                terminalButton("ANNEHMEN", phosphor) { board.accept(c) }
             } else if active && !running {
-                Button { board.cancel() } label: {
-                    Text("ZURÜCKGEBEN")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .tracking(2)
-                        .foregroundStyle(dim)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .overlay(Chamfer(cut: 6).stroke(dim.opacity(0.6), lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                terminalButton("ZURÜCKGEBEN", faint) { board.cancel() }
             }
         }
-        .padding(12)
-        .background(Chamfer(cut: 8).fill(panel.opacity(active ? 0.95 : 0.8)))
-        .overlay(Chamfer(cut: 8).stroke(c.color.opacity(active ? 0.8 : 0.4), lineWidth: active ? 1.5 : 1))
+        .padding(10)
+        .background(phosphor.opacity(active ? 0.08 : 0.03))
+        .overlay(Rectangle().stroke(phosphor.opacity(active ? 0.7 : 0.3), style: StrokeStyle(lineWidth: 1, dash: active ? [] : [4, 3])))
+    }
+
+    private func terminalButton(_ title: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            mono("[ \(title) ]", 12, .bold)
+                .foregroundStyle(color)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(color.opacity(0.1))
+                .overlay(Rectangle().stroke(color.opacity(0.8), lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func roleHint(_ c: Contract, ship: Ship, fits: Bool) -> String {

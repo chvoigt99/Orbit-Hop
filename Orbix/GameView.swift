@@ -154,7 +154,7 @@ struct GameView: View {
         }
         .fullScreenCover(isPresented: $showBoard) {
             ContractBoardView(board: game.contracts, profile: game.profile, running: game.contractRunning,
-                              daily: game.dailyMode) {
+                              daily: game.dailyMode, station: game.currentStationName ?? "RAUMSTATION") {
                 showBoard = false
             }
         }
@@ -641,8 +641,9 @@ struct GameView: View {
                     halfButton("WERKSTATT", "wrench.adjustable.fill", gold) { showWorkshop = true }
                 }
                 .frame(width: 230)
-                menuButton(game.contractRunning ? "AUFTRAG LÄUFT" : "AUFTRÄGE", "doc.text.fill",
-                           game.contractRunning ? dim : Color(red: 1, green: 0.7, blue: 0.35)) { showBoard = true }
+                // Auftragsterminal im eigenen Raum der Station
+                menuButton("KOMMANDORAUM",
+                           "desktopcomputer", Color(red: 0.42, green: 1, blue: 0.58)) { showBoard = true }
                 menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
             }
             .padding(.horizontal, 28)
@@ -710,46 +711,6 @@ struct GameView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Werkstatt")
-    }
-
-    /// Auftragsbrett: zeigt den angenommenen Auftrag oder Rang und Angebote
-    private var contractButton: some View {
-        let c = game.contracts.active
-        let col = c?.color ?? Color(red: 1, green: 0.7, blue: 0.35)
-        let rank = game.profile.rank
-        let detail = c.map { "\($0.detail)" }
-            ?? "RANG \(PilotRank.title(rank)) · \(game.contracts.offers.count) ANGEBOTE · FRACHT, KOPFGELD, PATROUILLE"
-        return Button {
-            showBoard = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: c?.symbol ?? "doc.text.fill")
-                    .font(.system(size: 12, weight: .bold))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(c?.title ?? "AUFTRÄGE")
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                        .tracking(2)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    label(detail)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .foregroundStyle(dim)
-                }
-                Spacer(minLength: 0)
-                if c != nil {
-                    Image(systemName: "checkmark.seal.fill").font(.system(size: 13, weight: .bold))
-                }
-            }
-            .foregroundStyle(col)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
-            .overlay(Chamfer(cut: 8).stroke(col.opacity(0.7), lineWidth: 1.2))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     /// Missionen und Erfolge; zeigt, wie nah die nächste Mission ist
@@ -921,10 +882,6 @@ struct GameView: View {
                 if SoundFX.available { soundButton }
             }
             .frame(width: Self.menuRowWidth)
-            // Aufträge gibt es nur im freien Spiel; im Tagesflug bleibt ihr Platz frei, damit nichts verrutscht
-            contractButton.frame(width: Self.menuRowWidth)
-                .opacity(game.dailyMode ? 0.3 : 1)
-                .allowsHitTesting(!game.dailyMode)
             // Startauswahl nur im freien Spiel; im Tagesflug bleibt ihr Platz frei, damit nichts verrutscht
             if game.profile.stationsReached > 0 {
                 startRow.frame(width: Self.menuRowWidth)
