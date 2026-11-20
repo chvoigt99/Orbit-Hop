@@ -1564,9 +1564,30 @@ final class World3D {
     /// Plasmaschuss der Drohnen: rote Kugel mit Schein (Piraten: orange)
     private func makeEnemyShot(raider: Bool = false) -> SCNNode {
         let n = SCNNode()
+        if raider {
+            // Piratenschuss: längliche rote Spur mit hellem Kern, klar anders als die gelben eigenen Spuren
+            // und anders als der Leuchtkreis der Piratenschiffe; die Form zeigt die Flugrichtung
+            let streak = SCNBox(width: 30, height: 4.5, length: 4.5, chamferRadius: 2.2)
+            streak.materials = [glowMat(UIColor(red: 1, green: 0.12, blue: 0.1, alpha: 0.85))]
+            let sn = SCNNode(geometry: streak)
+            sn.position.x = -9
+            n.addChildNode(sn)
+            let tip = SCNSphere(radius: 3.2)
+            tip.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
+            let tn = SCNNode(geometry: tip)
+            tn.position.x = 5
+            n.addChildNode(tn)
+            let glow = SCNNode(geometry: SCNPlane(width: 16, height: 16))
+            let gm = spriteMat(WorldTextures.soft)
+            gm.multiply.contents = UIColor(red: 1, green: 0.1, blue: 0.1, alpha: 1)
+            glow.geometry?.materials = [gm]
+            glow.constraints = [SCNBillboardConstraint()]
+            glow.position.x = 4
+            n.addChildNode(glow)
+            return n
+        }
         let core = SCNSphere(radius: 5)
-        // Piratenschüsse klar rot, damit man sie von den eigenen gelben Leuchtspuren unterscheidet
-        core.materials = [glowMat(raider ? UIColor(red: 1, green: 0.25, blue: 0.2, alpha: 1) : UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
+        core.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
         n.addChildNode(SCNNode(geometry: core))
         let glow = SCNNode(geometry: SCNPlane(width: 34, height: 34))
         let gm = spriteMat(WorldTextures.soft)
@@ -2668,8 +2689,12 @@ final class World3D {
                 enemyShotNodes[sh.uid] = n
             }
             n.position = v3(sh.p, 5 + sh.alt)
-            let es: Float = game.phase == .combat ? 2.6 : 1
+            let es: Float = game.phase == .combat ? 1.5 : 1
             if n.scale.x != es { n.scale = SCNVector3(es, es, es) }
+            if sh.raider {
+                n.eulerAngles.y = Float(-atan2(sh.v.dy, sh.v.dx))
+                n.eulerAngles.z = Float(atan2(sh.valt, max(1, hypot(sh.v.dx, sh.v.dy))))
+            }
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
             n.removeFromParentNode()
