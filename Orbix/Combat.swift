@@ -212,7 +212,7 @@ extension Game {
     }
 
     /// Höchster Abstand über bzw. unter der Bahnebene im Gefecht
-    static let altLimit: CGFloat = 380
+    static let altLimit: CGFloat = 600
     /// größter Steigwinkel
     static let maxClimb: CGFloat = 0.7
 
@@ -296,6 +296,7 @@ extension Game {
             if stick == nil { want = atan2(toC.dy, toC.dx) } else { yaw = max(-1, min(1, yaw + back * over)) }
             if time - boundaryWarnAt > 3 {
                 boundaryWarnAt = time
+                blog("edge dc=\(Int(dc)) orbit=\(Int(p.orbitRadius))")
                 popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
             }
         }
@@ -304,7 +305,8 @@ extension Game {
             climbWant = altitude > 0 ? min(climbWant, -0.3) : max(climbWant, 0.3)
             if time - boundaryWarnAt > 3 {
                 boundaryWarnAt = time
-                popups.append(Popup(pos: pos, text: "RAND DES GEFECHTSFELDS", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
+                blog("edge alt=\(Int(altitude))")
+                popups.append(Popup(pos: pos, text: "HÖHENGRENZE", color: Color(red: 1, green: 0.6, blue: 0.4), age: 0))
             }
         }
         // Kollisionswarnung Planet: Fliegt das Schiff auf ihn zu, lenkt die Hilfe seitlich und in der Höhe vorbei
@@ -313,8 +315,8 @@ extension Game {
             let od = max(1, sqrt(ox * ox + oy * oy + altitude * altitude))
             let toward = -(ox * cos(heading) + oy * sin(heading)) / od
             let margin = od - p.radius
-            if margin < 260 && toward > 0.2 && want == nil {
-                let k = min(1, (260 - margin) / 200) * toward
+            if margin < 450 && toward > 0.2 && want == nil {
+                let k = min(1, (450 - margin) / 300) * toward
                 // zur Seite, auf der das Schiff ohnehin schon vorbeizielt
                 let side: CGFloat = wrap(atan2(-oy, -ox) - heading) > 0 ? -1 : 1
                 yaw = max(-1, min(1, yaw + side * k * 1.2))
