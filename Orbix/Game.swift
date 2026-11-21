@@ -164,6 +164,7 @@ struct Planet {
     var passageTo: CGFloat = 0
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
     var stationNo = -1         // laufende Nummer der Station (Name und Modell), sonst -1
+    var outpost = false        // Außenposten der Startstation (fünf Planeten nach dem Start an einer Station)
     var kind: PlanetKind = .normal
     /// Gefechtsplanet: hier warten Piraten, beim Erreichen beginnt ein freies Gefecht (Combat.swift)
     var arena: ArenaKind? = nil
@@ -874,12 +875,11 @@ final class Game {
     }
 
     /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
-    /// Stelle der Strecke liegt. Die erste Station muss man sich einmal erfliegen (Planet 32); wer schon einmal
-    /// eine Station erreicht hat, trifft sie danach in jedem Flug schon als fünften Planeten, damit man schnell
-    /// an Aufträge kommt (Christian, 2026-11-21). Danach alle gut 30, später alle gut 40 Planeten.
-    static var firstStationEarly = false
+    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40. Aus dem Hangar sind es
+    /// immer rund 30 bis zur ersten Station. Startet man an einer Station (dort gibt es beim Start keine
+    /// Aufträge), liegt fünf Planeten weiter ein Außenposten mit Auftragsterminal (Christian, 2026-11-21).
     static func stationPlanet(_ k: Int) -> Int {
-        var n = stationTest ? 2 : (firstStationEarly ? 5 : 32)
+        var n = stationTest ? 2 : 32
         for j in 0..<max(0, k) {
             let lvl = min(1, CGFloat(n) / 40)
             n += Int(30 + 12 * lvl) + (j * 5) % 9
@@ -889,12 +889,14 @@ final class Game {
 
     /// Nummer der nächsten Station, die auf der Strecke entsteht
     private var nextStationNo = 0
+    /// Planetennummer des Außenpostens kurz nach dem Start an einer Station (nil beim Start im Hangar)
+    private var outpostAt: Int? = nil
     /// Planetennummer des ersten Planeten dieses Flugs: 0 im Hangar, sonst die der Startstation
     private(set) var planetBase = 0
     /// Name der Station, an der das Schiff gerade liegt
     var currentStationName: String? {
         let p = planets[currentIndex]
-        return p.isStation ? Game.stationName(p.stationNo) : nil
+        return p.isStation ? (p.outpost ? "AUSSENPOSTEN " : "") + Game.stationName(p.stationNo) : nil
     }
     /// Menü der Raumstation ist offen, die Simulation ruht
     var stationOpen = false
@@ -1149,11 +1151,11 @@ final class Game {
         stationMenuAt = nil
         homeReturnAt = nil
         arriveAt = nil
-        Game.firstStationEarly = profile.stationsReached > 0 && !dailyMode   // Tagesflug: für alle dieselbe Strecke
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
         let startNo = dailyMode ? -1 : (override ?? min(profile.startStation, profile.stationsReached - 1))
         planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
         nextStationNo = startNo + 1
+        outpostAt = startNo >= 0 ? planetBase + 5 : nil
         if startNo >= 0 {
             var first = Planet.make(center: .zero, radius: 160, spin: 0.85, hue: 165, allowRing: false, energyScale: 0)
             first.isStation = true
@@ -1214,10 +1216,11 @@ final class Game {
         // Nummer des neuen Planeten auf der ganzen Strecke (beim Start an einer Station nicht bei 0)
         let n = planetBase + planets.count
         let lvl = min(1, CGFloat(n) / 40)
-        let station = n == Game.stationPlanet(nextStationNo)
+        let outpost = n == outpostAt
+        let station = outpost || n == Game.stationPlanet(nextStationNo)
         // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
         var kind = PlanetKind.normal
-        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) {
+        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) && n + 1 != outpostAt {
             let roll = Double.random(in: 0...1, using: &Dice.rng)
             if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
             else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
@@ -1244,7 +1247,7 @@ final class Game {
             if station || !canSpawn { bountyPlanet += 1 } else { arena = c.kind == .bounty ? .boss : .patrol }
         }
         let arenaRoll = Double.random(in: 0...1, using: &Dice.rng)
-        if arena == nil && canSpawn && !station && prev.arena == nil && n + 1 != Game.stationPlanet(nextStationNo) {
+        if arena == nil && canSpawn && !station && prev.arena == nil && n + 1 != Game.stationPlanet(nextStationNo) && n + 1 != outpostAt {
             var chance: Double = n >= 10 ? 0.04 + 0.05 * Double(lvl) : 0
             if contractRunning && !dailyMode, contracts.active?.kind == .cargo, n >= 4 { chance = max(chance, 0.22 + 0.12 * Double(lvl)) }
             if arenaRoll < chance { arena = .ambush }
@@ -1293,7 +1296,11 @@ final class Game {
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
         planets[planets.count - 1].arena = arena
-        if station {
+        if outpost {
+            // Außenposten der Startstation: zählt nicht als neue Station und schaltet keinen Startpunkt frei
+            planets[planets.count - 1].stationNo = max(0, nextStationNo - 1)
+            planets[planets.count - 1].outpost = true
+        } else if station {
             planets[planets.count - 1].stationNo = nextStationNo
             nextStationNo += 1
         }
@@ -2833,7 +2840,7 @@ final class Game {
                 track(.station)
                 // ab jetzt kann man hier neu starten
                 profile.reachStation(pl.stationNo)
-                popups.append(Popup(pos: pos, text: "STATION \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
+                popups.append(Popup(pos: pos, text: "\(pl.outpost ? "AUSSENPOSTEN" : "STATION") \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
             }
             switch pl.kind {
             case .normal: break
