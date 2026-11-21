@@ -874,10 +874,12 @@ final class Game {
     }
 
     /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
-    /// Stelle der Strecke liegt: die erste schon als fünfter Planet, damit man nach dem Spielstart schnell
-    /// an Aufträge kommt (Christian, 2026-11-21), danach alle gut 30, später alle gut 40 Planeten.
+    /// Stelle der Strecke liegt. Die erste Station muss man sich einmal erfliegen (Planet 32); wer schon einmal
+    /// eine Station erreicht hat, trifft sie danach in jedem Flug schon als fünften Planeten, damit man schnell
+    /// an Aufträge kommt (Christian, 2026-11-21). Danach alle gut 30, später alle gut 40 Planeten.
+    static var firstStationEarly = false
     static func stationPlanet(_ k: Int) -> Int {
-        var n = stationTest ? 2 : 5
+        var n = stationTest ? 2 : (firstStationEarly ? 5 : 32)
         for j in 0..<max(0, k) {
             let lvl = min(1, CGFloat(n) / 40)
             n += Int(30 + 12 * lvl) + (j * 5) % 9
@@ -1147,6 +1149,7 @@ final class Game {
         stationMenuAt = nil
         homeReturnAt = nil
         arriveAt = nil
+        Game.firstStationEarly = profile.stationsReached > 0 && !dailyMode   // Tagesflug: für alle dieselbe Strecke
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
         let startNo = dailyMode ? -1 : (override ?? min(profile.startStation, profile.stationsReached - 1))
         planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
