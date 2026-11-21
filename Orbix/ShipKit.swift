@@ -1319,32 +1319,28 @@ enum ShipDesigns {
         k.weapon(m.weapon, hardpoints: [(1.8, 0.0, 2.05)], spine: (-2.2, 3.0, 1.35), belly: (-0.2, -1.2))
     }
 
-    // Tarnschiff: geschwungener Nurflügler, zwei Kanzelblasen, versenkte Düsen, rote Leuchtlinien an der Vorderkante
+    // Tarnschiff: kantiger Nurflügler mit geraden Kanten und gezackter Hinterkante, facettierter Rumpf, V-Leitwerk
     private static func phantom(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
-        let w = k.wing(rootLead: 2.9, rootTrail: -1.5, rootZ: 0.0, tip: (-1.3, 3.0), tipChord: 0.6, bulge: 0.3, y: 0.0, thick: 0.18, k.paint)
-        // flacher Rumpf, weich in den Flügel übergehend
-        k.smoothHull([S(3.4, 0.06, 0.03, 0.03), S(2.4, 0.12, 0.5, 0.2), S(0.8, 0.18, 0.85, 0.34), S(-0.9, 0.16, 0.8, 0.3),
-                      S(-1.9, 0.1, 0.5, 0.16)], round: 2.2, mirror: false)
-        // Rückengrat, trägt die Schienenkanone
-        k.smoothHull([S(2.5, 0.3, 0.1, 0.06), S(1.6, 0.45, 0.22, 0.12), S(-0.4, 0.5, 0.24, 0.1), S(-1.2, 0.4, 0.1, 0.05)],
-                     round: 2.4, segments: 18, k.second, mirror: false)
-        // flaches rotes Sichtband quer über dem Bug
-        let visor = k.tintedGlass(UIColor(red: 0.45, green: 0.04, blue: 0.06, alpha: 1))
-        k.hull([S(2.45, 0.2, 0.3, 0.08), S(2.0, 0.29, 0.55, 0.14), S(1.5, 0.34, 0.6, 0.15), S(1.3, 0.32, 0.4, 0.08)],
-               top: 0.75, bottom: 0.9, shoulder: 0.2, visor, mirror: false)
-        // rote Leuchtlinie entlang der geschwungenen Vorderkante
+        // Pfeilflügel mit geraden Kanten
+        let wing: [(CGFloat, CGFloat)] = [(3.0, 0.0), (-0.6, 2.9), (-1.3, 2.9), (-0.9, 1.9), (-1.7, 1.2), (-1.2, 0.0)]
+        k.plate(wing, y: 0.0, thick: 0.16, k.paint, chamfer: 0.05)
+        k.plate([(1.4, 0.9), (-0.5, 2.4), (-0.95, 2.4), (-0.6, 1.5), (-1.1, 0.9)], y: 0.09, thick: 0.03, k.second, chamfer: 0.01)
+        // facettierter, flacher Rumpf
+        k.hull([S(3.3, 0.06, 0.04, 0.03), S(2.4, 0.12, 0.5, 0.2), S(0.8, 0.2, 0.85, 0.34), S(-0.9, 0.18, 0.8, 0.3),
+                S(-1.9, 0.12, 0.5, 0.18)], top: 0.4, bottom: 0.8, shoulder: 0.05, mirror: false)
+        // kantige Kanzel vorn, dahinter der Grat mit der Schienenkanone
+        k.bubble(1.9, 0.34, len: 1.4, height: 0.2, width: 0.46, frames: 1)
+        k.hull([S(1.1, 0.4, 0.1, 0.06), S(0.6, 0.48, 0.24, 0.1), S(-1.0, 0.48, 0.24, 0.1), S(-1.5, 0.4, 0.1, 0.05)],
+               top: 0.6, bottom: 0.9, shoulder: 0.2, k.second, mirror: false)
+        // schmale rote Leuchtlinie entlang der Vorderkante
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
-        let lead = Array(w[1...8])
-        k.plate(lead + lead.reversed().map { ($0.0 - 0.1, $0.1) }, y: 0.1, thick: 0.02, red, chamfer: 0)
+        k.plate([(2.6, 0.32), (-0.45, 2.78), (-0.52, 2.74), (2.5, 0.3)], y: 0.085, thick: 0.02, red, chamfer: 0)
         // flache Düsen im Flügel
-        k.nacelle(-1.5, 0.12, 0.7, r: 0.22, len: 1.2, k.dark)
-        // nach innen geneigte Doppelflossen und Winglets
-        k.fin(-1.0, 0.25, 0.95, height: 0.55, len: 0.8, tilt: 0.45, k.accent)
-        k.fin(-1.1, 0.06, 2.85, height: 0.4, len: 0.6, tilt: -0.9, k.accent)
-        k.sensorNose(3.4, 0.06)
-        k.lamp(-1.2, 0.08, 3.05, size: 0.1)
-        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-0.8, 2.4, 0.66), belly: (-0.2, -0.4))
+        k.nacelle(-1.5, 0.1, 0.7, r: 0.22, len: 1.2, k.dark, faceted: true)
+        // nach außen geneigtes V-Leitwerk
+        k.fin(-0.9, 0.3, 0.55, height: 0.7, len: 1.0, tilt: -0.55, k.accent)
+        k.weapon(m.weapon, hardpoints: [(1.0, -0.1, 1.2)], spine: (-1.4, 1.0, 0.68), belly: (-0.2, -0.4))
     }
 
     // Flaggschiff: langer Schwanenrumpf, weit geschwungene Sichelflügel mit Triebwerken an den Spitzen, goldener Kamm
