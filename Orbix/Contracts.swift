@@ -565,6 +565,14 @@ extension Game {
         guard !contractRunning, !dailyMode, phase != .over, let c = contracts.active else { return }
         contractRunning = true
         contractStartedAt = time
+        // Heimatstation: die, an der das Schiff gerade liegt, sonst die Startstation des Flugs
+        if planets.indices.contains(currentIndex), planets[currentIndex].isStation, atStation || phase == .docked {
+            contractHomeStation = planets[currentIndex].stationNo
+        } else if planets.first?.isStation == true {
+            contractHomeStation = planets[0].stationNo
+        } else {
+            contractHomeStation = nil
+        }
         contractResult = nil
         switch c.kind {
         case .cargo:
@@ -625,7 +633,8 @@ extension Game {
         SoundFX.shared.play(.bonus)
         track(.contract)
         // direkt zurück zur Raumstation (nur wenn der Flug an einer Station begann; im Tagesflug gibt es keine)
-        if planets.first?.isStation == true && !dailyMode {
+        if let home = contractHomeStation, !dailyMode {
+            homeReturnStation = home
             homeReturnAt = time + 3
             popups.append(Popup(pos: pos, text: "RÜCKSPRUNG ZUR STATION", color: gold, age: 0, lift: 80))
         }

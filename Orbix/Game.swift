@@ -541,6 +541,8 @@ final class Game {
     /// Planetennummer, an der die Fracht abgeliefert wird
     var cargoDest = 0
     var contractStartedAt: CGFloat = 0
+    /// Station (laufende Nummer), an der der Auftrag begann; dorthin geht nach dem Erfüllen der Rücksprung
+    var contractHomeStation: Int? = nil
     /// Planetennummer, auf deren Strecke das Kopfgeldziel lauert (-1: keins)
     var bountyPlanet = -1
     var patrolKills = 0
@@ -841,6 +843,8 @@ final class Game {
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
     /// Testflug: Autopilot fliegt bis zum Gefecht, dort lenkt der Finger (für Lenktests im Simulator)
     static let manualCombat = ProcessInfo.processInfo.arguments.contains("-manualCombat")
+    /// Test: Auftrag an der ersten Station automatisch annehmen
+    static let contractTest = ProcessInfo.processInfo.arguments.contains("-contractTest")
     /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
     static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
     /// Nur für Tests: Flug startet mit 20 % Panzerung, um Rauch und Funken zu sehen
@@ -895,6 +899,7 @@ final class Game {
     private var stationMenuAt: CGFloat?
     /// nach erfülltem Auftrag: Rücksprung zur Raumstation, sobald das Schiff wieder ruhig im Orbit ist
     var homeReturnAt: CGFloat?
+    var homeReturnStation = 0
     /// Sichtbarkeit der HUD-Anzeigen: vor dem Start aus, beim Abheben aus dem Hangar weich einblenden
     var hudAlpha: CGFloat {
         guard started else { return 0 }
@@ -1071,7 +1076,7 @@ final class Game {
 
     // MARK: Start / Level
 
-    func reset() {
+    func reset(startStation override: Int? = nil) {
         generation += 1
         runRecorded = false
         // Tagesmodus: Welt aus dem Datum, damit alle dieselbe Strecke fliegen
@@ -1142,7 +1147,7 @@ final class Game {
         homeReturnAt = nil
         arriveAt = nil
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
-        let startNo = dailyMode ? -1 : min(profile.startStation, profile.stationsReached - 1)
+        let startNo = dailyMode ? -1 : (override ?? min(profile.startStation, profile.stationsReached - 1))
         planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
         nextStationNo = startNo + 1
         if startNo >= 0 {
@@ -1665,10 +1670,11 @@ final class Game {
     /// dort öffnet sich das Stationsmenü (Christian, 2026-11-21)
     func returnToStation() {
         let result = contractResult, success = contractSuccess
-        blog("return to station score=\(score)")
+        let home = homeReturnStation
+        blog("return to station \(home) score=\(score)")
         finishRun()
         paused = false
-        reset()
+        reset(startStation: home)
         contractResult = result
         contractSuccess = success
         started = true
@@ -1829,6 +1835,11 @@ final class Game {
         uiTime += dt
         // angenommener Auftrag beginnt beim Start oder sofort, wenn er an einer Station angenommen wurde
         if started && !contractRunning && contracts.active != nil && !dailyMode && phase != .over { beginContract() }
+        // Test: an der Station automatisch einen Auftrag annehmen (Fracht bevorzugt), um den Rücksprung zu prüfen
+        if stationOpen && Game.contractTest && contracts.active == nil && !contractRunning,
+           let c = contracts.offers.first(where: { $0.kind == .cargo }) ?? contracts.offers.first {
+            contracts.accept(c)
+        }
         if stationOpen && (Game.bot || Game.autopilot) { leaveStation() }
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
