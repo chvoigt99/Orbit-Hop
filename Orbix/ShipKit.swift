@@ -734,8 +734,16 @@ final class ShipKit {
 
     /// Triebwerksgondel mit weich gerundeter Verkleidung vor der Düse
     @discardableResult
-    func nacelle(_ x: Float, _ y: Float, _ z: Float, r: Float, len: Float, _ m: SCNMaterial? = nil, mirror: Bool = true) -> Float {
+    func nacelle(_ x: Float, _ y: Float, _ z: Float, r: Float, len: Float, _ m: SCNMaterial? = nil, mirror: Bool = true,
+                 faceted: Bool = false) -> Float {
         let front = x + len / 2
+        if faceted {
+            // achteckige, gekantete Verkleidung für Frachter
+            hull([Sec(front + r * 1.2, y, r * 0.6, r * 0.6), Sec(front + r * 0.3, y, r * 1.2, r * 1.2), Sec(x, y, r * 1.25, r * 1.25),
+                  Sec(x - len * 0.35, y, r * 1.1, r * 1.1)], z: z, top: 0.42, bottom: 0.42, shoulder: 0.42, m ?? paint, mirror: mirror)
+            box(front + r * 1.2, y, z, 0.06, CGFloat(r) * 0.9, CGFloat(r) * 0.9, dark, chamfer: 0.02, mirror: mirror)
+            return engine(x - len * 0.2, y, z, r: CGFloat(r), len: CGFloat(len) * 0.6, m, mirror: mirror)
+        }
         smoothHull([Sec(front + r * 1.6, y, r * 0.12, r * 0.12), Sec(front + r * 0.9, y, r * 0.75, r * 0.75),
                     Sec(front, y, r * 1.12, r * 1.12), Sec(x, y, r * 1.18, r * 1.18), Sec(x - len * 0.35, y, r * 1.08, r * 1.08)],
                    z: z, round: 2, segments: 24, m ?? paint, mirror: mirror)
@@ -1090,8 +1098,8 @@ enum ShipDesigns {
     private static func atlas(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
         // Kopfmodul: runde Schlepperkabine
-        k.smoothHull([S(3.35, 0.05, 0.1, 0.08), S(3.1, 0.1, 0.55, 0.4), S(2.4, 0.18, 0.86, 0.66), S(1.6, 0.18, 0.82, 0.64), S(1.25, 0.12, 0.5, 0.4)],
-                     round: 6, segments: 40, mirror: false)
+        k.hull([S(3.35, 0.0, 0.3, 0.16), S(3.0, 0.1, 0.62, 0.42), S(2.4, 0.18, 0.86, 0.66), S(1.6, 0.18, 0.82, 0.64), S(1.25, 0.12, 0.5, 0.4)],
+               top: 0.6, bottom: 0.75, shoulder: 0.45, mirror: false)
         // kantige Panzerung am Kopfmodul: Stirnplatte, Wangenplatten, Lufteinläufe
         k.box(3.05, -0.12, 0, 0.3, 0.3, 1.0, k.second, chamfer: 0.04, mirror: false)
         k.box(2.1, 0.1, 0.86, 1.0, 0.7, 0.08, k.stripe, chamfer: 0.03)
@@ -1099,8 +1107,8 @@ enum ShipDesigns {
         k.box(2.0, 0.86, 0, 0.9, 0.06, 1.1, k.second, chamfer: 0.02, mirror: false)
         k.bubble(2.6, 0.72, len: 1.2, height: 0.26, width: 1.0)
         // Tragrohr von vorn bis zum Heck
-        k.smoothHull([S(1.5, 0.1, 0.42, 0.42), S(0.0, 0.1, 0.46, 0.46), S(-1.8, 0.1, 0.5, 0.5), S(-2.3, 0.1, 0.4, 0.4)],
-                     round: 2.2, segments: 20, k.dark, mirror: false)
+        k.hull([S(1.5, 0.1, 0.42, 0.42), S(0.0, 0.1, 0.46, 0.46), S(-1.8, 0.1, 0.5, 0.5), S(-2.3, 0.1, 0.4, 0.4)],
+               top: 0.45, bottom: 0.45, shoulder: 0.45, k.dark, mirror: false)
         // Frachtcontainer: echte Kisten mit gebrochenen Kanten und Sicken, je Seite zwei Lagen
         for (i, x) in ([0.72, -0.62] as [Float]).enumerated() {
             let lower = i == 0 ? k.accent : k.second
@@ -1114,14 +1122,14 @@ enum ShipDesigns {
             k.box(x, 0.26, 0.98, 1.1, 0.08, 0.8, k.metal, chamfer: 0.02)
         }
         // Heckblock mit vier Triebwerken
-        k.smoothHull([S(-1.5, 0.1, 0.7, 0.55), S(-2.0, 0.1, 1.0, 0.7), S(-2.6, 0.1, 0.9, 0.62), S(-2.85, 0.1, 0.5, 0.36)],
-                     round: 6, segments: 40, k.paint, mirror: false)
+        k.hull([S(-1.5, 0.1, 0.7, 0.55), S(-2.0, 0.1, 1.0, 0.7), S(-2.6, 0.1, 0.9, 0.62), S(-2.85, 0.1, 0.5, 0.36)],
+               top: 0.65, bottom: 0.75, shoulder: 0.5, k.paint, mirror: false)
         k.box(-2.1, 0.82, 0, 1.0, 0.08, 1.3, k.second, chamfer: 0.03, mirror: false)
         k.greeble(x0: -2.5, x1: -1.7, y: 0.86, zMax: 0.5, count: 6)
         k.belly(x0: -1.6, x1: 1.4, y: -0.42, width: 0.5)
         k.pipes(x0: -1.4, x1: 1.3, y: 0.5, z: 0.3)
-        k.nacelle(-2.3, 0.4, 1.12, r: 0.42, len: 1.5)
-        k.nacelle(-2.4, -0.42, 0.55, r: 0.3, len: 1.1)
+        k.nacelle(-2.3, 0.4, 1.12, r: 0.42, len: 1.5, faceted: true)
+        k.nacelle(-2.4, -0.42, 0.55, r: 0.3, len: 1.1, faceted: true)
         k.fin(-1.9, 0.72, 0.5, height: 0.85, len: 0.9, tilt: -0.3)
         k.lamp(3.2, -0.1, 0.4)
         k.lamp(-1.6, 0.72, 0)
@@ -1138,21 +1146,21 @@ enum ShipDesigns {
     // Panzerschiff: breiter, flacher Schildkrötenpanzer mit überlappenden Rückenschilden und schwerem Turm
     private static func bastion(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
-        k.smoothHull([S(3.0, -0.05, 0.25, 0.12), S(2.5, 0.02, 0.9, 0.36), S(1.2, 0.1, 1.45, 0.56), S(-0.6, 0.12, 1.6, 0.62),
-                      S(-1.9, 0.1, 1.4, 0.55), S(-2.6, 0.05, 0.9, 0.36)], round: 3.0, segments: 32, mirror: false)
+        k.hull([S(3.0, -0.05, 0.25, 0.12), S(2.5, 0.02, 0.9, 0.36), S(1.2, 0.1, 1.45, 0.56), S(-0.6, 0.12, 1.6, 0.62),
+                      S(-1.9, 0.1, 1.4, 0.55), S(-2.6, 0.05, 0.9, 0.36)], top: 0.6, bottom: 0.8, shoulder: 0.3, mirror: false)
         // überlappende Rückenschilde
         let shields: [(Float, Float)] = [(1.5, 0.72), (0.4, 0.98), (-0.7, 1.0), (-1.7, 0.82)]
         for (i, s) in shields.enumerated() {
             let x = s.0, f = s.1
-            k.smoothHull([S(x + 0.65, 0.4, 0.7 * f, 0.18), S(x + 0.2, 0.48, 1.08 * f, 0.26), S(x - 0.45, 0.5, 1.02 * f, 0.24),
-                          S(x - 0.7, 0.44, 0.8 * f, 0.16)], round: 3.0, segments: 24, i % 2 == 0 ? k.stripe : k.second, mirror: false)
+            k.hull([S(x + 0.65, 0.4, 0.7 * f, 0.18), S(x + 0.2, 0.48, 1.08 * f, 0.26), S(x - 0.45, 0.5, 1.02 * f, 0.24),
+                          S(x - 0.7, 0.44, 0.8 * f, 0.16)], top: 0.7, bottom: 0.9, shoulder: 0.2, i % 2 == 0 ? k.stripe : k.second, mirror: false)
         }
         // seitliche Panzerschürzen
-        k.smoothHull([S(1.7, -0.05, 0.1, 0.14), S(0.8, -0.05, 0.3, 0.3), S(-1.4, -0.05, 0.32, 0.32), S(-2.2, -0.05, 0.14, 0.16)],
-                     z: 1.5, round: 3.0, segments: 18, k.second)
+        k.hull([S(1.7, -0.05, 0.1, 0.14), S(0.8, -0.05, 0.3, 0.3), S(-1.4, -0.05, 0.32, 0.32), S(-2.2, -0.05, 0.14, 0.16)],
+               z: 1.5, top: 0.5, bottom: 0.5, shoulder: 0.5, k.second)
         // flache Sichtkanzel im Bug
         k.bubble(2.0, 0.36, len: 1.0, height: 0.2, width: 0.8)
-        k.nacelle(-2.4, 0.1, 0.75, r: 0.42, len: 1.3)
+        k.nacelle(-2.4, 0.1, 0.75, r: 0.42, len: 1.3, faceted: true)
         k.fin(-1.8, 0.55, 1.0, height: 0.6, len: 0.9, tilt: -0.4)
         k.lamp(2.6, 0.0, 0.62)
         k.lamp(-0.6, 0.1, 1.85, size: 0.1)
@@ -1228,8 +1236,8 @@ enum ShipDesigns {
     private static func titan(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
         // zwei lange Rümpfe
-        k.smoothHull([S(3.6, 0.0, 0.08, 0.08), S(3.0, 0.05, 0.42, 0.36), S(1.5, 0.1, 0.62, 0.52), S(-1.0, 0.12, 0.68, 0.58),
-                      S(-2.4, 0.1, 0.6, 0.5), S(-2.9, 0.1, 0.4, 0.34)], z: 1.35, round: 5.5, segments: 40)
+        k.hull([S(3.6, -0.05, 0.2, 0.14), S(3.0, 0.05, 0.42, 0.36), S(1.5, 0.1, 0.62, 0.52), S(-1.0, 0.12, 0.68, 0.58),
+                      S(-2.4, 0.1, 0.6, 0.5), S(-2.9, 0.1, 0.4, 0.34)], z: 1.35, top: 0.6, bottom: 0.7, shoulder: 0.45)
         // kantige Panzerung: Flankenplatten, Bugplatten, Decksaufbauten
         k.sidePanels(x0: -2.2, x1: 1.6, y: 0.15, z: 2.0, count: 6)
         k.box(2.6, 0.1, 1.35, 0.9, 0.5, 1.0, k.second, chamfer: 0.06)
@@ -1237,11 +1245,11 @@ enum ShipDesigns {
         k.greeble(x0: -1.9, x1: 1.3, y: 0.56, zMax: 0.8, count: 10)
         k.intake(2.3, 0.0, 0.75, h: 0.4, w: 0.2)
         // Brückendeck dazwischen
-        k.smoothHull([S(2.2, 0.15, 0.5, 0.14), S(1.4, 0.2, 1.2, 0.3), S(-1.2, 0.25, 1.3, 0.36), S(-2.2, 0.2, 1.0, 0.26)],
-                     round: 6, segments: 40, k.stripe, mirror: false)
+        k.hull([S(2.2, 0.15, 0.5, 0.14), S(1.4, 0.2, 1.2, 0.3), S(-1.2, 0.25, 1.3, 0.36), S(-2.2, 0.2, 1.0, 0.26)],
+               top: 0.8, bottom: 0.9, shoulder: 0.4, k.stripe, mirror: false)
         // Kommandoturm mit Sichtkanzel
-        k.smoothHull([S(-0.3, 0.7, 0.2, 0.1), S(-0.8, 0.85, 0.5, 0.3), S(-1.5, 0.85, 0.5, 0.3), S(-2.0, 0.7, 0.3, 0.14)],
-                     round: 5, segments: 32, k.second, mirror: false)
+        k.hull([S(-0.3, 0.7, 0.2, 0.1), S(-0.8, 0.85, 0.5, 0.3), S(-1.5, 0.85, 0.5, 0.3), S(-2.0, 0.7, 0.3, 0.14)],
+               top: 0.6, bottom: 0.9, shoulder: 0.3, k.second, mirror: false)
         k.bubble(-0.85, 1.1, len: 0.9, height: 0.16, width: 0.7)
         // Container unter dem Deck
         for (i, x) in ([1.0, -0.2, -1.4] as [Float]).enumerated() {
@@ -1256,8 +1264,8 @@ enum ShipDesigns {
         k.turret(-1.8, 0.68, z: 1.35, r: 0.34, yaw: .pi)
         k.turret(-1.8, 0.68, z: -1.35, r: 0.34, yaw: .pi)
         k.turret(0.6, 0.56, r: 0.5)
-        k.nacelle(-2.6, 0.1, 1.35, r: 0.46, len: 1.3)
-        k.nacelle(-2.3, 0.2, 0, r: 0.36, len: 1.1, mirror: false)
+        k.nacelle(-2.6, 0.1, 1.35, r: 0.46, len: 1.3, faceted: true)
+        k.nacelle(-2.3, 0.2, 0, r: 0.36, len: 1.1, mirror: false, faceted: true)
         k.fin(-2.0, 0.6, 1.35, height: 0.9, len: 1.0, tilt: -0.15)
         k.lamp(3.5, 0.0, 1.35)
         k.lamp(0.0, 0.1, 2.05)
