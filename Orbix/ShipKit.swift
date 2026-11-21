@@ -768,17 +768,17 @@ final class ShipKit {
 
     /// Raketenwerfer: kantig-runder Behälter am Pylon, vorn ragen sechs Raketenspitzen heraus
     func rocketPod(_ x: Float, _ y: Float, _ z: Float) {
-        box(x - 0.05, y + 0.27, z, 0.6, 0.22, 0.07, dark, chamfer: 0.03)
-        smoothHull([Sec(x - 0.8, y, 0.06, 0.06), Sec(x - 0.5, y, 0.27, 0.24), Sec(x + 0.35, y, 0.31, 0.27), Sec(x + 0.45, y, 0.31, 0.27)],
-                   z: z, round: 3.4, segments: 20, second)
-        box(x + 0.46, y, z, 0.04, 0.48, 0.56, dark, chamfer: 0.02)
-        box(x - 0.1, y, z, 0.1, 0.57, 0.65, metal, chamfer: 0.02)
-        for row in [-0.11, 0.11] as [Float] {
-            for col in [-0.18, 0, 0.18] as [Float] {
-                tube(x + 0.52, y + row, z + col, r: 0.07, len: 0.12, metal)
-                tube(x + 0.585, y + row, z + col, r: 0.072, len: 0.025, weaponGlow)
-                let tip = SCNCone(topRadius: 0, bottomRadius: 0.07, height: 0.18)
-                add(tip, accent, SCNVector3(x + 0.685, y + row, z + col), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: true)
+        box(x - 0.05, y + 0.36, z, 0.8, 0.26, 0.09, dark, chamfer: 0.03)
+        smoothHull([Sec(x - 1.05, y, 0.08, 0.08), Sec(x - 0.65, y, 0.36, 0.32), Sec(x + 0.45, y, 0.42, 0.36), Sec(x + 0.6, y, 0.42, 0.36)],
+                   z: z, round: 4.5, segments: 24, second)
+        box(x + 0.61, y, z, 0.05, 0.66, 0.78, dark, chamfer: 0.02)
+        box(x - 0.1, y, z, 0.12, 0.76, 0.88, metal, chamfer: 0.02)
+        for row in [-0.15, 0.15] as [Float] {
+            for col in [-0.25, 0, 0.25] as [Float] {
+                tube(x + 0.68, y + row, z + col, r: 0.1, len: 0.14, metal)
+                tube(x + 0.76, y + row, z + col, r: 0.103, len: 0.03, weaponGlow)
+                let tip = SCNCone(topRadius: 0, bottomRadius: 0.1, height: 0.26)
+                add(tip, accent, SCNVector3(x + 0.9, y + row, z + col), rot: SCNVector3(0, 0, -Float.pi / 2), mirror: true)
             }
         }
     }
@@ -1083,7 +1083,7 @@ enum ShipDesigns {
         k.lamp(1.4, 0.18, 2.85, size: 0.08)
         k.lamp(-0.9, 0.04, 2.55, size: 0.08)
         k.sensorNose(3.3, 0.05)
-        k.weapon(m.weapon, hardpoints: [(0.9, -0.22, 0.8)], spine: (-1.0, 2.4, 0.5), belly: (-0.2, -0.45))
+        k.weapon(m.weapon, hardpoints: [(0.9, -0.3, 0.95)], spine: (-1.0, 2.4, 0.5), belly: (-0.2, -0.45))
     }
 
     // Frachter: bulliges rundes Kopfmodul, Tragrohr, Frachtcontainer, schwere Triebwerke, drei Geschütztürme
@@ -1091,7 +1091,12 @@ enum ShipDesigns {
         typealias S = ShipKit.Sec
         // Kopfmodul: runde Schlepperkabine
         k.smoothHull([S(3.35, 0.05, 0.1, 0.08), S(3.1, 0.1, 0.55, 0.4), S(2.4, 0.18, 0.86, 0.66), S(1.6, 0.18, 0.82, 0.64), S(1.25, 0.12, 0.5, 0.4)],
-                     round: 3.2, mirror: false)
+                     round: 6, segments: 40, mirror: false)
+        // kantige Panzerung am Kopfmodul: Stirnplatte, Wangenplatten, Lufteinläufe
+        k.box(3.05, -0.12, 0, 0.3, 0.3, 1.0, k.second, chamfer: 0.04, mirror: false)
+        k.box(2.1, 0.1, 0.86, 1.0, 0.7, 0.08, k.stripe, chamfer: 0.03)
+        k.intake(1.7, -0.2, 0.9, h: 0.3, w: 0.2)
+        k.box(2.0, 0.86, 0, 0.9, 0.06, 1.1, k.second, chamfer: 0.02, mirror: false)
         k.bubble(2.6, 0.72, len: 1.2, height: 0.26, width: 1.0)
         // Tragrohr von vorn bis zum Heck
         k.smoothHull([S(1.5, 0.1, 0.42, 0.42), S(0.0, 0.1, 0.46, 0.46), S(-1.8, 0.1, 0.5, 0.5), S(-2.3, 0.1, 0.4, 0.4)],
@@ -1110,7 +1115,11 @@ enum ShipDesigns {
         }
         // Heckblock mit vier Triebwerken
         k.smoothHull([S(-1.5, 0.1, 0.7, 0.55), S(-2.0, 0.1, 1.0, 0.7), S(-2.6, 0.1, 0.9, 0.62), S(-2.85, 0.1, 0.5, 0.36)],
-                     round: 3.4, k.paint, mirror: false)
+                     round: 6, segments: 40, k.paint, mirror: false)
+        k.box(-2.1, 0.82, 0, 1.0, 0.08, 1.3, k.second, chamfer: 0.03, mirror: false)
+        k.greeble(x0: -2.5, x1: -1.7, y: 0.86, zMax: 0.5, count: 6)
+        k.belly(x0: -1.6, x1: 1.4, y: -0.42, width: 0.5)
+        k.pipes(x0: -1.4, x1: 1.3, y: 0.5, z: 0.3)
         k.nacelle(-2.3, 0.4, 1.12, r: 0.42, len: 1.5)
         k.nacelle(-2.4, -0.42, 0.55, r: 0.3, len: 1.1)
         k.fin(-1.9, 0.72, 0.5, height: 0.85, len: 0.9, tilt: -0.3)
@@ -1220,19 +1229,25 @@ enum ShipDesigns {
         typealias S = ShipKit.Sec
         // zwei lange Rümpfe
         k.smoothHull([S(3.6, 0.0, 0.08, 0.08), S(3.0, 0.05, 0.42, 0.36), S(1.5, 0.1, 0.62, 0.52), S(-1.0, 0.12, 0.68, 0.58),
-                      S(-2.4, 0.1, 0.6, 0.5), S(-2.9, 0.1, 0.4, 0.34)], z: 1.35, round: 3.0)
+                      S(-2.4, 0.1, 0.6, 0.5), S(-2.9, 0.1, 0.4, 0.34)], z: 1.35, round: 5.5, segments: 40)
+        // kantige Panzerung: Flankenplatten, Bugplatten, Decksaufbauten
+        k.sidePanels(x0: -2.2, x1: 1.6, y: 0.15, z: 2.0, count: 6)
+        k.box(2.6, 0.1, 1.35, 0.9, 0.5, 1.0, k.second, chamfer: 0.06)
+        k.box(0.0, 0.66, 1.35, 1.6, 0.08, 0.9, k.second, chamfer: 0.03)
+        k.greeble(x0: -1.9, x1: 1.3, y: 0.56, zMax: 0.8, count: 10)
+        k.intake(2.3, 0.0, 0.75, h: 0.4, w: 0.2)
         // Brückendeck dazwischen
         k.smoothHull([S(2.2, 0.15, 0.5, 0.14), S(1.4, 0.2, 1.2, 0.3), S(-1.2, 0.25, 1.3, 0.36), S(-2.2, 0.2, 1.0, 0.26)],
-                     round: 3.4, k.stripe, mirror: false)
+                     round: 6, segments: 40, k.stripe, mirror: false)
         // Kommandoturm mit Sichtkanzel
         k.smoothHull([S(-0.3, 0.7, 0.2, 0.1), S(-0.8, 0.85, 0.5, 0.3), S(-1.5, 0.85, 0.5, 0.3), S(-2.0, 0.7, 0.3, 0.14)],
-                     round: 2.8, segments: 20, k.second, mirror: false)
+                     round: 5, segments: 32, k.second, mirror: false)
         k.bubble(-0.85, 1.1, len: 0.9, height: 0.16, width: 0.7)
         // Container unter dem Deck
         for (i, x) in ([1.0, -0.2, -1.4] as [Float]).enumerated() {
-            k.box(x, -0.3, 0.42, 1.05, 0.55, 0.66, i == 1 ? k.second : k.accent, chamfer: 0.06)
+            k.box(x, -0.38, 0.45, 1.08, 0.74, 0.8, i == 1 ? k.second : k.accent, chamfer: 0.06)
             for dx in [-0.3, 0.0, 0.3] as [Float] {
-                k.box(x + dx, -0.3, 0.76, 0.05, 0.42, 0.03, k.dark, chamfer: 0.01)
+                k.box(x + dx, -0.38, 0.855, 0.05, 0.6, 0.03, k.dark, chamfer: 0.01)
             }
         }
         // Geschütztürme: je Rumpf einer vorn und einer hinten, ein schwerer auf dem Deck
@@ -1246,14 +1261,13 @@ enum ShipDesigns {
         k.fin(-2.0, 0.6, 1.35, height: 0.9, len: 1.0, tilt: -0.15)
         k.lamp(3.5, 0.0, 1.35)
         k.lamp(0.0, 0.1, 2.05)
-        k.weapon(m.weapon, hardpoints: [(1.8, 0.0, 2.05)], spine: (-2.2, 3.0, 1.35), belly: (-0.2, -1.05))
+        k.weapon(m.weapon, hardpoints: [(1.8, 0.0, 2.05)], spine: (-2.2, 3.0, 1.35), belly: (-0.2, -1.2))
     }
 
     // Tarnschiff: geschwungener Nurflügler, zwei Kanzelblasen, versenkte Düsen, rote Leuchtlinien an der Vorderkante
     private static func phantom(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
         let w = k.wing(rootLead: 2.9, rootTrail: -1.5, rootZ: 0.0, tip: (-1.3, 3.0), tipChord: 0.6, bulge: 0.3, y: 0.0, thick: 0.18, k.paint)
-        _ = k.wing(rootLead: 0.2, rootTrail: -1.2, rootZ: 1.3, tip: (-1.2, 2.9), tipChord: 0.5, bulge: 0.2, y: 0.02, thick: 0.2, k.second)
         // flacher Rumpf, weich in den Flügel übergehend
         k.smoothHull([S(3.4, 0.06, 0.03, 0.03), S(2.4, 0.12, 0.5, 0.2), S(0.8, 0.18, 0.85, 0.34), S(-0.9, 0.16, 0.8, 0.3),
                       S(-1.9, 0.1, 0.5, 0.16)], round: 2.2, mirror: false)
@@ -1281,11 +1295,16 @@ enum ShipDesigns {
     private static func nova(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
         k.smoothHull([S(4.2, 0.0, 0.02, 0.02), S(3.4, 0.04, 0.16, 0.12), S(2.2, 0.1, 0.38, 0.28), S(0.6, 0.16, 0.56, 0.42),
-                      S(-1.0, 0.18, 0.6, 0.44), S(-2.2, 0.14, 0.44, 0.32), S(-2.8, 0.12, 0.2, 0.14)], round: 2.3, mirror: false)
+                      S(-1.0, 0.18, 0.6, 0.44), S(-2.2, 0.14, 0.44, 0.32), S(-2.8, 0.12, 0.2, 0.14)], round: 4.2, segments: 36, mirror: false)
+        // scharfe Bugkante: flache Strake von der Nase bis zur Flügelwurzel
+        k.plate([(4.15, 0.0), (2.4, 0.5), (0.9, 0.78), (-1.3, 0.82), (-1.3, 0.0)], y: 0.08, thick: 0.08, k.paint, chamfer: 0.02)
+        k.plate([(3.2, 0.26), (2.4, 0.5), (0.9, 0.78), (0.2, 0.8), (0.4, 0.66), (2.3, 0.4)], y: 0.1, thick: 0.08, k.accent, chamfer: 0.02)
+        k.intake(0.9, 0.2, 0.62, h: 0.28, w: 0.22)
+        k.sidePanels(x0: -1.8, x1: 0.4, y: 0.1, z: 0.6, count: 4)
         k.smoothHull([S(0.2, 0.5, 0.05, 0.04), S(-0.6, 0.58, 0.22, 0.12), S(-1.8, 0.5, 0.18, 0.1), S(-2.5, 0.32, 0.05, 0.04)],
-                     round: 2.2, segments: 18, k.accent, mirror: false)
+                     round: 4, segments: 24, k.accent, mirror: false)
         k.bubble(1.3, 0.46, len: 2.2, height: 0.3, width: 0.6)
-        _ = k.wing(rootLead: 1.2, rootTrail: -1.4, rootZ: 0.45, tip: (-1.5, 2.55), tipChord: 0.9, bulge: 0.45, y: 0.0, thick: 0.13)
+        _ = k.wing(rootLead: 1.2, rootTrail: -1.4, rootZ: 0.45, tip: (-1.5, 2.55), tipChord: 0.7, bulge: 0.12, y: 0.0, thick: 0.13)
         // Entenflügel am Bug
         _ = k.wing(rootLead: 2.9, rootTrail: 2.3, rootZ: 0.22, tip: (2.1, 1.0), tipChord: 0.26, bulge: 0.15, y: 0.08, thick: 0.06, k.accent)
         k.nacelle(-1.5, 0.0, 2.6, r: 0.3, len: 1.8, k.accent)
@@ -1295,6 +1314,6 @@ enum ShipDesigns {
         k.lamp(2.2, 0.1, 1.1, size: 0.08)
         k.sensorNose(4.2, 0.0)
         k.box(0.4, 0.26, 0.6, 2.2, 0.045, 0.03, k.weaponGlow, chamfer: 0.01)
-        k.weapon(m.weapon, hardpoints: [(1.1, -0.36, 1.4)], spine: (-1.0, 3.6, 0.7), belly: (-0.3, -0.6))
+        k.weapon(m.weapon, hardpoints: [(0.8, -0.46, 1.5)], spine: (-1.0, 3.6, 0.7), belly: (-0.3, -0.6))
     }
 }
