@@ -892,7 +892,7 @@ enum ShipDesigns {
         k.sensorNose(3.5, 0.0)
         k.antenna(-1.6, 0.5, 0.2, h: 0.5)
         k.weapon(m.weapon, hardpoints: [(1.0, -0.12, 1.55), (2.2, -0.2, 0.42)], spine: (-1.2, 3.2, 0.62), belly: (-0.3, -0.62))
-        k.fighterGuns(nose: (2.3, -0.12, 0.5), tips: (-0.9, 0.02, 2.78), strip: (0.6, 0.3, 0.49, 1.8))
+        k.fighterGuns(nose: (2.5, -0.2, 0.7), tips: (-0.9, 0.02, 2.78), strip: (0.6, 0.3, 0.49, 1.8))
         // Bauchflosse und Nachbrenner-Ringe für die aggressive Silhouette
         k.profile([(-0.6, -0.35), (-1.9, -0.95), (-2.2, -0.95), (-2.0, -0.35)], z: 0, thick: 0.08, k.accent, mirror: false)
         _ = tail
