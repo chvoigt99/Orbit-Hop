@@ -1011,7 +1011,7 @@ enum ShipDesigns {
         switch m.id {
         case "libelle": k = kit(m, bone, orange, gunmetal, "LB"); libelle(k, m)
         case "atlas": k = kit(m, bone, olive, orange, "AT"); atlas(k, m)
-        case "bastion": k = kit(m, olive, bone, gunmetal, "BS"); bastion(k, m)
+        case "bastion": k = kit(m, navy, bone, gunmetal, "BS"); bastion(k, m)
         case "orion": k = kit(m, bone, navy, gunmetal, "OR"); orion(k, m)
         case "viper": k = kit(m, red, bone, gunmetal, "VP"); viper(k, m)   // rot lackiert, damit sie sich vom Falken abhebt
         case "titan": k = kit(m, gunmetal, olive, orange, "TT"); titan(k, m)
