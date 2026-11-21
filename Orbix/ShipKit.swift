@@ -943,7 +943,7 @@ final class ShipKit {
         root.addChildNode(holder)
         let cr = CGFloat(r)
         let h = r * 0.55
-        let len = r * 3.0
+        let len = r * 2.4
         ShipKitPart(kit: self, node: holder).build { k in
             let base = SCNCylinder(radius: cr * 1.25, height: 0.12)
             base.radialSegmentCount = 28
@@ -1135,38 +1135,40 @@ enum ShipDesigns {
         k.lamp(-1.6, 0.72, 0)
         k.weapon(m.weapon, hardpoints: [(2.5, -0.45, 0.6)], spine: (-1.4, 2.6, 1.2), belly: (0.1, -0.7))
         // Geschützturm auf dem Rücken, auf einem runden Sockel
-        k.smoothHull([S(1.1, 0.56, 0.2, 0.06), S(0.6, 0.6, 0.6, 0.12), S(0.1, 0.6, 0.6, 0.12), S(-0.4, 0.56, 0.2, 0.06)],
+        k.smoothHull([S(1.1, 0.56, 0.2, 0.06), S(0.6, 0.6, 0.42, 0.12), S(0.1, 0.6, 0.42, 0.12), S(-0.4, 0.56, 0.2, 0.06)],
                      round: 2.4, segments: 18, k.dark, mirror: false)
-        k.turret(0.35, 0.7, r: 0.46)
+        k.turret(0.35, 0.7, r: 0.3)
         // zwei weitere Türme: Heck oben (nach hinten gerichtet) und unter dem Kopfmodul
-        k.turret(-2.15, 0.82, r: 0.34, yaw: .pi)
-        k.turret(2.3, -0.5, r: 0.3, down: true)
+        k.turret(-2.15, 0.82, r: 0.24, yaw: .pi)
+        k.turret(2.3, -0.5, r: 0.22, down: true)
     }
 
-    // Panzerschiff: breiter, flacher Schildkrötenpanzer mit überlappenden Rückenschilden und schwerem Turm
+    // Sturmschiff: gepanzerter Keilrumpf mit zwei nach vorn ragenden Kanonenauslegern und kurzen Panzerflügeln
     private static func bastion(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
-        k.hull([S(3.0, -0.05, 0.25, 0.12), S(2.5, 0.02, 0.9, 0.36), S(1.2, 0.1, 1.45, 0.56), S(-0.6, 0.12, 1.6, 0.62),
-                      S(-1.9, 0.1, 1.4, 0.55), S(-2.6, 0.05, 0.9, 0.36)], top: 0.6, bottom: 0.8, shoulder: 0.3, mirror: false)
-        // überlappende Rückenschilde
-        let shields: [(Float, Float)] = [(1.5, 0.72), (0.4, 0.98), (-0.7, 1.0), (-1.7, 0.82)]
+        k.hull([S(3.2, -0.05, 0.15, 0.08), S(2.2, 0.05, 0.6, 0.3), S(0.8, 0.12, 1.0, 0.46), S(-1.0, 0.14, 1.15, 0.5),
+                S(-2.3, 0.1, 0.9, 0.4), S(-2.7, 0.08, 0.6, 0.26)], top: 0.5, bottom: 0.75, shoulder: 0.2, mirror: false)
+        // überlappende Rückenschilde hinter der Kanzel
+        let shields: [(Float, Float)] = [(0.2, 0.72), (-0.8, 0.85), (-1.7, 0.7)]
         for (i, s) in shields.enumerated() {
             let x = s.0, f = s.1
-            k.hull([S(x + 0.65, 0.4, 0.7 * f, 0.18), S(x + 0.2, 0.48, 1.08 * f, 0.26), S(x - 0.45, 0.5, 1.02 * f, 0.24),
-                          S(x - 0.7, 0.44, 0.8 * f, 0.16)], top: 0.7, bottom: 0.9, shoulder: 0.2, i % 2 == 0 ? k.stripe : k.second, mirror: false)
+            k.hull([S(x + 0.6, 0.46, 0.7 * f, 0.14), S(x + 0.2, 0.52, 1.0 * f, 0.2), S(x - 0.4, 0.54, 0.95 * f, 0.18),
+                    S(x - 0.6, 0.5, 0.75 * f, 0.12)], top: 0.7, bottom: 0.9, shoulder: 0.2, i % 2 == 0 ? k.stripe : k.second, mirror: false)
         }
-        // seitliche Panzerschürzen
-        k.hull([S(1.7, -0.05, 0.1, 0.14), S(0.8, -0.05, 0.3, 0.3), S(-1.4, -0.05, 0.32, 0.32), S(-2.2, -0.05, 0.14, 0.16)],
-               z: 1.5, top: 0.5, bottom: 0.5, shoulder: 0.5, k.second)
-        // flache Sichtkanzel im Bug
-        k.bubble(2.0, 0.36, len: 1.0, height: 0.2, width: 0.8)
-        k.nacelle(-2.4, 0.1, 0.75, r: 0.42, len: 1.3, faceted: true)
-        k.fin(-1.8, 0.55, 1.0, height: 0.6, len: 0.9, tilt: -0.4)
-        k.lamp(2.6, 0.0, 0.62)
-        k.lamp(-0.6, 0.1, 1.85, size: 0.1)
-        k.sensorNose(3.05, -0.05)
-        k.turret(-0.2, 0.8, r: 0.52)
-        k.weapon(m.weapon, hardpoints: [(1.9, -0.2, 1.5)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
+        // Ausleger links und rechts, ragen vor den Bug und tragen die Kanonen
+        k.hull([S(2.5, 0.0, 0.1, 0.1), S(1.7, 0.0, 0.26, 0.24), S(-1.2, 0.02, 0.36, 0.32), S(-2.0, 0.02, 0.22, 0.2)],
+               z: 1.3, top: 0.5, bottom: 0.5, shoulder: 0.5, k.second)
+        k.box(0.2, 0.02, 1.15, 1.6, 0.3, 0.5, k.dark, chamfer: 0.05)
+        // kurze, dicke Panzerflügel
+        _ = k.wing(rootLead: 0.0, rootTrail: -1.9, rootZ: 1.5, tip: (-1.6, 2.5), tipChord: 0.8, bulge: 0.1, y: 0.02, thick: 0.2)
+        _ = k.wing(rootLead: -1.1, rootTrail: -1.9, rootZ: 2.0, tip: (-1.65, 2.55), tipChord: 0.7, bulge: 0.05, y: 0.04, thick: 0.22, k.accent)
+        k.bubble(1.5, 0.4, len: 1.4, height: 0.24, width: 0.6)
+        k.nacelle(-2.4, 0.12, 0.6, r: 0.4, len: 1.3, faceted: true)
+        k.fin(-1.6, 0.5, 0.7, height: 0.85, len: 1.0, tilt: -0.3)
+        k.intake(1.2, -0.1, 0.8, h: 0.3, w: 0.22)
+        k.lamp(-1.6, 0.04, 2.7, size: 0.1)
+        k.sensorNose(3.25, -0.05)
+        k.weapon(m.weapon, hardpoints: [(2.3, 0.0, 1.3)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
     }
 
     // Kreuzer: runder Nadelrumpf in einem großen Ring, Kanzel in einer Seitenkapsel, drei Triebwerke
@@ -1259,11 +1261,11 @@ enum ShipDesigns {
             }
         }
         // Geschütztürme: je Rumpf einer vorn und einer hinten, ein schwerer auf dem Deck
-        k.turret(1.6, 0.66, z: 1.35, r: 0.38)
-        k.turret(1.6, 0.66, z: -1.35, r: 0.38)
-        k.turret(-1.8, 0.68, z: 1.35, r: 0.34, yaw: .pi)
-        k.turret(-1.8, 0.68, z: -1.35, r: 0.34, yaw: .pi)
-        k.turret(0.6, 0.56, r: 0.5)
+        k.turret(1.6, 0.66, z: 1.35, r: 0.27)
+        k.turret(1.6, 0.66, z: -1.35, r: 0.27)
+        k.turret(-1.8, 0.68, z: 1.35, r: 0.24, yaw: .pi)
+        k.turret(-1.8, 0.68, z: -1.35, r: 0.24, yaw: .pi)
+        k.turret(0.6, 0.56, r: 0.34)
         k.nacelle(-2.6, 0.1, 1.35, r: 0.46, len: 1.3, faceted: true)
         k.nacelle(-2.3, 0.2, 0, r: 0.36, len: 1.1, mirror: false, faceted: true)
         k.fin(-2.0, 0.6, 1.35, height: 0.9, len: 1.0, tilt: -0.15)
