@@ -852,7 +852,7 @@ final class Game {
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
-    static let stationTest = true   // TESTFLIGHT-TEST: erste Station als zweites Ziel; vor der Veröffentlichung wieder auf false
+    static let stationTest = false   // nur für Tests auf true: erste Station schon als zweites Ziel
     /// Nur für Tests: Schwarzes Loch als zweites, Doppelstern als viertes Ziel (Start mit -planetTest)
     static let planetTest = ProcessInfo.processInfo.arguments.contains("-planetTest")
     /// Nur für Tests: Drohnen auf jeder Strecke ab dem zweiten Ziel (Start mit -droneTest)
