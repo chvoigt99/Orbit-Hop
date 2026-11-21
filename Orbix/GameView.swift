@@ -357,12 +357,17 @@ struct GameView: View {
         let dot = Int(game.time * 2) % 2 == 0
         return HStack(spacing: 6) {
             Rectangle().fill(color).frame(width: 6, height: 6).rotationEffect(.degrees(45)).opacity(dot ? 1 : 0.35)
-            label(text).foregroundStyle(color).lineLimit(1).fixedSize()
+            // nie breiter als der Bildschirm: lange Gefechtszeilen schrumpfen statt das ganze HUD aufzuweiten
+            // (sonst rutschten HUD, Feuerknopf und Radar rechts aus dem Bild)
+            label(text).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.6)
+                .layoutPriority(1)
             Rectangle().fill(color.opacity(0.3)).frame(height: 1)
-            label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · T+\(missionClock)")
-                .foregroundStyle(dim)
-                .lineLimit(1)
-                .fixedSize()
+            if game.phase != .combat {
+                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · T+\(missionClock)")
+                    .foregroundStyle(dim)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 2)
     }
