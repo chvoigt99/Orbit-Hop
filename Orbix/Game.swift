@@ -874,9 +874,10 @@ final class Game {
     }
 
     /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
-    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40.
+    /// Stelle der Strecke liegt: die erste schon als fünfter Planet, damit man nach dem Spielstart schnell
+    /// an Aufträge kommt (Christian, 2026-11-21), danach alle gut 30, später alle gut 40 Planeten.
     static func stationPlanet(_ k: Int) -> Int {
-        var n = stationTest ? 2 : 32
+        var n = stationTest ? 2 : 5
         for j in 0..<max(0, k) {
             let lvl = min(1, CGFloat(n) / 40)
             n += Int(30 + 12 * lvl) + (j * 5) % 9
