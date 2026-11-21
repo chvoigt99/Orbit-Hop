@@ -394,6 +394,9 @@ struct Asteroid {
     var orbitW: CGFloat = 0
     var orbitA: CGFloat = 0
     var diveUntil: CGFloat = 0
+    /// Schräglage in Kurven (Piraten, Darstellung) und Steigrate im 3D-Gefecht
+    var bank: CGFloat = 0
+    var valt: CGFloat = 0
     var ringChangeAt: CGFloat = 0
     /// Höhe über der Bahnebene (3D-Gefecht)
     var alt: CGFloat = 0

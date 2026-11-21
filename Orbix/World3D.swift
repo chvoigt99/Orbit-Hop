@@ -2613,7 +2613,12 @@ final class World3D {
                 // Piraten: Bug zeigt in Blickrichtung, Schildblase blitzt bei Treffern auf den Schild
                 if a.kind == .raider {
                     n.position.y = Float(6 + a.alt)
-                    n.eulerAngles.y = Float(-a.facing)
+                    // Bug in Flugrichtung, Nase hoch/runter beim Steigen/Sinken, Schräglage in Kurven
+                    let sp = max(1, hypot(a.vel.dx, a.vel.dy))
+                    let yawQ = simd_quatf(angle: Float(-a.facing), axis: SIMD3<Float>(0, 1, 0))
+                    let pitchQ = simd_quatf(angle: Float(atan2(a.valt, sp)), axis: SIMD3<Float>(0, 0, 1))
+                    let rollQ = simd_quatf(angle: Float(-a.bank * 0.55), axis: SIMD3<Float>(1, 0, 0))
+                    n.simdOrientation = yawQ * pitchQ * rollQ
                     if let sh = n.childNode(withName: "shield", recursively: false) {
                         let age = game.time - a.hitAt
                         sh.opacity = a.shield > 0.5 && age >= 0 && age < 0.35 ? 1 - age / 0.35 : 0

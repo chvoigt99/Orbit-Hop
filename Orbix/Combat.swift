@@ -438,75 +438,66 @@ extension Game {
             if !fighting { a.retreating = true }
             let planet = planets[max(0, min(a.gap, planets.count - 1))]
 
-            var want: CGVector
+            // Flugmodell wie ein echtes Schiff: Der Bug zeigt immer in Flugrichtung, die Wendigkeit ist begrenzt.
+            // Angriffsflug schräg am Spielerschiff vorbei (dabei feuern), dann abdrehen, Abstand gewinnen und neu
+            // anfliegen. So stimmen Ausrichtung und Bewegungspfad (Christian, 2026-11-21).
+            let speed = combatCruise * 0.95 + Raider.speedBonus(a.variant)
+            let turnMax: CGFloat = [1.5, 1.05, 1.25][max(0, min(2, a.variant))]
+            var desired = a.facing
             var altTarget = a.alt
+            let fwd = CGVector(dx: cos(a.facing), dy: sin(a.facing))
             if a.retreating {
-                want = CGVector(dx: -dx / d * 640, dy: -dy / d * 640)
+                desired = atan2(-dy, -dx)
+                altTarget = a.alt
                 if d > 2400 { gone.append(a.uid) }
             } else {
-                // Abstand halten statt rammen: Die Piraten stehen in 500–800 Abstand, weben seitlich und weichen
-                // ab und zu weit zur Seite aus (Flankenmanöver), sodass man ihnen nachdrehen muss (Christian, 2026-11-20)
-                if time >= a.ringChangeAt {
-                    a.ringChangeAt = time + CGFloat.random(in: 4...7)
-                    if Double.random(in: 0...1) < 0.35 {
-                        a.diveUntil = time + CGFloat.random(in: 2.5...4)   // Flankenmanöver
-                        a.orbitW = -a.orbitW
-                    } else {
-                        a.orbitR = CGFloat.random(in: 520...780) + 50 * CGFloat(a.variant)
+                let extending = time < a.diveUntil
+                if !extending {
+                    // Anflug: Ziel seitlich versetzt neben dem Schiff (mit Vorhalt), damit sie vorbeiziehen statt zu rammen
+                    let side: CGFloat = a.orbitW > 0 ? 1 : -1
+                    let lead = min(1.2, d / 300)
+                    let px = pos.x + vel.dx * lead, py = pos.y + vel.dy * lead
+                    let off = min(260, d * 0.35) * side
+                    desired = atan2(py + dx / d * off - c.y, px - dy / d * off - c.x)
+                    altTarget = altitude
+                    // Haken, wenn das Schiff direkt auf sie zielt
+                    if abs(wrap(atan2(-dy, -dx) - heading)) < 0.25 && d < 700 {
+                        desired += 0.5 * sin(time * 1.3 + a.phase)
                     }
+                    // vorbei oder zu nah: abdrehen und Abstand gewinnen
+                    let behind = (dx * fwd.dx + dy * fwd.dy) / d < -0.1
+                    if d < 240 || (behind && d < 650) {
+                        a.diveUntil = time + CGFloat.random(in: 2.2...3.6)
+                        a.orbitA = a.facing + CGFloat.random(in: -0.7...0.7)
+                        if Double.random(in: 0...1) < 0.4 { a.orbitW = -a.orbitW }
+                    }
+                } else {
+                    desired = a.orbitA
+                    altTarget = altitude + 120 * sin(a.phase + time * 0.4)
                 }
-                a.orbitA += a.orbitW * dt
-                let flanking = time < a.diveUntil
-                // Bahn um das Schiff in festen Weltwinkeln: Sie bleiben nicht vor dem Bug kleben, man muss sie
-                // anfliegen und ihnen nachdrehen. Beim Flankenmanöver kreisen sie schneller.
-                a.orbitA += a.orbitW * dt * (flanking ? 1.2 : 0)
-                var target = point(from: pos, angle: a.orbitA, distance: a.orbitR)
                 // im Gefechtsfeld bleiben
-                let tp = CGVector(dx: target.x - planet.center.x, dy: target.y - planet.center.y)
+                let tp = CGVector(dx: c.x - planet.center.x, dy: c.y - planet.center.y)
                 let tl = max(1, hypot(tp.dx, tp.dy))
-                let maxR = planet.orbitRadius + Game.arenaReach * 0.85
-                if tl > maxR { target = CGPoint(x: planet.center.x + tp.dx / tl * maxR, y: planet.center.y + tp.dy / tl * maxR) }
-                altTarget = altitude + 110 * sin(a.orbitA * 0.8 + a.phase)
-                var vx = vel.dx + (target.x - c.x) * 0.9
-                var vy = vel.dy + (target.y - c.y) * 0.9
-                // ausweichen, wenn das Schiff direkt auf sie zielt (Haken quer zur Schusslinie)
-                let aimedAt = abs(wrap(atan2(-dy, -dx) - heading)) < 0.25 && d < 700
-                if aimedAt {
-                    let side: CGFloat = sin(time * 0.9 + a.phase) > 0 ? 1 : -1
-                    vx += -dy / d * 110 * side
-                    vy += dx / d * 110 * side
+                if tl > planet.orbitRadius + Game.arenaReach * 0.8 {
+                    desired = atan2(-tp.dy, -tp.dx)
+                    a.orbitA = desired
                 }
-                // Mindestabstand zum Spielerschiff
-                if d < 380 {
-                    let push = 320 * (1 - d / 380) + 60
-                    vx -= dx / d * push
-                    vy -= dy / d * push
+                // nicht in den Planeten: rechtzeitig seitlich abdrehen
+                if tl < planet.radius + a.radius + 160 {
+                    let away = atan2(tp.dy, tp.dx)
+                    desired = away + (wrap(a.facing - away) > 0 ? 0.9 : -0.9)
                 }
-                // nicht in den Planeten
-                let px = c.x - planet.center.x, py = c.y - planet.center.y
-                let pd = max(1, hypot(px, py))
-                if pd < planet.radius + a.radius + 40 {
-                    vx += px / pd * 420
-                    vy += py / pd * 420
-                }
-                let cap = combatTop + Raider.speedBonus(a.variant)
-                let vl = hypot(vx, vy)
-                if vl > cap {
-                    vx = vx / vl * cap
-                    vy = vy / vl * cap
-                }
-                want = CGVector(dx: vx, dy: vy)
             }
-            a.alt += max(-110, min(110, (altTarget - a.alt) * 1.0)) * dt
-            let k = min(1, dt * 2.0)
-            a.vel.dx += (want.dx - a.vel.dx) * k
-            a.vel.dy += (want.dy - a.vel.dy) * k
-
-            // Bug: im Kampf zum Schiff, sonst in Flugrichtung
+            let turn = max(-turnMax * dt, min(turnMax * dt, wrap(desired - a.facing)))
+            a.facing += turn
+            // Schräglage in Kurven (für die Darstellung)
+            a.bank += (turn / max(0.0001, dt) / turnMax - a.bank) * min(1, dt * 5)
+            let sp = a.retreating ? speed * 1.4 : speed
+            a.vel = CGVector(dx: cos(a.facing) * sp, dy: sin(a.facing) * sp)
+            let climbRate = max(-70, min(70, (altTarget - a.alt) * 0.8))
+            a.valt = climbRate
+            a.alt += climbRate * dt
             let toShip = atan2(dy, dx)
-            let moving = hypot(a.vel.dx, a.vel.dy) > 40
-            let look: CGFloat = !a.retreating && d < 1500 ? toShip : (moving ? atan2(a.vel.dy, a.vel.dx) : a.facing)
-            a.facing += max(-2.5 * dt, min(2.5 * dt, wrap(look - a.facing)))
 
             // Schilde laden nach 2,5 s ohne Treffer wieder auf
             if a.shield < a.maxShield && time - a.hitAt > 2.5 {
