@@ -702,30 +702,36 @@ final class ShipKit {
         return g
     }
 
-    /// Tropfenförmige Glaskanzel, weich in den Rumpf eingelassen; frames = Zahl der Rahmenspanten
+    /// Kantige Glaskanzel aus flachen Scheiben (wie geschliffen), vorn flach ansteigend, hinten abfallend;
+    /// frames = Zahl der Rahmenspanten
     func bubble(_ x: Float, _ y: Float, z: Float = 0, len: Float, height: Float, width: Float,
                 frames: Int = 0, frame: SCNMaterial? = nil, tint: SCNMaterial? = nil) {
-        func radius(_ t: Float) -> Float { pow(sin(.pi * pow(t, 0.75)), 0.7) }
-        var secs: [Sec] = []
-        for i in 0...8 {
-            let t = Float(i) / 8
-            // vorn spitzer, hinten lang auslaufend
-            let r = radius(t)
-            secs.append(Sec(x + len * (0.45 - t), y, max(0.01, width / 2 * r), max(0.01, height * r)))
+        // Stützstellen (Lage entlang der Kanzel, Größe)
+        let shape: [(Float, Float)] = [(0, 0.1), (0.22, 0.78), (0.45, 1.0), (0.78, 0.62), (1, 0.12)]
+        func radius(_ t: Float) -> Float {
+            for i in 1..<shape.count where t <= shape[i].0 {
+                let a = shape[i - 1], b = shape[i]
+                return a.1 + (b.1 - a.1) * (t - a.0) / max(0.001, b.0 - a.0)
+            }
+            return shape[shape.count - 1].1
         }
-        smoothHull(secs, z: z, round: 2, segments: 20, tint ?? glass, mirror: false)
+        let secs = shape.map { Sec(x + len * (0.45 - $0.0), y, max(0.01, width / 2 * $0.1), max(0.01, height * $0.1)) }
+        hull(secs, z: z, top: 0.45, bottom: 0.9, shoulder: 0.2, tint ?? glass, mirror: false)
         if frames > 0 {
             for f in 1...frames {
                 let t = Float(f) / Float(frames + 1)
                 let r = radius(t)
                 let cx = x + len * (0.45 - t)
-                let w = width / 2 * r * 1.04 + 0.006, h = height * r * 1.04 + 0.006
-                smoothHull([Sec(cx + 0.025, y, w, h), Sec(cx - 0.025, y, w, h)], z: z, round: 2, segments: 20, frame ?? metal, mirror: false)
+                let w = width / 2 * r * 1.05 + 0.008, h = height * r * 1.05 + 0.008
+                hull([Sec(cx + 0.025, y, w, h), Sec(cx - 0.025, y, w, h)], z: z, top: 0.45, bottom: 0.9, shoulder: 0.2,
+                     frame ?? metal, mirror: false)
             }
         }
-        // schmaler Rahmenring um den Fuß der Kanzel
-        smoothHull([Sec(x + len * 0.47, y - height * 0.15, width * 0.3, 0.03), Sec(x, y - height * 0.15, width * 0.56, 0.05),
-                    Sec(x - len * 0.57, y - height * 0.15, width * 0.3, 0.03)], z: z, round: 2, segments: 16, dark, mirror: false)
+        // Mittelsteg entlang des Firsts
+        box(x - len * 0.05, y + height * 0.98, z, CGFloat(len) * 0.5, 0.03, 0.04, frame ?? metal, chamfer: 0.005, mirror: false)
+        // kantiger Rahmen um den Fuß der Kanzel
+        hull([Sec(x + len * 0.47, y - height * 0.15, width * 0.3, 0.03), Sec(x, y - height * 0.15, width * 0.56, 0.05),
+              Sec(x - len * 0.57, y - height * 0.15, width * 0.3, 0.03)], z: z, top: 0.8, bottom: 0.8, shoulder: 0.5, dark, mirror: false)
     }
 
     /// Geschwungener Flügel: Draufsicht mit gebogener Vorderkante und runder Spitze.
@@ -1099,13 +1105,10 @@ enum ShipDesigns {
         typealias S = ShipKit.Sec
         k.smoothHull([S(3.3, 0.05, 0.03, 0.03), S(2.9, 0.08, 0.26, 0.22), S(2.1, 0.12, 0.42, 0.36), S(1.2, 0.12, 0.4, 0.34),
                       S(0.2, 0.1, 0.3, 0.27), S(-1.0, 0.08, 0.24, 0.22), S(-1.9, 0.08, 0.26, 0.24)], round: 2.2, mirror: false)
-        // Kanzel: zwei große Kugelaugen wie bei einer Libelle, grünlich getönt
+        // Kanzel: zwei große, kantig geschliffene Facettenaugen wie bei einer Libelle, grünlich getönt
         let eyeGlass = k.tintedGlass(UIColor(red: 0.05, green: 0.3, blue: 0.22, alpha: 1))
-        for ez in [-0.24, 0.24] as [Float] {
-            let eye = SCNSphere(radius: 0.31)
-            eye.segmentCount = 32
-            k.addNode(eye, eyeGlass, SCNVector3(2.3, 0.3, ez))
-        }
+        k.hull([S(2.66, 0.3, 0.07, 0.08), S(2.42, 0.3, 0.25, 0.28), S(2.1, 0.3, 0.26, 0.29), S(1.92, 0.3, 0.1, 0.12)],
+               z: 0.24, top: 0.5, bottom: 0.5, shoulder: 0.5, eyeGlass)
         k.box(2.3, 0.42, 0, 0.5, 0.3, 0.07, k.dark, chamfer: 0.03, mirror: false)
         // vorderes Flügelpaar leicht nach vorn, hinteres nach hinten gepfeilt
         _ = k.wing(rootLead: 1.2, rootTrail: 0.6, rootZ: 0.3, tip: (1.35, 2.7), tipChord: 0.42, bulge: 0.05, y: 0.16, thick: 0.07)
@@ -1236,11 +1239,11 @@ enum ShipDesigns {
         k.smoothHull([S(2.4, 0.25, 0.05, 0.05), S(1.95, 0.28, 0.29, 0.23), S(0.6, 0.29, 0.34, 0.26), S(0.0, 0.27, 0.2, 0.15)],
                      z: 0.82, round: 2.3, segments: 20, k.stripe, mirror: false)
         let noseGlass = k.tintedGlass(UIColor(red: 0.05, green: 0.2, blue: 0.4, alpha: 1))
-        k.smoothHull([S(2.44, 0.25, 0.05, 0.05), S(1.95, 0.28, 0.3, 0.24), S(1.4, 0.285, 0.33, 0.26)],
-                     z: 0.82, round: 2.3, segments: 20, noseGlass, mirror: false)
+        k.hull([S(2.44, 0.25, 0.06, 0.06), S(1.95, 0.28, 0.31, 0.25), S(1.4, 0.285, 0.34, 0.27)],
+               z: 0.82, top: 0.45, bottom: 0.45, shoulder: 0.45, noseGlass, mirror: false)
         for fx in [1.95, 1.4] as [Float] {
-            k.smoothHull([S(fx + 0.03, 0.283, 0.335, 0.265), S(fx - 0.03, 0.283, 0.335, 0.265)],
-                         z: 0.82, round: 2.3, segments: 20, k.metal, mirror: false)
+            k.hull([S(fx + 0.03, 0.283, 0.35, 0.28), S(fx - 0.03, 0.283, 0.35, 0.28)],
+                   z: 0.82, top: 0.45, bottom: 0.45, shoulder: 0.45, k.metal, mirror: false)
         }
         k.smoothHull([S(2.0, 0.2, 0.04, 0.04), S(1.6, 0.2, 0.2, 0.16), S(0.6, 0.2, 0.22, 0.18), S(0.1, 0.2, 0.1, 0.08)],
                      z: -0.74, round: 2.3, segments: 18, k.dark, mirror: false)
@@ -1328,8 +1331,8 @@ enum ShipDesigns {
                      round: 2.4, segments: 18, k.second, mirror: false)
         // flaches rotes Sichtband quer über dem Bug
         let visor = k.tintedGlass(UIColor(red: 0.45, green: 0.04, blue: 0.06, alpha: 1))
-        k.smoothHull([S(2.45, 0.2, 0.3, 0.08), S(2.0, 0.28, 0.55, 0.13), S(1.5, 0.33, 0.6, 0.14), S(1.3, 0.32, 0.4, 0.08)],
-                     round: 2.8, segments: 24, visor, mirror: false)
+        k.hull([S(2.45, 0.2, 0.3, 0.08), S(2.0, 0.29, 0.55, 0.14), S(1.5, 0.34, 0.6, 0.15), S(1.3, 0.32, 0.4, 0.08)],
+               top: 0.75, bottom: 0.9, shoulder: 0.2, visor, mirror: false)
         // rote Leuchtlinie entlang der geschwungenen Vorderkante
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
         let lead = Array(w[1...8])
