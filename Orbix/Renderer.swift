@@ -44,9 +44,15 @@ extension Game {
 
     /// Trefferanzeige über Hindernissen, die mehrere Treffer brauchen
     private func drawObstacleHP(_ c: GraphicsContext, _ size: CGSize) {
+        if phase == .combat { drawRaiderArrows(c, size) }
         for a in asteroids where a.maxHP > 1 {
-            guard let sp = project?(CGPoint(x: a.center.x, y: a.center.y)) else { continue }
+            let projected = a.kind == .raider ? project3?(a.center, 6 + a.alt) : project?(a.center)
+            guard let sp = projected else { continue }
             guard sp.x > -40, sp.x < size.width + 40, sp.y > insets.top + 120, sp.y < size.height - 120 else { continue }
+            if a.kind == .raider {
+                drawRaiderBar(c, a, sp)
+                continue
+            }
             let col = a.kind == .comet ? Color(red: 0.55, green: 0.85, blue: 1)
                 : (a.kind == .drone ? Color(red: 1, green: 0.35, blue: 0.35) : Color(red: 1, green: 0.6, blue: 0.3))
             let segW: CGFloat = 7
@@ -62,6 +68,55 @@ extension Game {
                     .foregroundColor(col),
                    at: CGPoint(x: sp.x, y: y - 4), anchor: .bottom)
         }
+    }
+
+    /// Gefecht in der Verfolgerkamera: rote Pfeile um das Schiff zeigen Piraten außerhalb des Blickfelds
+    private func drawRaiderArrows(_ c: GraphicsContext, _ size: CGSize) {
+        guard let project3, let ship = project3(pos, altitude),
+              let side = project3(point(from: pos, angle: heading + .pi / 2, distance: 60), altitude) else { return }
+        // liegt +90° rechts oder links auf dem Bildschirm?
+        let sign: CGFloat = side.x >= ship.x ? 1 : -1
+        let red = Color(red: 1, green: 0.32, blue: 0.3)
+        for a in asteroids where a.kind == .raider && !a.retreating {
+            let rel = wrap(atan2(a.center.y - pos.y, a.center.x - pos.x) - heading)
+            guard abs(rel) > 0.32 else { continue }
+            let ang = -CGFloat.pi / 2 + sign * rel
+            let r: CGFloat = 110
+            let tip = CGPoint(x: ship.x + cos(ang) * (r + 12), y: ship.y + sin(ang) * (r + 12))
+            let l = CGPoint(x: ship.x + cos(ang - 0.12) * r, y: ship.y + sin(ang - 0.12) * r)
+            let rr = CGPoint(x: ship.x + cos(ang + 0.12) * r, y: ship.y + sin(ang + 0.12) * r)
+            var tri = Path()
+            tri.move(to: tip)
+            tri.addLine(to: l)
+            tri.addLine(to: rr)
+            tri.closeSubpath()
+            let near = hypot(a.center.x - pos.x, a.center.y - pos.y) < Raider.range
+            c.fill(tri, with: .color(red.opacity(near ? 0.95 : 0.5)))
+        }
+    }
+
+    /// Piratenschiff: durchgehende Rumpfleiste, darüber der Schild, darüber Klasse oder Name des Kopfgeldziels
+    private func drawRaiderBar(_ c: GraphicsContext, _ a: Asteroid, _ sp: CGPoint) {
+        let boss = a.variant == 2
+        let red = Color(red: 1, green: 0.32, blue: 0.3)
+        let cyan = Color(red: 0.4, green: 0.78, blue: 1)
+        let w: CGFloat = boss ? 92 : (a.variant == 1 ? 66 : 52)
+        let x0 = sp.x - w / 2
+        let y = sp.y - (boss ? 64 : 50)
+        let hpFrac = max(0, min(1, CGFloat(a.hp) / CGFloat(max(1, a.maxHP))))
+        c.fill(Path(CGRect(x: x0, y: y, width: w, height: 5)), with: .color(Color.white.opacity(0.15)))
+        c.fill(Path(CGRect(x: x0, y: y, width: w * hpFrac, height: 5)), with: .color(red))
+        var top = y
+        if a.maxShield > 0 {
+            top = y - 5
+            let shFrac = max(0, min(1, a.shield / a.maxShield))
+            c.fill(Path(CGRect(x: x0, y: top, width: w, height: 3)), with: .color(Color.white.opacity(0.1)))
+            c.fill(Path(CGRect(x: x0, y: top, width: w * shFrac, height: 3)), with: .color(cyan))
+        }
+        c.draw(Text(boss ? bountyName : Raider.title(a.variant))
+                .font(.system(size: boss ? 10 : 9, weight: .bold, design: .monospaced))
+                .foregroundColor(boss ? Color(red: 1, green: 0.78, blue: 0.4) : red),
+               at: CGPoint(x: sp.x, y: top - 3), anchor: .bottom)
     }
 
     private func toScreen(_ p: CGPoint, _ size: CGSize) -> CGPoint {
@@ -613,6 +668,16 @@ extension Game {
             p.addLine(to: CGPoint(x: -6, y: 7))
             p.closeSubpath()
             c.fill(p, with: .color(col))
+        case .cargo:
+            // Container mit Rippen
+            let box = Path(roundedRect: CGRect(x: -7, y: -5, width: 14, height: 10), cornerRadius: 1.5)
+            c.fill(box, with: .color(col.opacity(0.35)))
+            c.stroke(box, with: .color(col), lineWidth: 1.6)
+            for x in [-3.0, 0.0, 3.0] as [CGFloat] {
+                p.move(to: CGPoint(x: x, y: -4))
+                p.addLine(to: CGPoint(x: x, y: 4))
+            }
+            c.stroke(p, with: .color(col), lineWidth: 1)
         case .rescue:
             p.move(to: CGPoint(x: -5, y: 0))
             p.addLine(to: CGPoint(x: 0, y: -5))
@@ -699,7 +764,7 @@ extension Game {
     }
 
     private func drawTargetLabel(_ c: GraphicsContext, _ size: CGSize) {
-        guard phase != .over, !inHangarView else { return }
+        guard phase != .over, phase != .combat, !inHangarView else { return }
         let t = planets[currentIndex + 1]
         let sp = screenPoint(t.center, size)
         let edge = screenPoint(CGPoint(x: t.center.x + t.radius + 62, y: t.center.y), size)
@@ -724,9 +789,10 @@ extension Game {
         let anchorTop: UnitPoint = flip > 0 ? .bottomLeading : .bottomTrailing
         let anchorBottom: UnitPoint = flip > 0 ? .topLeading : .topTrailing
         let tx = elbow.x + 2 * flip
-        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : "ZIEL \(String(format: "%02d", planetBase + currentIndex + 1))")
+        let number = String(format: "%02d", planetBase + currentIndex + 1)
+        let title = c.resolve(Text(t.isStation ? "RAUMSTATION · WERFT" : (t.arena.map { "\($0.title) · PLANET \(number)" } ?? "ZIEL \(number)"))
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(amber))
+                .foregroundColor(t.arena != nil ? Color(red: 1, green: 0.42, blue: 0.37) : amber))
         let info = c.resolve(Text("\(shownDistance) km · +\(Int(t.energyGain.rounded())) E")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(amber.opacity(0.85)))
@@ -897,7 +963,7 @@ extension Game {
     // MARK: Bildschirm-Ebene
 
     private func drawIndicator(_ c: GraphicsContext, _ size: CGSize) {
-        guard phase != .over, !inHangarView else { return }
+        guard phase != .over, phase != .combat, !inHangarView else { return }
         let t = planets[currentIndex + 1]
         let sp = toScreen(t.center, size)
         let margin: CGFloat = 34
@@ -1065,8 +1131,9 @@ extension Game {
         for a in asteroids {
             let rel = CGPoint(x: (a.center.x - pos.x) * scale, y: (a.center.y - pos.y) * scale)
             guard hypot(rel.x, rel.y) < R - 2 else { continue }
-            inner.fill(circlePath(CGPoint(x: center.x + rel.x, y: center.y + rel.y), 1.2),
-                       with: .color(Color(red: 1, green: 0.65, blue: 0.45).opacity(0.8)))
+            let hostile = a.kind == .raider
+            inner.fill(circlePath(CGPoint(x: center.x + rel.x, y: center.y + rel.y), hostile ? 2.2 : 1.2),
+                       with: .color(hostile ? Color(red: 1, green: 0.25, blue: 0.25) : Color(red: 1, green: 0.65, blue: 0.45).opacity(0.8)))
         }
 
         for it in items {

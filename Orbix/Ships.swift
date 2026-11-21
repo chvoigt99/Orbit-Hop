@@ -110,19 +110,19 @@ struct ShipModel: Identifiable {
     let drain: CGFloat
 
     static let all: [ShipModel] = [
-        ShipModel(id: "falke", name: "FALKE", classTitle: "JÄGER", blurb: "Ausgewogen. Der Standard der Flotte.",
+        ShipModel(id: "falke", name: "FALKE", classTitle: "JÄGER", blurb: "Wendiger Jäger mit Zwillingskanonen. Der Standard der Flotte.",
                   grade: .start, hull: .fighter, weapon: .cannon, speed: 1.0, energy: 100, armor: 0.1, drain: 1.0),
         ShipModel(id: "libelle", name: "LIBELLE", classTitle: "SPÄHER", blurb: "Sehr schnell und wendig, kleiner Speicher, keine Panzerung.",
                   grade: .normal, hull: .scout, weapon: .rocket, speed: 1.25, energy: 85, armor: 0, drain: 0.95),
-        ShipModel(id: "atlas", name: "ATLAS", classTitle: "FRACHTER", blurb: "Riesiger Energiespeicher, dafür träge.",
+        ShipModel(id: "atlas", name: "ATLAS", classTitle: "FRACHTER", blurb: "Riesiger Frachtraum und Energiespeicher, dafür träge.",
                   grade: .normal, hull: .hauler, weapon: .bomb, speed: 0.85, energy: 150, armor: 0.15, drain: 1.0),
         ShipModel(id: "bastion", name: "BASTION", classTitle: "PANZERSCHIFF", blurb: "Schwer gepanzert, Asteroiden bremsen kaum.",
                   grade: .normal, hull: .tank, weapon: .cannon, speed: 0.85, energy: 115, armor: 0.55, drain: 1.05),
         ShipModel(id: "orion", name: "ORION", classTitle: "KREUZER", blurb: "Railgun und solide Werte in allen Bereichen.",
                   grade: .good, hull: .cruiser, weapon: .railgun, speed: 1.05, energy: 130, armor: 0.3, drain: 0.95),
-        ShipModel(id: "viper", name: "VIPER", classTitle: "ABFANGJÄGER", blurb: "Extrem schnell, Lenkraketen räumen den Weg.",
-                  grade: .good, hull: .interceptor, weapon: .rocket, speed: 1.35, energy: 105, armor: 0.15, drain: 0.9),
-        ShipModel(id: "titan", name: "TITAN", classTitle: "SCHLACHTSCHIFF", blurb: "Gewaltiger Speicher und dicke Panzerung.",
+        ShipModel(id: "viper", name: "VIPER", classTitle: "ABFANGJÄGER", blurb: "Extrem schnell, schwere Kanonen: der Schrecken der Piraten.",
+                  grade: .good, hull: .interceptor, weapon: .cannon, speed: 1.35, energy: 105, armor: 0.15, drain: 0.9),
+        ShipModel(id: "titan", name: "TITAN", classTitle: "SCHWERER FRACHTER", blurb: "Gewaltiger Frachtraum, dicke Panzerung, zwei Geschütztürme.",
                   grade: .good, hull: .battleship, weapon: .bomb, speed: 0.9, energy: 170, armor: 0.6, drain: 1.0),
         ShipModel(id: "phantom", name: "PHANTOM", classTitle: "TARNSCHIFF", blurb: "Verbraucht kaum Energie, schnell und gut geschützt.",
                   grade: .superior, hull: .phantom, weapon: .railgun, speed: 1.3, energy: 140, armor: 0.4, drain: 0.7),
@@ -141,22 +141,48 @@ struct Ship {
 
     let model: ShipModel
     let level: Int
+    /// eingebaute Mods mit ihrer Stufe
+    var mods: [ModKind: Int] = [:]
 
     var hull: HullClass { model.hull }
     var weapon: WeaponKind { model.weapon }
     var name: String { model.name }
 
     private var l: CGFloat { CGFloat(level) }
+    /// Wirkung einer eingebauten Mod (0, wenn nicht eingebaut)
+    private func mod(_ k: ModKind) -> CGFloat { k.amount(mods[k] ?? 0) }
 
-    var speed: CGFloat { model.speed * (1 + 0.04 * l) }
-    var maxEnergy: CGFloat { (model.energy * (1 + 0.08 * l)).rounded() }
-    var armor: CGFloat { min(0.85, model.armor + 0.04 * l) }
+    var speed: CGFloat { model.speed * (1 + 0.04 * l) * (1 + mod(.thrusters)) }
+    var maxEnergy: CGFloat { (model.energy * (1 + 0.08 * l) * (1 + mod(.battery))).rounded() }
+    var armor: CGFloat { min(0.85, model.armor + 0.04 * l + mod(.plating)) }
     var drain: CGFloat { model.drain * (1 - 0.03 * l) }
-    var weaponCostFactor: CGFloat { max(0.35, 1 - 0.07 * l) }
+    var weaponCostFactor: CGFloat { max(0.25, max(0.35, 1 - 0.07 * l) * (1 - mod(.capacitor))) }
     /// Reichweite der Waffe: +4 % je Stufe
-    var weaponRangeFactor: CGFloat { 1 + 0.04 * l }
+    var weaponRangeFactor: CGFloat { (1 + 0.04 * l) * (1 + mod(.targeting)) }
     /// Nachladezeit der Waffe: −5 % je Stufe (Stufe 10: halbe Zeit)
-    var weaponReloadFactor: CGFloat { 1 - 0.05 * l }
+    var weaponReloadFactor: CGFloat { (1 - 0.05 * l) * (weapon == .cannon ? 1 - mod(.twinCannon) : 1) }
+
+    // MARK: Rollen und Mods
+
+    /// Frachtraum in Containern (Frachtraum-Erweiterung: mindestens ein Container mehr je Stufe)
+    var cargoCapacity: Int {
+        let lv = mods[.cargoBay] ?? 0
+        return model.cargoCapacity + max(lv, Int((CGFloat(model.cargoCapacity) * mod(.cargoBay)).rounded()))
+    }
+    var bountyFactor: CGFloat { model.bountyFactor * (1 + mod(.bountyScanner)) }
+    var cargoPayFactor: CGFloat { 1 + mod(.smuggler) }
+    /// Punkte des Deflektorschilds
+    var shieldMax: CGFloat { mod(.shield) }
+    /// Anteil der Treffer, bei denen Fracht verloren geht
+    var cargoLossChance: CGFloat { 1 - mod(.dampers) }
+    var salvageFactor: CGFloat { 1 + mod(.salvage) }
+    /// Schaden gegen Piratenschiffe
+    var shipDamageFactor: CGFloat { 1 + mod(.piercing) }
+    /// Zielhilfe gegen bewegliche Ziele
+    var aimAssistFactor: CGFloat { 1 + mod(.targeting) * 1.5 }
+    /// Panzerung pro Sekunde im Orbit
+    var repairRate: CGFloat { mod(.nanoRepair) }
+    var twinCannon: Bool { weapon == .cannon && (mods[.twinCannon] ?? 0) > 0 }
 
     /// Tech-Teile für die nächste Stufe: Grundpreis je Klasse, jede Stufe 25 % teurer als die vorige,
     /// auf 5 gerundet (Stufe 10 kostet gut das Siebenfache der ersten)
@@ -181,6 +207,12 @@ final class Profile {
     var stationsReached: Int
     /// gewählter Startpunkt: -1 = Hangar, sonst die Nummer einer erreichten Station
     var startStation: Int
+    /// gekaufte Mods und ihre Stufe (1...3)
+    var modLevels: [String: Int]
+    /// eingebaute Mods je Schiff
+    var loadouts: [String: [String]]
+    /// Ruf aus Aufträgen und Missionen, ergibt den Pilotenrang
+    var reputation: Int
 
     private let defaults = UserDefaults.standard
 
@@ -192,11 +224,70 @@ final class Profile {
         selectedID = defaults.string(forKey: "orbitHopSelected") ?? Ship.starter.model.id
         stationsReached = defaults.integer(forKey: "orbitHopStations")
         startStation = (defaults.object(forKey: "orbitHopStartStation") as? Int) ?? -1
+        modLevels = (defaults.dictionary(forKey: "orbixModLevels") as? [String: Int]) ?? [:]
+        loadouts = (defaults.dictionary(forKey: "orbixLoadouts") as? [String: [String]]) ?? [:]
+        reputation = defaults.integer(forKey: "orbixReputation")
         owned.insert(Ship.starter.model.id)
         if !owned.contains(selectedID) { selectedID = Ship.starter.model.id }
     }
 
-    func ship(_ m: ShipModel) -> Ship { Ship(model: m, level: levels[m.id] ?? 0) }
+    func ship(_ m: ShipModel) -> Ship {
+        var mods: [ModKind: Int] = [:]
+        for k in installed(m) { mods[k] = modLevel(k) }
+        return Ship(model: m, level: levels[m.id] ?? 0, mods: mods)
+    }
+
+    // MARK: Rang
+
+    var rank: Int { PilotRank.rank(for: reputation) }
+
+    /// Ruf gutschreiben; liefert den neuen Rang, wenn er gestiegen ist
+    @discardableResult
+    func addReputation(_ n: Int) -> Int? {
+        let before = rank
+        reputation += max(0, n)
+        save()
+        return rank > before ? rank : nil
+    }
+
+    // MARK: Mods
+
+    func modLevel(_ k: ModKind) -> Int { modLevels[k.rawValue] ?? 0 }
+
+    /// eingebaute Mods eines Schiffs in Einbaureihenfolge (nur gekaufte, höchstens so viele wie Plätze)
+    func installed(_ m: ShipModel) -> [ModKind] {
+        let list = (loadouts[m.id] ?? []).compactMap { ModKind(rawValue: $0) }.filter { modLevel($0) > 0 }
+        return Array(list.prefix(m.modSlots))
+    }
+
+    func canBuyMod(_ k: ModKind) -> Bool {
+        let lv = modLevel(k)
+        return rank >= k.rank && lv < ModKind.maxLevel && parts >= k.cost(toLevel: lv + 1)
+    }
+
+    /// Mod kaufen oder eine Stufe höher bringen; frisch gekauft wird sie gleich ins gewählte Schiff eingebaut, wenn Platz ist
+    func buyMod(_ k: ModKind) {
+        guard canBuyMod(k) else { return }
+        let lv = modLevel(k)
+        parts -= k.cost(toLevel: lv + 1)
+        modLevels[k.rawValue] = lv + 1
+        if lv == 0, let m = ShipModel.with(id: selectedID) { install(k, on: m) }
+        save()
+    }
+
+    func install(_ k: ModKind, on m: ShipModel) {
+        guard modLevel(k) > 0 else { return }
+        var list = installed(m).map(\.rawValue)
+        guard !list.contains(k.rawValue), list.count < m.modSlots else { return }
+        list.append(k.rawValue)
+        loadouts[m.id] = list
+        save()
+    }
+
+    func remove(_ k: ModKind, from m: ShipModel) {
+        loadouts[m.id] = installed(m).map(\.rawValue).filter { $0 != k.rawValue }
+        save()
+    }
 
     var selected: Ship { ship(ShipModel.with(id: selectedID) ?? Ship.starter.model) }
 
@@ -266,6 +357,9 @@ final class Profile {
         defaults.set(selectedID, forKey: "orbitHopSelected")
         defaults.set(stationsReached, forKey: "orbitHopStations")
         defaults.set(startStation, forKey: "orbitHopStartStation")
+        defaults.set(modLevels, forKey: "orbixModLevels")
+        defaults.set(loadouts, forKey: "orbixLoadouts")
+        defaults.set(reputation, forKey: "orbixReputation")
     }
 }
 
@@ -553,6 +647,16 @@ struct ShipShopView: View {
             VStack(spacing: 4) {
                 label("\(m.grade.title) · \(m.classTitle)")
                     .foregroundStyle(m.grade.color)
+                // Rolle groß und farbig: Jäger rot, Frachter blau
+                HStack(spacing: 5) {
+                    Image(systemName: m.role.symbol).font(.system(size: 10, weight: .bold))
+                    label(m.role.title)
+                }
+                .foregroundStyle(m.role.color)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Chamfer(cut: 5).fill(m.role.color.opacity(0.14)))
+                .overlay(Chamfer(cut: 5).stroke(m.role.color.opacity(0.7), lineWidth: 1))
                 Text(m.name)
                     .font(.system(size: 34, weight: .heavy, design: .monospaced))
                     .tracking(5)
@@ -592,6 +696,20 @@ struct ShipShopView: View {
                 statRow("ENERGIE", "\(Int(ship.maxEnergy))", norm(ship.maxEnergy, 60, 260), Color(red: 0.4, green: 0.9, blue: 0.5))
                 statRow("PANZER", "\(Int(ship.armor * 100)) %", norm(ship.armor, 0, 0.85), Color(red: 1, green: 0.65, blue: 0.4))
                 statRow("VERBRAUCH", "\(Int(ship.drain * 100)) %", norm(1.15 - ship.drain, 0.05, 0.65), Color(red: 0.6, green: 0.7, blue: 1))
+                // Rolle: Frachter verdienen an Fracht, Jäger an Kopfgeld
+                Text(m.role.pitch)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(m.role.color)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                HStack(spacing: 6) {
+                    label(m.role.title).foregroundStyle(m.role.color)
+                    Spacer()
+                    label("FRACHT \(ship.cargoCapacity) · KOPFGELD ×\(String(format: "%.2f", ship.bountyFactor)) · \(m.modSlots) MODS")
+                        .foregroundStyle(dim)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
                 if owned { upgradeRow(m, ship) }
             }
             .padding(14)

@@ -16,6 +16,14 @@ enum MissionEvent {
     case station
     case combo(Int)
     case dailyDone
+    /// Piratenschiff abgeschossen
+    case raider
+    /// Piratenanführer (Kopfgeldziel) abgeschossen
+    case boss
+    /// Fracht zugestellt, mit der Zahl der Container
+    case delivered(Int)
+    /// Auftrag erfüllt
+    case contract
 }
 
 // MARK: - Missionen
@@ -24,7 +32,7 @@ enum MissionEvent {
 /// bringt Tech-Teile und wird durch eine neue, etwas schwerere ersetzt.
 struct Mission: Codable, Identifiable {
     enum Kind: String, Codable, CaseIterable {
-        case planetsInRun, obstacles, perfects, combo, specials, bonuses
+        case planetsInRun, obstacles, perfects, combo, specials, bonuses, raiders, cargo
     }
 
     var id = UUID()
@@ -47,6 +55,8 @@ struct Mission: Codable, Identifiable {
         case .combo: return "Erreiche eine Combo ×\(target)"
         case .specials: return "Besuche \(target) Sonderplaneten"
         case .bonuses: return "Sammle \(target) Bonus-Items"
+        case .raiders: return "Schieße \(target) Piratenschiffe ab"
+        case .cargo: return "Stelle \(target) Fracht-Container zu"
         }
     }
 
@@ -58,6 +68,8 @@ struct Mission: Codable, Identifiable {
         case .combo: return "flame.fill"
         case .specials: return "circle.hexagongrid.fill"
         case .bonuses: return "sparkles"
+        case .raiders: return "scope"
+        case .cargo: return "shippingbox.fill"
         }
     }
 
@@ -72,6 +84,8 @@ struct Mission: Codable, Identifiable {
         case .combo: target = 3 + t
         case .specials: target = 2 + t
         case .bonuses: target = 4 + 2 * t
+        case .raiders: target = 3 + 2 * t
+        case .cargo: target = 10 + 5 * t
         }
         return Mission(kind: kind, target: target, reward: 2 + t)
     }
@@ -131,6 +145,18 @@ struct Achievement: Identifiable {
         Achievement(id: "daily", title: "Tagesflieger", detail: "Einen Tagesflug abgeschlossen", reward: 2, symbol: "calendar") {
             if case .dailyDone = $0 { return true }; return false
         },
+        Achievement(id: "raider", title: "Erster Abschuss", detail: "Ein Piratenschiff abgeschossen", reward: 3, symbol: "scope") {
+            if case .raider = $0 { return true }; return false
+        },
+        Achievement(id: "boss", title: "Kopfgeldjäger", detail: "Einen Piratenanführer zur Strecke gebracht", reward: 8, symbol: "star.fill") {
+            if case .boss = $0 { return true }; return false
+        },
+        Achievement(id: "contract", title: "Vertragspartner", detail: "Einen Auftrag erfüllt", reward: 3, symbol: "doc.text.fill") {
+            if case .contract = $0 { return true }; return false
+        },
+        Achievement(id: "freight12", title: "Großfrachter", detail: "12 Container auf einmal zugestellt", reward: 8, symbol: "shippingbox.fill") {
+            if case .delivered(let n) = $0 { return n >= 12 }; return false
+        },
     ]
 }
 
@@ -162,6 +188,9 @@ final class MissionLog {
     struct Reward {
         let text: String
         let parts: Int
+        /// selten gibt es für eine Mission auch ein Schiffsteil
+        var shipParts = 0
+        var reputation = 0
     }
 
     /// Ereignis verarbeiten; liefert erfüllte Missionen und neue Erfolge (Belohnung zahlt der Aufrufer aus)
@@ -177,6 +206,8 @@ final class MissionLog {
             case (.perfects, .perfect): p += 1
             case (.specials, .blackHoleEscape), (.specials, .binary): p += 1
             case (.bonuses, .bonus): p += 1
+            case (.raiders, .raider), (.raiders, .boss): p += 1
+            case (.cargo, .delivered(let n)): p += n
             default: break
             }
             missions[i].progress = min(p, m.target)
@@ -184,7 +215,10 @@ final class MissionLog {
         // erfüllte Missionen auszahlen und ersetzen
         for i in missions.indices where missions[i].done {
             let m = missions[i]
-            rewards.append(Reward(text: "MISSION ERFÜLLT · +\(m.reward) TECH", parts: m.reward))
+            // selten zusätzlich ein Schiffsteil (Christian, 2026-11-20)
+            let part = Double.random(in: 0...1) < 0.1 ? 1 : 0
+            rewards.append(Reward(text: "MISSION ERFÜLLT · +\(m.reward) TECH" + (part > 0 ? " · +1 SCHIFFSTEIL" : ""),
+                                  parts: m.reward, shipParts: part, reputation: 5))
             completedCount += 1
             missions[i] = nextMission(excluding: m.kind)
         }

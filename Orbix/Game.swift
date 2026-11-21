@@ -164,7 +164,10 @@ struct Planet {
     var passageTo: CGFloat = 0
     var isStation = false      // Raumstation: Reparatur, Werft und Upgrades
     var stationNo = -1         // laufende Nummer der Station (Name und Modell), sonst -1
+    var outpost = false        // Außenposten der Startstation (fünf Planeten nach dem Start an einer Station)
     var kind: PlanetKind = .normal
+    /// Gefechtsplanet: hier warten Piraten, beim Erreichen beginnt ein freies Gefecht (Combat.swift)
+    var arena: ArenaKind? = nil
 
     /// Schwarze Löcher ziehen viel stärker, als ihre Größe vermuten lässt
     var mass: CGFloat { radius * radius * (kind == .blackHole ? 3.2 : 1) }
@@ -270,12 +273,16 @@ struct Burst {
     let hue: Double
     let speed: CGFloat
     let life: CGFloat
+    /// Höhe (nur im 3D-Gefecht nicht null)
+    var alt: CGFloat = 0
 }
 
 // MARK: - Bonus-Items
 
 enum ItemKind: CaseIterable {
     case energy, wideCone, superBomb, rescue, tech, shipPart
+    /// Frachtcontainer aus einem zerstörten Piratenschiff
+    case cargo
 
     var hue: Double {
         switch self {
@@ -285,6 +292,7 @@ enum ItemKind: CaseIterable {
         case .rescue: return 22
         case .tech: return 48
         case .shipPart: return 330
+        case .cargo: return 222
         }
     }
 
@@ -296,6 +304,7 @@ enum ItemKind: CaseIterable {
         case .rescue: return "NACHBRENNER"
         case .tech: return "+1 TECH-TEIL"
         case .shipPart: return "+1 SCHIFFSTEIL"
+        case .cargo: return "FRACHTCONTAINER"
         }
     }
 
@@ -308,6 +317,7 @@ enum ItemKind: CaseIterable {
         case .rescue: return Double.random(in: 5...30)
         case .tech: return 48
         case .shipPart: return 330
+        case .cargo: return 222
         }
     }
 
@@ -339,6 +349,9 @@ enum ObstacleKind {
     case rock, debris, wreck, comet
     /// Jägerdrohne: lauert auf der Strecke, verfolgt das fliegende Schiff und schießt
     case drone
+    /// Piratenschiff: fliegt im Verband vor dem Schiff her, hat Schilde und feuert Salven (variant 0 Jäger,
+    /// 1 Kanonenboot, 2 Anführer und Kopfgeldziel)
+    case raider
 
     var title: String {
         switch self {
@@ -347,6 +360,7 @@ enum ObstacleKind {
         case .wreck: return "WRACK"
         case .comet: return "KOMET"
         case .drone: return "DROHNE"
+        case .raider: return "PIRAT"
         }
     }
 }
@@ -368,6 +382,25 @@ struct Asteroid {
     var variant = 0
     var bumpUntil: CGFloat = 0 // nach einer Kollision kurz keine weitere
     var fireAt: CGFloat = 0    // Drohne: nächster Schuss frühestens dann
+    // Piratenschiffe
+    var shield: CGFloat = 0
+    var maxShield: CGFloat = 0
+    var hitAt: CGFloat = -10   // letzter Treffer (Schild lädt erst nach einer Pause, Schildblitz)
+    var facing: CGFloat = 0    // Blickrichtung (Bug), unabhängig von der Flugrichtung
+    var awake = false          // hat das Schiff entdeckt und greift an
+    var retreating = false     // dreht ab, sobald das Schiff die Passage hinter sich hat
+    var burstLeft = 0          // Schüsse der laufenden Salve
+    // Gefecht: Kreisbahn um das Schiff (Radius, Winkeltempo, Winkel) und Zeitpunkte für Angriff und Bahnwechsel
+    var orbitR: CGFloat = 0
+    var orbitW: CGFloat = 0
+    var orbitA: CGFloat = 0
+    var diveUntil: CGFloat = 0
+    /// Schräglage in Kurven (Piraten, Darstellung) und Steigrate im 3D-Gefecht
+    var bank: CGFloat = 0
+    var valt: CGFloat = 0
+    var ringChangeAt: CGFloat = 0
+    /// Höhe über der Bahnebene (3D-Gefecht)
+    var alt: CGFloat = 0
 }
 
 /// Plasmaschuss einer Drohne
@@ -376,6 +409,13 @@ struct EnemyShot {
     var p: CGPoint
     let v: CGVector
     var age: CGFloat = 0
+    /// Schaden vor Abzug der Panzerung
+    var damage: CGFloat = 9
+    /// von einem Piratenschiff (andere Farbe)
+    var raider = false
+    /// Höhe und Steigrate (3D-Gefecht)
+    var alt: CGFloat = 0
+    var valt: CGFloat = 0
     static let maxAge: CGFloat = 2.6
     static let speed: CGFloat = 430
 }
@@ -455,6 +495,9 @@ struct Projectile {
     var age: CGFloat = 0
     let maxAge: CGFloat
     var target: Int? = nil     // uid des anvisierten Hindernisses
+    /// Höhe und Steigrate (3D-Gefecht)
+    var alt: CGFloat = 0
+    var valt: CGFloat = 0
 }
 
 struct Beam {
@@ -467,7 +510,8 @@ struct Beam {
 // MARK: - Spiel
 
 final class Game {
-    enum Phase { case docked, orbiting, flying, over }
+    /// combat: freies Gefecht an einem Gefechtsplaneten (Combat.swift)
+    enum Phase { case docked, orbiting, flying, combat, over }
 
     // MARK: Tuning
     let gravityConstant: CGFloat = 230    // ausgeglichen für die großen Planeten
@@ -487,6 +531,61 @@ final class Game {
     var railReach: CGFloat { Game.railRange * rangeFactor }
     var runParts = 0                      // in diesem Flug gesammelte Tech-Teile
     var runShipParts = 0                  // in diesem Flug gefundene Schiffsteile
+
+    // MARK: Aufträge und Kämpfe (Zustand im laufenden Flug, Logik in Contracts.swift und Combat.swift)
+    let contracts = ContractBoard()
+    /// der angenommene Auftrag läuft in diesem Flug
+    var contractRunning = false
+    /// geladene Container und Ladung beim Beladen
+    var cargoLoaded = 0
+    var cargoStart = 0
+    /// Planetennummer, an der die Fracht abgeliefert wird
+    var cargoDest = 0
+    var contractStartedAt: CGFloat = 0
+    /// Station (laufende Nummer), an der der Auftrag begann; dorthin geht nach dem Erfüllen der Rücksprung
+    var contractHomeStation: Int? = nil
+    /// Planetennummer, auf deren Strecke das Kopfgeldziel lauert (-1: keins)
+    var bountyPlanet = -1
+    var patrolKills = 0
+    /// Ergebnis des Auftrags für die Endtafel
+    var contractResult: String?
+    var contractSuccess = false
+    /// abgeschossene Piraten in diesem Flug
+    var runRaiderKills = 0
+    /// Deflektorschild (Mod): aktuelle Punkte und letzter Treffer
+    var shieldHP: CGFloat = 0
+    var shieldHitAt: CGFloat = -10
+
+    // MARK: Gefecht (Logik in Combat.swift)
+    /// Index des Gefechtsplaneten, an dem gerade gekämpft wird (-1: keiner)
+    var arenaIndex = -1
+    var arenaKind: ArenaKind = .ambush
+    var arenaStart: CGFloat = 0
+    /// Wellen: je Welle die Piratenklassen
+    var arenaWaves: [[Int]] = []
+    var arenaWave = 0
+    var arenaNextWaveAt: CGFloat? = nil
+    /// Gefecht vorbei, das Schiff fliegt zurück in den Orbit (gewonnen oder abgedreht)
+    var arenaReturning = false
+    var arenaWon = false
+    /// Steuerknüppel-Anzeige: Aufsetzpunkt und aktuelle Fingerposition auf dem Bildschirm
+    var stickOrigin: CGPoint? = nil
+    /// Lenkrichtung, beim Aufsetzen des Fingers einmal festgelegt (wechselt nie mitten im Ziehen)
+    var stickSign: CGFloat = 1
+    var stickPoint: CGPoint? = nil
+    /// Feuerknopf gedrückt: Dauerfeuer
+    var fireHeld = false
+    var combatSpeed: CGFloat = 0
+    var combatBank: CGFloat = 0
+    /// 3D-Gefecht: Höhe über der Bahnebene und Steigwinkel des Schiffs
+    var altitude: CGFloat = 0
+    var climb: CGFloat = 0
+    /// Steuerknüppel unter dem Finger: x lenkt, y steigt/sinkt (je -1...1), nil ohne Finger
+    var stick: CGVector? = nil
+    /// Welt → Bildschirm mit Höhe
+    var project3: ((CGPoint, CGFloat) -> CGPoint?)?
+    var boundaryWarnAt: CGFloat = -10
+    var planetBumpAt: CGFloat = -10
 
     /// Schwierigkeit 0...1, erreicht nach 40 Planeten das Maximum.
     var level: CGFloat { min(1, CGFloat(score) / 40) }
@@ -719,7 +818,7 @@ final class Game {
 
     var speed: CGFloat {
         switch phase {
-        case .flying, .over: return hypot(vel.dx, vel.dy)
+        case .flying, .over, .combat: return hypot(vel.dx, vel.dy)
         case .docked:
             guard let t = departElapsed, t > Game.liftTime else { return 0 }
             return launchSpeed(accuracy: Game.dockAccuracy) * (t - Game.liftTime) / Game.rollTime
@@ -743,6 +842,16 @@ final class Game {
     }
 
     static let autopilot = ProcessInfo.processInfo.arguments.contains("-autopilot")
+    /// Testflug: Autopilot fliegt bis zum Gefecht, dort lenkt der Finger (für Lenktests im Simulator)
+    static let manualCombat = ProcessInfo.processInfo.arguments.contains("-manualCombat")
+    /// Test: Auftrag an der ersten Station automatisch annehmen
+    static let contractTest = ProcessInfo.processInfo.arguments.contains("-contractTest")
+    /// Testargument "-startStation N": Flug beginnt an Station N (0 = erste), unabhängig vom Profil
+    static let startStationArg: Int? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-startStation"), i + 1 < args.count else { return nil }
+        return Int(args[i + 1])
+    }()
     /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
     static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
     /// Nur für Tests: Flug startet mit 20 % Panzerung, um Rauch und Funken zu sehen
@@ -750,11 +859,13 @@ final class Game {
     /// Testspieler mit menschenähnlichem Verhalten und Protokoll (Start mit -bot)
     static let bot = ProcessInfo.processInfo.arguments.contains("-bot")
     /// Testphase: erste Raumstation schon als zweites Ziel (vor der Veröffentlichung auf false setzen)
-    static let stationTest = true   // TESTFLIGHT-TEST: erste Station als zweites Ziel; vor der Veröffentlichung wieder auf false
+    static let stationTest = false   // nur für Tests auf true: erste Station schon als zweites Ziel
     /// Nur für Tests: Schwarzes Loch als zweites, Doppelstern als viertes Ziel (Start mit -planetTest)
     static let planetTest = ProcessInfo.processInfo.arguments.contains("-planetTest")
     /// Nur für Tests: Drohnen auf jeder Strecke ab dem zweiten Ziel (Start mit -droneTest)
     static let droneTest = ProcessInfo.processInfo.arguments.contains("-droneTest")
+    /// Nur für Tests: Gefechtsplanet als drittes Ziel, Anführer als fünftes (Start mit -raiderTest)
+    static let raiderTest = ProcessInfo.processInfo.arguments.contains("-raiderTest")
 
     // MARK: Raumstation
     /// Namen der Raumstationen; ab der elften wiederholen sie sich mit Zählung (AURORA II …).
@@ -770,7 +881,9 @@ final class Game {
     }
 
     /// Planetennummer der k-ten Station. Fest statt zufällig, damit jede Station immer an derselben
-    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40.
+    /// Stelle der Strecke liegt: anfangs alle gut 30 Planeten, später alle gut 40. Aus dem Hangar sind es
+    /// immer rund 30 bis zur ersten Station. Startet man an einer Station (dort gibt es beim Start keine
+    /// Aufträge), liegt fünf Planeten weiter ein Außenposten mit Auftragsterminal (Christian, 2026-11-21).
     static func stationPlanet(_ k: Int) -> Int {
         var n = stationTest ? 2 : 32
         for j in 0..<max(0, k) {
@@ -782,17 +895,22 @@ final class Game {
 
     /// Nummer der nächsten Station, die auf der Strecke entsteht
     private var nextStationNo = 0
+    /// Planetennummer des Außenpostens kurz nach dem Start an einer Station (nil beim Start im Hangar)
+    private var outpostAt: Int? = nil
     /// Planetennummer des ersten Planeten dieses Flugs: 0 im Hangar, sonst die der Startstation
     private(set) var planetBase = 0
     /// Name der Station, an der das Schiff gerade liegt
     var currentStationName: String? {
         let p = planets[currentIndex]
-        return p.isStation ? Game.stationName(p.stationNo) : nil
+        return p.isStation ? (p.outpost ? "AUSSENPOSTEN " : "") + Game.stationName(p.stationNo) : nil
     }
     /// Menü der Raumstation ist offen, die Simulation ruht
     var stationOpen = false
     /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
     private var stationMenuAt: CGFloat?
+    /// nach erfülltem Auftrag: Rücksprung zur Raumstation, sobald das Schiff wieder ruhig im Orbit ist
+    var homeReturnAt: CGFloat?
+    var homeReturnStation = 0
     /// Sichtbarkeit der HUD-Anzeigen: vor dem Start aus, beim Abheben aus dem Hangar weich einblenden
     var hudAlpha: CGFloat {
         guard started else { return 0 }
@@ -821,7 +939,7 @@ final class Game {
     /// Flug endete durch zerstörte Panzerung statt leerer Energie
     private(set) var destroyed = false
     /// Bewegung im letzten Schritt (für das Ausgleiten ohne Energie)
-    private var lastStepVel = CGVector.zero
+    var lastStepVel = CGVector.zero
 
     /// Tech-Teile für eine volle Reparatur: etwa 1 je 10 % Panzerung und 1 je 25 Energie, mindestens 1
     var repairCost: Int {
@@ -964,11 +1082,12 @@ final class Game {
     func equip() {
         ship = profile.selected
         if !started { energy = maxEnergy } else { energy = min(energy, maxEnergy) }
+        shieldHP = started ? min(shieldHP, ship.shieldMax) : ship.shieldMax
     }
 
     // MARK: Start / Level
 
-    func reset() {
+    func reset(startStation override: Int? = nil) {
         generation += 1
         runRecorded = false
         // Tagesmodus: Welt aus dem Datum, damit alle dieselbe Strecke fliegen
@@ -984,6 +1103,31 @@ final class Game {
         ship = profile.selected
         runParts = 0
         runShipParts = 0
+        // ein noch laufender Auftrag endet mit dem Flug (normalerweise schon in finishRun erledigt)
+        if contractRunning { contracts.fail() }
+        contractRunning = false
+        contractResult = nil
+        contractSuccess = false
+        cargoLoaded = 0
+        cargoStart = 0
+        bountyPlanet = -1
+        patrolKills = 0
+        runRaiderKills = 0
+        arenaIndex = -1
+        arenaWaves = []
+        arenaWave = 0
+        arenaNextWaveAt = nil
+        arenaReturning = false
+        arenaWon = false
+        stickOrigin = nil
+        stickPoint = nil
+        fireHeld = false
+        combatBank = 0
+        altitude = 0
+        climb = 0
+        stick = nil
+        shieldHP = ship.shieldMax
+        shieldHitAt = -10
         hull = Game.hullTest ? 20 : Game.maxHull
         destroyed = false
         items = []
@@ -1011,11 +1155,13 @@ final class Game {
         boostTime = 0
         stationOpen = false
         stationMenuAt = nil
+        homeReturnAt = nil
         arriveAt = nil
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
-        let startNo = dailyMode ? -1 : min(profile.startStation, profile.stationsReached - 1)
+        let startNo = dailyMode ? -1 : (override ?? Game.startStationArg ?? min(profile.startStation, profile.stationsReached - 1))
         planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
         nextStationNo = startNo + 1
+        outpostAt = startNo >= 0 ? planetBase + 5 : nil
         if startNo >= 0 {
             var first = Planet.make(center: .zero, radius: 160, spin: 0.85, hue: 165, allowRing: false, energyScale: 0)
             first.isStation = true
@@ -1076,10 +1222,11 @@ final class Game {
         // Nummer des neuen Planeten auf der ganzen Strecke (beim Start an einer Station nicht bei 0)
         let n = planetBase + planets.count
         let lvl = min(1, CGFloat(n) / 40)
-        let station = n == Game.stationPlanet(nextStationNo)
+        let outpost = n == outpostAt
+        let station = outpost || n == Game.stationPlanet(nextStationNo)
         // Sonderplaneten ab Planet 6, nie zwei hintereinander und nicht direkt vor einer Station
         var kind = PlanetKind.normal
-        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) {
+        if !station && n >= 6 && prev.kind == .normal && !prev.isStation && n + 1 != Game.stationPlanet(nextStationNo) && n + 1 != outpostAt {
             let roll = Double.random(in: 0...1, using: &Dice.rng)
             if roll < 0.06 + 0.05 * Double(lvl) { kind = .blackHole }
             else if roll < 0.13 + 0.05 * Double(lvl) { kind = .binary }
@@ -1099,10 +1246,25 @@ final class Game {
         // Kometen bekommen eine extra lange Strecke, damit sie lange vor einem bleiben
         // (die ersten Strecken nach dem Start bekommen keine Hindernisse)
         let canSpawn = planets.count >= 2
-        let hasComet = canSpawn && !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
-        let hasField = canSpawn && !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
-        // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet oder vor einer Station)
-        let hasDrones = canSpawn && !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
+        // Gefechtsplanet: Kampfauftrag (Kopfgeld oder Piraten beseitigen) an seinem Zielplaneten, Überfälle auf
+        // Frachter und selten zufällig. Dorthin fliegt man normal, am Planeten beginnt das freie Gefecht.
+        var arena: ArenaKind? = nil
+        if contractRunning && !dailyMode, let c = contracts.active, c.kind != .cargo, n == bountyPlanet {
+            if station || !canSpawn { bountyPlanet += 1 } else { arena = c.kind == .bounty ? .boss : .patrol }
+        }
+        let arenaRoll = Double.random(in: 0...1, using: &Dice.rng)
+        if arena == nil && canSpawn && !station && prev.arena == nil && n + 1 != Game.stationPlanet(nextStationNo) && n + 1 != outpostAt {
+            var chance: Double = n >= 10 ? 0.04 + 0.05 * Double(lvl) : 0
+            if contractRunning && !dailyMode, contracts.active?.kind == .cargo, n >= 4 { chance = max(chance, 0.22 + 0.12 * Double(lvl)) }
+            if arenaRoll < chance { arena = .ambush }
+        }
+        if Game.raiderTest && !station { arena = n == 3 ? .ambush : (n == 5 ? .boss : nil) }
+        if arena != nil { kind = .normal }
+        let hasComet = arena == nil && canSpawn && !station && n >= 5 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.07 + 0.08 * lvl)
+        // Piraten gibt es nur noch an Gefechtsplaneten, nicht mehr auf der Strecke
+        let hasField = arena == nil && canSpawn && !station && !hasComet && n >= 2 && Double.random(in: 0...1, using: &Dice.rng) < Double(0.45 + 0.4 * lvl)
+        // Jägerdrohnen ab Planet 8, auch zusätzlich zu einem Feld (nie mit Komet, Piraten oder vor einer Station)
+        let hasDrones = arena == nil && canSpawn && !station && !hasComet && n >= (Game.droneTest ? 2 : 8)
             && Double.random(in: 0...1, using: &Dice.rng) < (Game.droneTest ? 1 : Double(0.12 + 0.18 * lvl))
         // Strecken mit Hindernissen sind fest gegliedert: freier Abflug (Übergang in die Nahaufnahme),
         // Hindernispassage, freier Anflug (Kamera bleibt stehen). Nur in der Passage liegen Hindernisse.
@@ -1120,18 +1282,18 @@ final class Game {
         // Das Schwarze Loch wird so schnell umkreist wie ein mittelgroßer Planet, nicht wie ein winziger
         let spin = 150 / (kind == .blackHole ? 115 : r) * CGFloat.random(in: 0.9...1.2, using: &Dice.rng) * (1.1 + 0.5 * lvl)
         // Planetentyp: 3 von 4 Planeten haben ein Bonus-Item, die Farbe verrät welches (Sonderplaneten nie)
-        let bonus: ItemKind? = !station && kind == .normal && Double.random(in: 0...1, using: &Dice.rng) < 0.75 ? ItemKind.random() : nil
+        let bonus: ItemKind? = !station && arena == nil && kind == .normal && Double.random(in: 0...1, using: &Dice.rng) < 0.75 ? ItemKind.random() : nil
         let hue: Double
         switch kind {
         case .blackHole: hue = 28
         case .binary: hue = 45
-        case .normal: hue = station ? 165 : bonus?.planetHue ?? (Bool.random(using: &Dice.rng) ? Double.random(in: 40...80, using: &Dice.rng) : Double.random(in: 315...350, using: &Dice.rng))
+        case .normal: hue = arena != nil ? 6 : station ? 165 : bonus?.planetHue ?? (Bool.random(using: &Dice.rng) ? Double.random(in: 40...80, using: &Dice.rng) : Double.random(in: 315...350, using: &Dice.rng))
         }
         // Energie: Schwarzes Loch als Belohnung für das Risiko mehr, Doppelstern lädt erst im Orbit nach
         let kindEnergy: CGFloat = kind == .blackHole ? 1.6 : (kind == .binary ? 0.4 : 1)
         planets.append(Planet.make(center: c, radius: r, spin: spin,
-                                   hue: hue, allowRing: !station && kind == .normal,
-                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * kindEnergy, bonus: bonus))
+                                   hue: hue, allowRing: !station && arena == nil && kind == .normal,
+                                   energyScale: station ? 0 : (0.85 - 0.3 * lvl) * (hasField || hasComet ? 1.35 : 1) * (arena != nil ? 1.25 : 1) * kindEnergy, bonus: bonus))
         planets[planets.count - 1].hardRoute = hard
         if hard {
             planets[planets.count - 1].passageFrom = prev.orbitRadius + Game.departLength
@@ -1139,7 +1301,12 @@ final class Game {
         }
         planets[planets.count - 1].isStation = station
         planets[planets.count - 1].kind = kind
-        if station {
+        planets[planets.count - 1].arena = arena
+        if outpost {
+            // Außenposten der Startstation: zählt nicht als neue Station und schaltet keinen Startpunkt frei
+            planets[planets.count - 1].stationNo = max(0, nextStationNo - 1)
+            planets[planets.count - 1].outpost = true
+        } else if station {
             planets[planets.count - 1].stationNo = nextStationNo
             nextStationNo += 1
         }
@@ -1209,7 +1376,7 @@ final class Game {
         case .rock: count = Int.random(in: 8...(12 + Int(6 * lvl)), using: &Dice.rng)
         case .debris: count = Int.random(in: 10...(15 + Int(5 * lvl)), using: &Dice.rng)
         case .wreck: count = Int.random(in: 3...4, using: &Dice.rng)
-        case .comet, .drone: count = 0
+        case .comet, .drone, .raider: count = 0
         }
         for _ in 0..<count {
             // über die ganze Passage verteilt, seitlich gestreut (mit Rand, damit nichts herausragt)
@@ -1323,14 +1490,25 @@ final class Game {
             enemyShots[i].age += dt
             enemyShots[i].p.x += enemyShots[i].v.dx * dt
             enemyShots[i].p.y += enemyShots[i].v.dy * dt
+            enemyShots[i].alt += enemyShots[i].valt * dt
             let p = enemyShots[i].p
-            if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 {
-                enemyShots.remove(at: i)
-                let damage = (9 * (1 - 0.6 * ship.armor)).rounded()
-                hull = max(0, hull - damage)
+            let dAlt = enemyShots[i].alt - altitude
+            // im Gefecht ist der Planet Deckung: Schüsse verglühen an ihm
+            if arenaIndex >= 0 && arenaIndex < planets.count {
+                let pc = planets[arenaIndex].center
+                if hypot(hypot(p.x - pc.x, p.y - pc.y), enemyShots[i].alt) < planets[arenaIndex].radius {
+                    enemyShots.remove(at: i)
+                    continue
+                }
+            }
+            if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 && abs(dAlt) < 22 {
+                let shot = enemyShots.remove(at: i)
+                // dicke Frachterhülle: im Gefecht kommt weniger Schaden durch
+                let damage = takeHit(shot.damage * (shot.raider ? ship.model.role.combatDamageTaken : 1), armorFactor: 0.6)
                 brakeFlash = max(brakeFlash, 0.6)
-                burst(at: p, count: 18, hue: 355, speed: 200, life: 0.6)
-                popups.append(Popup(pos: pos, text: "PLASMATREFFER -\(Int(damage))", color: Color(red: 1, green: 0.45, blue: 0.45), age: 0))
+                burst(at: p, count: 18, hue: damage > 0 ? 355 : 200, speed: 200, life: 0.6, alt: altitude)
+                popups.append(Popup(pos: pos, text: damage > 0 ? "PLASMATREFFER -\(Int(damage))" : "SCHILD HÄLT",
+                                    color: damage > 0 ? Color(red: 1, green: 0.45, blue: 0.45) : Color(red: 0.5, green: 0.8, blue: 1), age: 0))
                 shake = max(shake, 0.25)
                 Haptics.miss()
                 if comboFlight {
@@ -1345,6 +1523,7 @@ final class Game {
 
     private func moveObstacles(_ dt: CGFloat) {
         moveDrones(dt)
+        moveRaiders(dt)
         // Kometen schieben sich immer vor das fliegende Schiff
         let sp = hypot(vel.dx, vel.dy)
         if phase == .flying && sp > 1 {
@@ -1419,8 +1598,8 @@ final class Game {
 
     // MARK: Effekte
 
-    func burst(at p: CGPoint, count: Int, hue: Double, speed: CGFloat, life: CGFloat) {
-        bursts.append(Burst(pos: p, count: count, hue: hue, speed: speed, life: life))
+    func burst(at p: CGPoint, count: Int, hue: Double, speed: CGFloat, life: CGFloat, alt: CGFloat = 0) {
+        bursts.append(Burst(pos: p, count: count, hue: hue, speed: speed, life: life, alt: alt))
     }
 
     // MARK: Eingabe
@@ -1432,10 +1611,17 @@ final class Game {
     private(set) var runPerfects = 0
 
     /// Ereignis melden; erfüllte Missionen und neue Erfolge zahlen sofort Tech-Teile aus
-    private func track(_ event: MissionEvent) {
+    func track(_ event: MissionEvent) {
         for r in missions.record(event) {
             profile.addParts(r.parts)
             runParts += r.parts
+            if r.shipParts > 0 {
+                profile.addShipParts(r.shipParts)
+                runShipParts += r.shipParts
+            }
+            if r.reputation > 0, let rank = profile.addReputation(r.reputation) {
+                popups.append(Popup(pos: pos, text: "BEFÖRDERT: \(PilotRank.title(rank))", color: Color(red: 1, green: 0.85, blue: 0.42), age: 0))
+            }
             popups.append(Popup(pos: pos, text: r.text, color: Color(red: 0.55, green: 1, blue: 0.75), age: 0))
             Haptics.bonus()
         }
@@ -1469,6 +1655,8 @@ final class Game {
 
     /// Ergebnis des Laufs festhalten: Rekord im freien Spiel, Tagesbestwert und Bestenliste im Tagesmodus
     private func finishRun() {
+        // ein laufender Auftrag endet mit dem Flug
+        if contractRunning { failContract(contractFailReason) }
         // noch nicht losgeflogen: kein Versuch
         guard started, !runRecorded, score > 0 || phase != .docked else { return }
         runRecorded = true
@@ -1494,6 +1682,23 @@ final class Game {
         reset()
         started = true
         startedAt = time
+    }
+
+    /// Auftrag erfüllt: Der Flug endet und das Schiff springt zurück zur Raumstation, an der es gestartet ist;
+    /// dort öffnet sich das Stationsmenü (Christian, 2026-11-21)
+    func returnToStation() {
+        let result = contractResult, success = contractSuccess
+        let home = homeReturnStation
+        blog("return to station \(home) score=\(score)")
+        finishRun()
+        paused = false
+        reset(startStation: home)
+        contractResult = result
+        contractSuccess = success
+        started = true
+        startedAt = time
+        stationMenuAt = time + 0.8
+        popups.append(Popup(pos: pos, text: "ZURÜCK AN DER STATION", color: Color(red: 1, green: 0.85, blue: 0.42), age: 0, lift: 30))
     }
 
     /// Lauf abbrechen und zurück zum Titel
@@ -1523,7 +1728,7 @@ final class Game {
                 started = false
                 reset()
             }
-        case .flying:
+        case .flying, .combat:
             fire()
         case .orbiting:
             // im Kegel: Katapult, sonst feuert die Bordwaffe
@@ -1578,6 +1783,11 @@ final class Game {
         if planets[currentIndex].kind == .blackHole && phase == .orbiting {
             popups.append(Popup(pos: pos, text: "SCHLEUDERSTART", color: Color(red: 1, green: 0.7, blue: 0.35), age: 0))
             track(.blackHoleEscape)
+        }
+        // Gefechtsplanet voraus: Warnung beim Start
+        if let a = tg.arena, phase == .orbiting || phase == .docked {
+            let text = a == .boss ? "KOPFGELDZIEL \(bountyName) VORAUS" : "\(a.title) VORAUS · GEFECHT"
+            popups.append(Popup(pos: pos, text: text, color: Color(red: 1, green: 0.4, blue: 0.35), age: 0, lift: 40))
         }
         if phase == .orbiting && accuracy >= 0.9 {
             runPerfects += 1
@@ -1641,6 +1851,13 @@ final class Game {
         let dt = CGFloat(min(max(now - (lastTime ?? now), 0), 1.0 / 20.0))
         lastTime = now
         uiTime += dt
+        // angenommener Auftrag beginnt beim Start oder sofort, wenn er an einer Station angenommen wurde
+        if started && !contractRunning && contracts.active != nil && !dailyMode && phase != .over { beginContract() }
+        // Test: an der Station automatisch einen Auftrag annehmen (Fracht bevorzugt), um den Rücksprung zu prüfen
+        if stationOpen && Game.contractTest && contracts.active == nil && !contractRunning,
+           let c = contracts.offers.first(where: { $0.kind == .cargo }) ?? contracts.offers.first {
+            contracts.accept(c)
+        }
         if stationOpen && (Game.bot || Game.autopilot) { leaveStation() }
         guard !paused && !stationOpen else {
             SoundFX.shared.engineHum(level: 0, pitch: 50)
@@ -1671,6 +1888,7 @@ final class Game {
             stationMenuAt = nil
             if atStation { stationOpen = true }
         }
+        if let t = homeReturnAt, time >= t, phase == .orbiting, !paused { returnToStation() }
         updateFx(simDt)
         updateCamera(dt, size)
         updateSound()
@@ -1692,7 +1910,7 @@ final class Game {
         case .orbiting:
             level = 0.3
             pitch = 50
-        case .flying:
+        case .flying, .combat:
             level = 0.55 + (boostTime > 0 ? 0.35 : 0)
             pitch = 50 + min(70, speed / 9)
         case .over:
@@ -1744,6 +1962,8 @@ final class Game {
                 botShots += 1
                 fire()
             }
+        case .combat:
+            break
         case .over:
             break
         }
@@ -1765,8 +1985,17 @@ final class Game {
         let hardFlight = phase == .flying && planets[min(originIndex + 1, planets.count - 1)].hardRoute
         // längere Strecken: im Flug generell 25 % weniger Verbrauch
         let flightFactor: CGFloat = phase == .flying ? (hardFlight ? 0.4 : 0.75) : 1
-        if started && phase != .docked { energy -= energyDrain * dt * (charging ? 0 : 1) * flightFactor }
+        // im Gefecht kostet nur das Feuern Energie
+        if started && phase != .docked && phase != .combat { energy -= energyDrain * dt * (charging ? 0 : 1) * flightFactor }
         missFlash = max(0, missFlash - dt)
+        // Deflektorschild lädt sich nach drei Sekunden ohne Treffer wieder auf
+        if ship.shieldMax > 0 && shieldHP < ship.shieldMax && time - shieldHitAt > 3 {
+            shieldHP = min(ship.shieldMax, shieldHP + 8 * dt)
+        }
+        // Nano-Reparatur flickt die Panzerung im ruhigen Orbit (nicht am Ereignishorizont)
+        if phase == .orbiting && ship.repairRate > 0 && hull > 0 && hull < Game.maxHull && !inHorizon {
+            hull = min(Game.maxHull, hull + ship.repairRate * dt)
+        }
 
         if energy <= 0 && rescueCharges > 0 {
             fireRescue()
@@ -1838,6 +2067,8 @@ final class Game {
                 if phase != .flying { break }
             }
             spawnExhaust()
+        case .combat:
+            simulateCombat(dt)
         case .over:
             break
         }
@@ -1847,6 +2078,8 @@ final class Game {
         // Im Flug zählt die Fluggeschwindigkeit: der seitliche Versatz beim Ausweichen soll die Nase nicht schwenken
         if phase == .flying && hypot(vel.dx, vel.dy) > 1 {
             heading = atan2(vel.dy, vel.dx)
+        } else if phase == .combat {
+            // im Gefecht lenkt simulateCombat die Nase selbst
         } else if hypot(pos.x - before.x, pos.y - before.y) > 0.0001 && !(phase == .docked && departAt == nil) {
             heading = atan2(pos.y - before.y, pos.x - before.x)
         }
@@ -1877,7 +2110,7 @@ final class Game {
 
     private func apply(_ kind: ItemKind, at p: CGPoint) {
         blog("item \(kind) energy=\(Int(energy))")
-        if kind != .tech && kind != .shipPart { track(.bonus) }
+        if kind != .tech && kind != .shipPart && kind != .cargo { track(.bonus) }
         switch kind {
         case .energy:
             addEnergy(35, from: p)
@@ -1894,6 +2127,13 @@ final class Game {
             runShipParts += 1
             profile.addShipParts(1)
             Haptics.bonus()
+        case .cargo:
+            // Fracht nachladen oder als Bergungsgut verkaufen; eigene Meldung
+            collectCargo()
+            burst(at: p, count: 20, hue: kind.hue, speed: 220, life: 0.8)
+            Haptics.capture()
+            SoundFX.shared.play(.item)
+            return
         }
         if kind == .tech || kind == .shipPart {
             burst(at: p, count: 30, hue: kind.hue, speed: 260, life: 0.9)
@@ -1910,6 +2150,11 @@ final class Game {
 
     func fire() {
         guard started, phase != .over, weaponCooldown <= 0 else { return }
+        // im Gefecht schießen die Bordkanonen, ohne Flugenergie zu verbrauchen
+        if phase == .combat {
+            fireBoardCannons()
+            return
+        }
         guard energy > weaponCost else {
             noEnergyFlash = 0.5
             Haptics.miss()
@@ -1926,19 +2171,21 @@ final class Game {
             let lead = hypot(t.center.x - muzzle.x, t.center.y - muzzle.y) / 1900
             let ax = t.center.x + t.vel.dx * lead - muzzle.x
             let ay = t.center.y + t.vel.dy * lead - muzzle.y
-            // nur minimal ablenken: höchstens etwa 10°, bei Drohnen bis etwa 35°
+            // nur minimal ablenken: höchstens etwa 10°, bei Drohnen und Piraten bis etwa 35° (Zielcomputer mehr)
             let want = atan2(ay, ax)
-            let limit: CGFloat = t.kind == .drone ? 0.6 : 0.18
+            let limit: CGFloat = t.kind == .drone || t.kind == .raider ? min(1.1, 0.6 * ship.aimAssistFactor) : 0.18
             let hd = heading + max(-limit, min(limit, wrap(want - heading)))
             fwd = CGVector(dx: cos(hd), dy: sin(hd))
         }
 
+        let firstNew = projectiles.count
         switch weapon {
         case .railgun:
             let to = CGPoint(x: muzzle.x + fwd.dx * railReach, y: muzzle.y + fwd.dy * railReach)
             beams.append(Beam(from: muzzle, to: to))
             for i in asteroids.indices.reversed() {
                 let a = asteroids[i]
+                if a.kind == .raider && abs(a.alt - altitude) > a.radius + 40 { continue }
                 // Strahl beginnt am Schiff schmal und wird nach vorn breiter
                 let along = max(0, min(railReach, (a.center.x - muzzle.x) * fwd.dx + (a.center.y - muzzle.y) * fwd.dy))
                 let width = Game.railWidthNear + (Game.railWidth - Game.railWidthNear) * along / railReach
@@ -1946,15 +2193,37 @@ final class Game {
             }
             shake = max(shake, 0.2)
         case .cannon:
-            projectiles.append(Projectile(kind: .cannon, p: muzzle,
-                                          v: CGVector(dx: fwd.dx * 1900 + vel.dx * 0.3, dy: fwd.dy * 1900 + vel.dy * 0.3),
-                                          maxAge: 1.6 * rangeFactor, target: target?.uid))
+            let v = CGVector(dx: fwd.dx * 1900 + vel.dx * 0.3, dy: fwd.dy * 1900 + vel.dy * 0.3)
+            if ship.twinCannon {
+                // Zwillingskanone: zwei Geschosse nebeneinander zum Preis von einem
+                for side in [-1, 1] as [CGFloat] {
+                    let m = CGPoint(x: muzzle.x - fwd.dy * 7 * side, y: muzzle.y + fwd.dx * 7 * side)
+                    projectiles.append(Projectile(kind: .cannon, p: m, v: v, maxAge: 1.6 * rangeFactor, target: target?.uid))
+                }
+            } else {
+                projectiles.append(Projectile(kind: .cannon, p: muzzle, v: v, maxAge: 1.6 * rangeFactor, target: target?.uid))
+            }
         case .rocket:
             projectiles.append(Projectile(kind: .rocket, p: muzzle,
                                           v: CGVector(dx: fwd.dx * 700 + vel.dx * 0.5, dy: fwd.dy * 700 + vel.dy * 0.5), maxAge: 2.5 * rangeFactor))
         case .bomb:
             projectiles.append(Projectile(kind: .bomb, p: muzzle,
                                           v: CGVector(dx: fwd.dx * 600 + vel.dx * 0.6, dy: fwd.dy * 600 + vel.dy * 0.6), maxAge: 0.9 * rangeFactor))
+        }
+        // 3D-Gefecht: Geschosse starten in Schiffshöhe; mit Ziel gleicht die Zielhilfe den Höhenunterschied aus,
+        // solange er nicht zu steil ist, sonst fliegen sie im Steigwinkel des Schiffs
+        if phase == .combat {
+            for k in firstNew..<projectiles.count {
+                let sp = hypot(projectiles[k].v.dx, projectiles[k].v.dy)
+                var valt = sin(climb) * sp
+                if let t = target, t.kind == .raider {
+                    let d = max(1, hypot(t.center.x - muzzle.x, t.center.y - muzzle.y))
+                    let dAlt = t.alt - altitude
+                    if abs(dAlt) < d * 0.6 { valt = dAlt / (d / max(1, sp)) }
+                }
+                projectiles[k].alt = altitude
+                projectiles[k].valt = valt
+            }
         }
         Haptics.launch(0.3)
         switch weapon {
@@ -2012,7 +2281,7 @@ final class Game {
     /// ergibt das den Winkelbereich, über den der Fächer feuert.
     func swipe(from a: CGPoint, to b: CGPoint) {
         guard !paused, !stationOpen, started,
-              phase == .flying || phase == .orbiting, weaponCooldown <= 0, let project,
+              phase == .flying || phase == .orbiting || phase == .combat, weaponCooldown <= 0, let project,
               let ship = project(pos) else { return }
         // Bildschirmwinkel in Weltwinkel umrechnen: Kurs und Querrichtung projizieren
         guard let ahead = project(point(from: pos, angle: heading, distance: 200)),
@@ -2050,7 +2319,8 @@ final class Game {
             return abs(wrap(ang - mid)) < span / 2 + margin
         }
         let picked = Array(inArc.sorted { a, b in
-            if (a.kind == .drone) != (b.kind == .drone) { return a.kind == .drone }
+            let ea = a.kind == .drone || a.kind == .raider, eb = b.kind == .drone || b.kind == .raider
+            if ea != eb { return ea }
             return hypot(a.center.x - pos.x, a.center.y - pos.y) < hypot(b.center.x - pos.x, b.center.y - pos.y)
         }.prefix(Game.fanBeams))
         guard !picked.isEmpty else {
@@ -2111,7 +2381,8 @@ final class Game {
     static let railWidthNear: CGFloat = 12
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
-    private func aimTarget() -> Asteroid? {
+    /// arc: halber Erfassungswinkel im Gefecht (Bugkanonen eng, Geschützturm rundum); nil = normales Verhalten
+    func aimTarget(arc: CGFloat? = nil) -> Asteroid? {
         let reach: CGFloat = (weapon == .railgun ? 1.8 : 1) * rangeFactor
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?
@@ -2120,12 +2391,19 @@ final class Game {
             let dx = a.center.x - pos.x, dy = a.center.y - pos.y
             let d = hypot(dx, dy)
             // Kometen liegen ohnehin in der Flugbahn und werden früher erfasst
-            let range: CGFloat = (a.kind == .comet ? 1700 : (a.kind == .drone ? 950 : 750)) * reach
+            let mobile = a.kind == .drone || a.kind == .raider
+            let range: CGFloat = (a.kind == .comet ? 1700 : (mobile ? 950 : 750)) * reach
             guard d > 1, d < range + a.radius else { continue }
+            // 3D-Gefecht: zu steil über oder unter dem Schiff wird nicht erfasst
+            if a.kind == .raider && abs(a.alt - altitude) > d * 0.6 { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
             // Drohnen greifen von der Seite an: weiter Erfassungswinkel
-            guard cosA > (a.kind == .drone ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
-            guard cosA > 0 else { continue }
+            if let arc, a.kind == .raider {
+                guard cosA > cos(min(.pi, arc)) - 0.001 else { continue }
+            } else {
+                guard cosA > (mobile ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
+                guard cosA > 0 else { continue }
+            }
             // Objekte direkt in der Flugbahn haben Vorrang
             let side = d * sqrt(max(0, 1 - cosA * cosA))
             let score = d * 0.4 + max(0, side - a.radius) * 4
@@ -2170,9 +2448,12 @@ final class Game {
 
             pr.p.x += pr.v.dx * dt
             pr.p.y += pr.v.dy * dt
+            pr.alt += pr.valt * dt
 
             let reach: CGFloat = pr.kind == .bomb ? 24 : 12
-            let hit = asteroids.firstIndex { hypot($0.center.x - pr.p.x, $0.center.y - pr.p.y) < $0.radius + reach }
+            // im 3D-Gefecht muss auch die Höhe passen
+            let hit = asteroids.firstIndex { hypot($0.center.x - pr.p.x, $0.center.y - pr.p.y) < $0.radius + reach
+                && ($0.kind != .raider || abs($0.alt - pr.alt) < $0.radius + reach + 6) }
             if hit != nil || pr.age >= pr.maxAge {
                 switch pr.kind {
                 case .cannon:
@@ -2208,6 +2489,10 @@ final class Game {
     var weaponDamageFactor: CGFloat { 1 + 0.3 * CGFloat(ship.level) }
 
     private func damageObstacle(_ i: Int, _ base: Int, blast: Bool) {
+        if asteroids[i].kind == .raider {
+            damageRaider(i, CGFloat(base), blast: blast)
+            return
+        }
         let amount = max(1, Int((CGFloat(base) * weaponDamageFactor).rounded()))
         asteroids[i].hp -= amount
         if asteroids[i].hp <= 0 {
@@ -2220,9 +2505,13 @@ final class Game {
         }
     }
 
-    private func destroyAsteroid(_ i: Int, blast: Bool) {
+    func destroyAsteroid(_ i: Int, blast: Bool) {
         let a = asteroids.remove(at: i)
         blog("destroy kind=\(a.kind)")
+        if a.kind == .raider {
+            raiderDestroyed(a)
+            return
+        }
         track(a.kind == .comet ? .comet : (a.kind == .drone ? .drone : .obstacle))
         let techChance: Double
         switch a.kind {
@@ -2231,6 +2520,7 @@ final class Game {
         case .wreck: techChance = 0.35
         case .comet: techChance = 1
         case .drone: techChance = 0.4
+        case .raider: techChance = 1
         }
         if Double.random(in: 0...1) < techChance { spawnTech(from: a.center) }
         // Schiffsteile sind selten: nur aus Wracks und Kometen
@@ -2260,11 +2550,11 @@ final class Game {
         SoundFX.shared.play(a.kind == .comet ? .blast : .crack, volume: blast ? 0.6 : 1)
     }
 
-    private func hitAsteroid(_ i: Int) {
+    func hitAsteroid(_ i: Int) {
         let a = asteroids[i]
         // Kometen überstehen Kollisionen, alles andere zerbricht
         blog("hit kind=\(a.kind) energy=\(Int(energy))")
-        if a.kind == .comet {
+        if a.kind == .comet || a.kind == .raider {
             asteroids[i].bumpUntil = time + 1.2
         } else {
             asteroids.remove(at: i)
@@ -2277,12 +2567,12 @@ final class Game {
         case .wreck: (baseKeep, baseDamage) = (0.45, 5)
         case .comet: (baseKeep, baseDamage) = (0.3, 8)
         case .drone: (baseKeep, baseDamage) = (0.7, 2)
+        case .raider: (baseKeep, baseDamage) = (0.6, 3)
         }
         let keep = baseKeep + (1 - baseKeep) * ship.armor
         // Treffer gehen auf die Panzerung; gepanzerte Schiffe stecken mehr weg (Panzerungswert 0,6 → etwa 40 % weniger)
-        let damage = (baseDamage * 8 * (1 - 0.7 * ship.armor)).rounded()
+        let damage = takeHit(baseDamage * 8, armorFactor: 0.7)
         vel = CGVector(dx: vel.dx * keep, dy: vel.dy * keep)
-        hull = max(0, hull - damage)
         brakeFlash = 1.2
         if comboFlight {
             comboFlight = false
@@ -2290,14 +2580,34 @@ final class Game {
         }
         burst(at: a.center, count: 30, hue: 30, speed: 260, life: 0.8)
         burst(at: a.center, count: 16, hue: 35, speed: 150, life: 1.1)
-        popups.append(Popup(pos: pos, text: damage > 0 ? "PANZERUNG -\(Int(damage))" : "ABGEPRALLT", color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
+        popups.append(Popup(pos: pos, text: damage > 0 ? "PANZERUNG -\(Int(damage))" : (shieldHP > 0 ? "SCHILD HÄLT" : "ABGEPRALLT"),
+                            color: Color(red: 0.8, green: 0.75, blue: 0.7), age: 0))
         shake = max(shake, 0.35)
         Haptics.miss()
         SoundFX.shared.play(.hit)
+        // Rammstoß beschädigt auch das Piratenschiff (zuletzt, weil es dabei verschwinden kann)
+        if a.kind == .raider, i < asteroids.count, asteroids[i].uid == a.uid { damageRaider(i, 3, blast: false) }
+    }
+
+    /// Treffer auf das eigene Schiff: der Deflektorschild fängt zuerst ab, der Rest geht gemindert durch die Panzerung
+    /// auf die Hülle. Mit Fracht an Bord kann dabei Fracht verloren gehen. Liefert den Schaden an der Hülle.
+    @discardableResult
+    func takeHit(_ raw: CGFloat, armorFactor: CGFloat) -> CGFloat {
+        var damage = (raw * (1 - armorFactor * ship.armor)).rounded()
+        shieldHitAt = time
+        if shieldHP > 0 {
+            let absorbed = min(shieldHP, damage)
+            shieldHP -= absorbed
+            damage -= absorbed
+        }
+        hull = max(0, hull - damage)
+        if damage > 0 { loseCargo(damage) }
+        blog("hit raw=\(Int(raw)) damage=\(Int(damage)) hull=\(Int(hull)) shield=\(Int(shieldHP))")
+        return damage
     }
 
     /// Energie auffüllen; was über das Maximum geht, sammelt sich und wird alle 100 zu einem Tech-Teil.
-    private func addEnergy(_ amount: CGFloat, from origin: CGPoint) {
+    func addEnergy(_ amount: CGFloat, from origin: CGPoint) {
         let room = maxEnergy - energy
         if amount > room {
             overflow += amount - room
@@ -2312,7 +2622,7 @@ final class Game {
     }
 
     /// Tech-Teil (oder Schiffsteil) fliegt von der Fundstelle direkt ins Schiff.
-    private func spawnTech(from p: CGPoint, kind: ItemKind = .tech) {
+    func spawnTech(from p: CGPoint, kind: ItemKind = .tech) {
         items.append(Item(kind: kind, from: p, p: p, gap: currentIndex + 1,
                           phase: CGFloat.random(in: 0...(CGFloat.pi * 2))))
     }
@@ -2349,8 +2659,9 @@ final class Game {
         superBombs -= 1
         let seg = originIndex + 1
         blog("superbomb obstacles=\(asteroids.filter { $0.gap == seg }.count)")
-        for i in asteroids.indices.reversed() where asteroids[i].gap == seg {
-            destroyAsteroid(i, blast: true)
+        for i in asteroids.indices.reversed() where i < asteroids.count && asteroids[i].gap == seg {
+            // Piratenschiffe überstehen die Superbombe mit schwerem Schaden
+            if asteroids[i].kind == .raider { damageRaider(i, 14, blast: true) } else { destroyAsteroid(i, blast: true) }
         }
         // Druckwellen entlang der Strecke
         let tgt = planets[min(seg, planets.count - 1)]
@@ -2472,7 +2783,7 @@ final class Game {
         }
     }
 
-    private func capture(_ index: Int, dx: CGFloat, dy: CGFloat) {
+    func capture(_ index: Int, dx: CGFloat, dy: CGFloat) {
         blog("capture idx=\(index) kind=\(planets[index].kind) new=\(index > score) back=\(index == originIndex) flight=\(String(format: "%.1f", flightTime))s energy=\(Int(energy)) gain=\(Int(planets[index].energyGain))")
         captureTime = time
         // Drehrichtung ergibt sich aus der Anflugseite, Tempo und Radius gleiten danach auf die Bahn
@@ -2501,6 +2812,7 @@ final class Game {
         // zurückgefallen statt weiter: Combo ist weg
         let number = planetBase + index
         if number <= score && comboFlight { breakCombo() }
+        let newArrival = number > score
         if number > score {
             score = number
             if number % 5 == 0 {
@@ -2528,11 +2840,13 @@ final class Game {
                 addEnergy(gain, from: pl.center)
             }
             track(.planet(index))
+            // Fracht am Zielplaneten abliefern
+            checkDelivery(number)
             if pl.isStation {
                 track(.station)
                 // ab jetzt kann man hier neu starten
                 profile.reachStation(pl.stationNo)
-                popups.append(Popup(pos: pos, text: "STATION \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
+                popups.append(Popup(pos: pos, text: "\(pl.outpost ? "AUSSENPOSTEN" : "STATION") \(Game.stationName(pl.stationNo))", color: Color(red: 0.45, green: 0.95, blue: 0.85), age: 0))
             }
             switch pl.kind {
             case .normal: break
@@ -2547,10 +2861,12 @@ final class Game {
         comboFlight = false
         while planets.count < index + 4 { addPlanet() }
         items.removeAll { $0.gap < index - 2 }
-        asteroids.removeAll { $0.gap < index - 1 || ($0.kind == .comet && $0.gap <= index) }
+        asteroids.removeAll { $0.gap < index - 1 || (($0.kind == .comet || $0.kind == .raider) && $0.gap <= index) }
         clouds.removeAll { $0.gap < index - 2 }
         // Raumstation: nicht in den Orbit, sondern die Andockplattform anfliegen und landen
         if pl.isStation { beginDocking(index) }
+        // Gefechtsplanet zum ersten Mal erreicht: das Gefecht beginnt
+        if newArrival && pl.arena != nil { startArena(index) }
     }
 
     private func updateFx(_ dt: CGFloat) {
@@ -2599,6 +2915,16 @@ final class Game {
             guard !destroyed else { return }
             cam.x = camSpringX.update(to: pos.x, smoothTime: 1.2, dt: dt)
             cam.y = camSpringY.update(to: pos.y, smoothTime: 1.2, dt: dt)
+            return
+        }
+        // Gefecht: Kamera folgt dem Schiff mit etwas Vorlauf, fester Ausschnitt
+        if phase == .combat {
+            let usable = min(size.width, size.height * 0.62)
+            let ahead = CGPoint(x: pos.x + vel.dx * 0.35, y: pos.y + vel.dy * 0.35)
+            let scale = min(max(usable / Game.combatView, 0.04), 0.8)
+            cam.x = camSpringX.update(to: ahead.x, smoothTime: 0.5, dt: dt)
+            cam.y = camSpringY.update(to: ahead.y, smoothTime: 0.5, dt: dt)
+            camScale = exp(camSpringZoom.update(to: log(scale), smoothTime: 0.8, dt: dt))
             return
         }
         // Orbit-Ansicht: genau auf den Planeten zentriert, groß genug für Bahn und ein Stück Startkegel

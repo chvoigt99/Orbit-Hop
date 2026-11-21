@@ -21,6 +21,32 @@ private func glowMat(_ color: UIColor, additive: Bool = true) -> SCNMaterial {
     return m
 }
 
+/// Leuchtspur: von hinten durchsichtig über die Farbe zu einem hellen Kopf (additiv, Schwarz = unsichtbar)
+private func tracerMat(_ color: UIColor) -> SCNMaterial {
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    color.getRed(&r, green: &g, blue: &b, alpha: &a)
+    let img = textureRenderer(CGSize(width: 128, height: 4)).image { ctx in
+        let cols = [UIColor.black.cgColor,
+                    UIColor(red: r * 0.35, green: g * 0.35, blue: b * 0.35, alpha: 1).cgColor,
+                    color.cgColor,
+                    UIColor(red: min(1, r * 0.5 + 0.5), green: min(1, g * 0.5 + 0.5), blue: min(1, b * 0.5 + 0.5), alpha: 1).cgColor] as CFArray
+        let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: cols, locations: [0, 0.45, 0.85, 1])!
+        ctx.cgContext.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 128, y: 0), options: [])
+    }
+    return spriteMat(img)
+}
+
+/// schlanke Leuchtspur mit dem Kopf im Ursprung, entlang +x
+private func makeTracer(_ mat: SCNMaterial, length: CGFloat, width: CGFloat) -> SCNNode {
+    let box = SCNBox(width: length, height: width, length: width, chamferRadius: 0)
+    box.materials = [mat]
+    let n = SCNNode(geometry: box)
+    n.position.x = Float(-length / 2)
+    let holder = SCNNode()
+    holder.addChildNode(n)
+    return holder
+}
+
 private func spriteMat(_ image: UIImage) -> SCNMaterial {
     let m = SCNMaterial()
     m.lightingModel = .constant
@@ -348,6 +374,7 @@ extension ItemKind {
         case .rescue: return "flame.fill"
         case .tech: return "gearshape.fill"
         case .shipPart: return "puzzlepiece.fill"
+        case .cargo: return "shippingbox.fill"
         }
     }
 }
@@ -1324,6 +1351,62 @@ final class World3D {
         case .wreck: return makeWreck(a)
         case .comet: return makeComet(a)
         case .drone: return makeDrone(a)
+        case .raider: return makeRaider(a)
+        }
+    }
+
+    /// Piratenschiff: bekannter Rumpf in Piratenlack, roter Schein, Schildblase für Treffer auf den Schild
+    private func makeRaider(_ a: Asteroid) -> SCNNode {
+        let root = SCNNode()
+        root.position = v3(a.center, 6)
+        root.eulerAngles.y = Float(-a.facing)
+        let s = Float(a.radius / 3.6)
+        withPirateModel(a.variant) { [weak root] model in
+            guard let root else { return }
+            let hull = model.clone()
+            hull.scale = SCNVector3(s, s, s)
+            hull.name = "body"
+            root.addChildNode(hull)
+        }
+        let glow = SCNNode(geometry: SCNPlane(width: a.radius * 3, height: a.radius * 3))
+        let gm = spriteMat(WorldTextures.soft)
+        gm.multiply.contents = UIColor(red: 1, green: 0.22, blue: 0.12, alpha: a.variant == 2 ? 0.45 : 0.3)
+        glow.geometry?.materials = [gm]
+        glow.constraints = [SCNBillboardConstraint()]
+        glow.renderingOrder = -1
+        root.addChildNode(glow)
+        let bubble = SCNSphere(radius: a.radius * 1.3)
+        bubble.segmentCount = 24
+        bubble.materials = [glowMat(UIColor(red: 0.35, green: 0.7, blue: 1, alpha: 0.4))]
+        let bn = SCNNode(geometry: bubble)
+        bn.name = "shield"
+        bn.opacity = 0
+        root.addChildNode(bn)
+        return root
+    }
+
+    private var pirateModels: [Int: SCNNode] = [:]
+    private var pirateWaiting: [Int: [(SCNNode) -> Void]] = [:]
+
+    /// Piratenmodell je Klasse einmal im Hintergrund bauen, hochladen und danach klonen (wie bei den Wracks)
+    private func withPirateModel(_ variant: Int, _ use: @escaping (SCNNode) -> Void) {
+        if let m = pirateModels[variant] { use(m); return }
+        if pirateWaiting[variant] != nil {
+            pirateWaiting[variant]?.append(use)
+            return
+        }
+        pirateWaiting[variant] = [use]
+        Self.textureQueue.async { [weak self] in
+            let model = Ship3D.simplified(ShipDesigns.pirate(variant))
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.upload(model) { [weak self] in
+                    guard let self else { return }
+                    self.pirateModels[variant] = model
+                    let waiting = self.pirateWaiting.removeValue(forKey: variant) ?? []
+                    waiting.forEach { $0(model) }
+                }
+            }
         }
     }
 
@@ -1504,20 +1587,33 @@ final class World3D {
         return root
     }
 
-    /// Plasmaschuss der Drohnen: rote Kugel mit Schein
-    private func makeEnemyShot() -> SCNNode {
+    /// Plasmaschuss der Drohnen: rote Kugel mit Schein (Piraten: orange)
+    private func makeEnemyShot(raider: Bool = false) -> SCNNode {
         let n = SCNNode()
+        if raider {
+            // Piratenschuss: längliche rote Spur mit hellem Kern, klar anders als die gelben eigenen Spuren
+            // und anders als der Leuchtkreis der Piratenschiffe; die Form zeigt die Flugrichtung
+            // filigran: dünne Spur mit Farbverlauf, hinten durchsichtig, vorn ein kleiner heller Kopf
+            n.addChildNode(makeTracer(World3D.enemyTracer, length: 46, width: 2.4))
+            let tip = SCNSphere(radius: 1.8)
+            tip.materials = [glowMat(UIColor(red: 1, green: 0.75, blue: 0.7, alpha: 1))]
+            n.addChildNode(SCNNode(geometry: tip))
+            return n
+        }
         let core = SCNSphere(radius: 5)
         core.materials = [glowMat(UIColor(red: 1, green: 0.85, blue: 0.8, alpha: 1))]
         n.addChildNode(SCNNode(geometry: core))
         let glow = SCNNode(geometry: SCNPlane(width: 34, height: 34))
         let gm = spriteMat(WorldTextures.soft)
-        gm.multiply.contents = UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
+        gm.multiply.contents = raider ? UIColor(red: 1, green: 0.1, blue: 0.15, alpha: 1) : UIColor(red: 1, green: 0.15, blue: 0.1, alpha: 1)
         glow.geometry?.materials = [gm]
         glow.constraints = [SCNBillboardConstraint()]
         n.addChildNode(glow)
         return n
     }
+
+    static let ownTracer = tracerMat(UIColor(red: 1, green: 0.85, blue: 0.35, alpha: 1))
+    static let enemyTracer = tracerMat(UIColor(red: 1, green: 0.18, blue: 0.12, alpha: 1))
 
     private static let foil: SCNMaterial = {
         let m = SCNMaterial()
@@ -1821,6 +1917,13 @@ final class World3D {
         let bolt = SCNNode()
         bolt.name = "bolt"
         n.addChildNode(bolt)
+        if pr.kind == .cannon {
+            // im Gefecht: filigrane Leuchtspur statt des großen Bolzens
+            let tr = makeTracer(World3D.ownTracer, length: 60, width: 2.2)
+            tr.name = "tracer"
+            tr.isHidden = true
+            n.addChildNode(tr)
+        }
         switch pr.kind {
         case .cannon, .railgun:
             // Spur hinten, heller Kern vorn
@@ -1964,7 +2067,7 @@ final class World3D {
         anim.keyTimes = [0, 0.5, 1]
         ps.propertyControllers = [.opacity: SCNParticlePropertyController(animation: anim)]
         let n = SCNNode()
-        n.position = v3(b.pos)
+        n.position = v3(b.pos, b.alt)
         n.addParticleSystem(ps)
         scene.rootNode.addChildNode(n)
         n.runAction(.sequence([.wait(duration: Double(b.life) * 1.6 + 0.2), .removeFromParentNode()]))
@@ -1999,6 +2102,8 @@ final class World3D {
             chasedThisFlight = true
         }
         if game.phase != .flying || passageDone { chaseOn = false }
+        // Gefecht: Verfolgerkamera hinter dem Schiff, bis es zurück in den Orbit fliegt
+        if game.phase == .combat { chaseOn = !game.arenaReturning }
         // Spielende: Nahaufnahme für das Ausgleiten bzw. die Explosion
         if game.phase == .over { chaseOn = true }
         lastPhase = game.phase
@@ -2008,7 +2113,7 @@ final class World3D {
         // Der Vorwärts-Schub beim Herauszoomen gilt nur im Flug; im Orbit würde er mit dem Schiff im Kreis laufen
         releasing = !danger && chase > 0.001 && game.phase == .flying
         // Im Orbit blendet eine Rest-Nahansicht zügig aus, sonst folgt die Kamera dem kreisenden Schiff
-        let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : 3))
+        let chaseRate: CGFloat = game.phase == .over ? 2.2 : (danger ? 1.4 : (game.phase == .flying ? 0.45 : (game.phase == .combat ? 0.8 : 3)))
         chase = smoothApproach(chase, want, rate: chaseRate, dt: dt)
         if game.phase == .over && !game.destroyed {
             coastClose = smoothApproach(coastClose, 1, rate: 0.7, dt: dt)
@@ -2023,9 +2128,9 @@ final class World3D {
         // Solange die Verfolgerkamera aus ist, liegt der Kurs direkt an; danach folgt er mit kurzer Verzögerung
         if chase < 0.001 {
             chaseHeading.snap(to: game.heading)
-        } else if game.phase == .flying {
+        } else if game.phase == .flying || game.phase == .combat {
             // im Orbit dreht sich der Kurs ständig mit, dort bleibt er stehen
-            chaseHeading.update(to: game.heading, smoothTime: 0.18, dt: dt)
+            chaseHeading.update(to: game.heading, smoothTime: game.phase == .combat ? 0.09 : 0.18, dt: dt)
         }
         updateArrival(game, dt: dt, ti: ti, distT: distT, tgt: tgt, passageDone: passageDone)
         // Hangar: steht, solange das Schiff ruht; nach dem Start fährt die Kamera in einer festen Zeit heraus
@@ -2142,7 +2247,7 @@ final class World3D {
         }
 
         // Zielerfassung
-        lockGroup.isHidden = game.phase == .over || game.inHangarView
+        lockGroup.isHidden = game.phase == .over || game.phase == .combat || game.inHangarView
         let ti = game.currentIndex + 1
         if ti < game.planets.count {
             let t = game.planets[ti]
@@ -2414,21 +2519,25 @@ final class World3D {
             exploded = false
         }
         shipHolder.isHidden = game.phase == .over && game.destroyed
-        shipHolder.position = v3(game.pos, 4 + game.liftHeight)
+        shipHolder.position = v3(game.pos, 4 + game.liftHeight + game.altitude)
         // leichte Schräglage in Kurven
-        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35 : game.dodgeBank * 0.6
+        let bank: CGFloat = game.phase == .orbiting ? -game.orbitDir * 0.35
+            : (game.phase == .combat ? -game.combatBank * 0.5 : game.dodgeBank * 0.6)
         shipHolder.eulerAngles.y = Float(-game.heading)
         bankNode.eulerAngles.x = Float(bank)
+        // Steigen und Sinken im 3D-Gefecht: Nase hoch oder runter
+        bankNode.eulerAngles.z = Float(game.phase == .combat ? game.climb : 0)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten
         let topScale = min(8.4 * px, 14)
-        var sc = topScale + (5.0 - topScale) * k
+        // Frachter wuchtig, Jäger klein und flink
+        var sc = (topScale + (5.0 - topScale) * k) * game.ship.model.role.flightScale
         sc += (parkedScale - sc) * ka
         sc += (5.0 - sc) * kh
         lastShipScale = sc
         let s = Float(sc)
         shipHolder.scale = SCNVector3(s, s, s)
 
-        let flying = game.phase == .flying
+        let flying = game.phase == .flying || game.phase == .combat
         let boost = game.boostTime > 0
         for (ps, r) in exhausts {
             // im Hangar aus, beim Abheben leise, beim Anrollen voll
@@ -2502,6 +2611,20 @@ final class World3D {
                     }
                     animateDrone(n, a, game, dt: dt)
                 }
+                // Piraten: Bug zeigt in Blickrichtung, Schildblase blitzt bei Treffern auf den Schild
+                if a.kind == .raider {
+                    n.position.y = Float(6 + a.alt)
+                    // Bug in Flugrichtung, Nase hoch/runter beim Steigen/Sinken, Schräglage in Kurven
+                    let sp = max(1, hypot(a.vel.dx, a.vel.dy))
+                    let yawQ = simd_quatf(angle: Float(-a.facing), axis: SIMD3<Float>(0, 1, 0))
+                    let pitchQ = simd_quatf(angle: Float(atan2(a.valt, sp)), axis: SIMD3<Float>(0, 0, 1))
+                    let rollQ = simd_quatf(angle: Float(-a.bank * 0.55), axis: SIMD3<Float>(1, 0, 0))
+                    n.simdOrientation = yawQ * pitchQ * rollQ
+                    if let sh = n.childNode(withName: "shield", recursively: false) {
+                        let age = game.time - a.hitAt
+                        sh.opacity = a.shield > 0.5 && age >= 0 && age < 0.35 ? 1 - age / 0.35 : 0
+                    }
+                }
             } else {
                 let n = makeObstacle(a)
                 scene.rootNode.addChildNode(n)
@@ -2517,6 +2640,9 @@ final class World3D {
         // Wrack-Modelle nur vorhalten, solange ein Wrackfeld in der Nähe ist (je Typ etwa 10 MB Lacktexturen)
         if !wreckModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .wreck }) {
             wreckModels.removeAll()
+        }
+        if !pirateModels.isEmpty && !game.asteroids.contains(where: { $0.kind == .raider }) {
+            pirateModels.removeAll()
         }
 
         // Nebel
@@ -2548,7 +2674,7 @@ final class World3D {
             let grow = 0.4 + 0.9 * sin(t * .pi) + 0.3 * (1 - t)
             let s = Float(30 * px * grow)
             n.scale = SCNVector3(s, s, s)
-            n.position = v3(it.p, 8)
+            n.position = v3(it.p, 8 + game.altitude * min(1, it.age / Item.flyTime))
         }
         for (id, n) in itemNodes where !alive.contains(id) {
             n.removeFromParentNode()
@@ -2565,12 +2691,23 @@ final class World3D {
                 scene.rootNode.addChildNode(n)
                 projectileNodes[pr.uid] = n
             }
-            n.position = v3(pr.p, 4)
+            n.position = v3(pr.p, 4 + pr.alt)
             if let b = n.childNode(withName: "bolt", recursively: false) {
                 let size: CGFloat = pr.kind == .bomb ? 12 : 10
                 let s = Float(size * px)
                 b.scale = SCNVector3(s, s, s)
                 b.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
+                // im Gefecht filigrane Leuchtspur mit Farbverlauf statt Bolzen
+                let tracer = n.childNode(withName: "tracer", recursively: false)
+                let combat = game.phase == .combat && tracer != nil
+                b.isHidden = combat
+                if let t = tracer {
+                    t.isHidden = !combat
+                    if combat {
+                        t.eulerAngles.y = Float(-atan2(pr.v.dy, pr.v.dx))
+                        t.eulerAngles.z = Float(atan2(pr.valt, max(1, hypot(pr.v.dx, pr.v.dy))))
+                    }
+                }
             }
         }
         for (id, n) in projectileNodes where !alive.contains(id) {
@@ -2584,11 +2721,27 @@ final class World3D {
             alive.insert(sh.uid)
             let n: SCNNode
             if let e = enemyShotNodes[sh.uid] { n = e } else {
-                n = makeEnemyShot()
+                n = makeEnemyShot(raider: sh.raider)
                 scene.rootNode.addChildNode(n)
                 enemyShotNodes[sh.uid] = n
             }
-            n.position = v3(sh.p, 5)
+            n.position = v3(sh.p, 5 + sh.alt)
+            if sh.raider {
+                n.eulerAngles.y = Float(-atan2(sh.v.dy, sh.v.dx))
+                n.eulerAngles.z = Float(atan2(sh.valt, max(1, hypot(sh.v.dx, sh.v.dy))))
+            }
+            // ganz nah an der Kamera ausblenden, sonst ziehen dicke rote Balken übers Bild
+            if game.phase == .combat {
+                let cp = cameraNode.position, np = n.position
+                let dx = np.x - cp.x, dy = np.y - cp.y, dz = np.z - cp.z
+                let dist = sqrt(dx * dx + dy * dy + dz * dz)
+                // und sobald der Schuss am Schiff vorbei ist (hinter dem Schiff, zwischen Schiff und Kamera)
+                let along = (sh.p.x - game.pos.x) * cos(game.heading) + (sh.p.y - game.pos.y) * sin(game.heading)
+                let o = min(CGFloat(max(0, min(1, (dist - 90) / 110))), max(0, min(1, (along - 30) / 70)))
+                if abs(n.opacity - o) > 0.02 { n.opacity = o }
+            } else if n.opacity != 1 {
+                n.opacity = 1
+            }
         }
         for (id, n) in enemyShotNodes where !alive.contains(id) {
             n.removeFromParentNode()
@@ -2692,8 +2845,14 @@ final class World3D {
         let cc = coastClose * coastClose * (3 - 2 * coastClose)
         let bv = blastView * blastView * (3 - 2 * blastView)
         let back = 190 - 95 * cc + 70 * bv, height = Float(95 - 45 * cc + 55 * bv), ahead = (260 - 130 * cc) * (1 - bv)
-        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height, Float(ship.y - sin(hd) * back))
-        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), 0, Float(ship.y + sin(hd) * ahead))
+        // 3D-Gefecht: Kamera steigt und sinkt mit dem Schiff und blickt etwas in Steigrichtung
+        let alt = game.altitude
+        // beim Steigen nur wenig nach oben blicken und die Kamera hinter dem Schiff absenken (beim Sinken anheben),
+        // damit das Schiff mittig bleibt statt an den unteren Bildrand zu rutschen
+        let lookUp = game.phase == .combat ? sin(game.climb) * ahead * 0.2 : 0
+        let trail = game.phase == .combat ? -sin(game.climb) * back * 0.6 : 0
+        let chasePos = SCNVector3(Float(ship.x - cos(hd) * back), height + Float(alt + trail), Float(ship.y - sin(hd) * back))
+        let chaseLook = SCNVector3(Float(ship.x + cos(hd) * ahead), Float(alt + lookUp), Float(ship.y + sin(hd) * ahead))
 
         func mix(_ a: SCNVector3, _ b: SCNVector3) -> SCNVector3 {
             let f = Float(k)
@@ -2701,6 +2860,17 @@ final class World3D {
         }
         var pos = mix(topPos, chasePos)
         var look = mix(target, chaseLook)
+        // 3D-Gefecht: Kamera nie im Gefechtsplaneten
+        if game.phase == .combat, game.planets.indices.contains(game.arenaIndex) {
+            let pl = game.planets[game.arenaIndex]
+            let vx = pos.x - Float(pl.center.x), vy = pos.y, vz = pos.z - Float(pl.center.y)
+            let d = max(1, (vx * vx + vy * vy + vz * vz).squareRoot())
+            let minD = Float(pl.radius + 45)
+            if d < minD {
+                let f = minD / d
+                pos = SCNVector3(Float(pl.center.x) + vx * f, vy * f, Float(pl.center.y) + vz * f)
+            }
+        }
         // Beim Herauszoomen gleitet die Kamera zugleich nach vorn, statt nach hinten wegzufahren
         if releasing {
             let bump = Float(sin(k * .pi) * topDist * 0.15)
@@ -2814,6 +2984,13 @@ final class World3D {
     }
 
     // MARK: Projektion für das HUD
+
+    func project3(_ p: CGPoint, _ y: CGFloat) -> CGPoint? {
+        guard let view else { return nil }
+        let v = view.projectPoint(v3(p, y))
+        guard v.z > 0, v.z < 1 else { return nil }
+        return CGPoint(x: CGFloat(v.x), y: CGFloat(v.y))
+    }
 
     func project(_ p: CGPoint) -> CGPoint? {
         guard let view else { return nil }

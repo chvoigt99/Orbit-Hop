@@ -5,6 +5,8 @@ struct GameView: View {
     @State private var game = Game()
     @State private var showShop = false
     @State private var showMissions = false
+    @State private var showBoard = false
+    @State private var showWorkshop = false
     @State private var world: World3D?
     @State private var loop = GameLoop()
     @State private var sample = HUDSample()
@@ -84,6 +86,10 @@ struct GameView: View {
                         if !game.started {
                             titleView
                         }
+                        // Gefecht: Finger lenkt, Feuerknopf schießt (liegt unter dem Pausenknopf)
+                        if game.phase == .combat && !game.paused {
+                            combatControls
+                        }
                         if game.started && game.phase != .over && !game.paused && !game.stationOpen && game.hudAlpha > 0 {
                             pauseButton
                         }
@@ -111,6 +117,8 @@ struct GameView: View {
             SoundFX.shared.prepare()
             // Nur für Tests: Missionsübersicht direkt öffnen
             if ProcessInfo.processInfo.arguments.contains("-missions") { showMissions = true }
+            if ProcessInfo.processInfo.arguments.contains("-contracts") { showBoard = true }
+            if ProcessInfo.processInfo.arguments.contains("-workshop") { showWorkshop = true }
             if ProcessInfo.processInfo.arguments.contains("-renderShips") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { Ship3D.renderGallery() }
             }
@@ -142,6 +150,18 @@ struct GameView: View {
                 showShop = false
             }
         }
+        .fullScreenCover(isPresented: $showWorkshop) {
+            WorkshopView(profile: game.profile) {
+                game.equip()
+                showWorkshop = false
+            }
+        }
+        .fullScreenCover(isPresented: $showBoard) {
+            ContractBoardView(board: game.contracts, profile: game.profile, running: game.contractRunning,
+                              daily: game.dailyMode, station: game.currentStationName ?? "RAUMSTATION") {
+                showBoard = false
+            }
+        }
         #if os(iOS)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
@@ -150,7 +170,7 @@ struct GameView: View {
 
     // MARK: Hilfen
 
-    private var worldCovered: Bool { showShop || showMissions }
+    private var worldCovered: Bool { showShop || showMissions || showBoard || showWorkshop }
 
     private func label(_ text: String) -> Text {
         Text(text)
@@ -168,6 +188,7 @@ struct GameView: View {
     private var status: (String, Color) {
         if !game.started { return ("SYSTEM BEREIT", signal) }
         if game.phase == .over { return ("SIGNAL VERLOREN", warn) }
+        if game.phase == .combat { return (game.combatStatus, game.arenaReturning && game.arenaWon ? gold : warn) }
         if game.departElapsed != nil { return ("ABHEBEN · TRIEBWERKE HOCHFAHREN", gold) }
         if game.dockArriving { return ("ANFLUG · STATION \(game.currentStationName ?? "")", signal) }
         if game.atStation { return ("STATION \(game.currentStationName ?? "") · ANGEDOCKT", signal) }
@@ -184,7 +205,12 @@ struct GameView: View {
         }
         if game.energy < 25 { return ("ENERGIE KRITISCH", warn) }
         if game.brakeFlash > 0 { return ("KOLLISION · TEMPO GEDROSSELT", warn) }
-        if game.phase == .flying { return ("TRANSIT · SCHUB AKTIV", gold) }
+        if game.phase == .flying {
+            if game.planets[min(game.originIndex + 1, game.planets.count - 1)].arena != nil {
+                return ("ANFLUG AUF GEFECHTSZONE", warn)
+            }
+            return ("TRANSIT · SCHUB AKTIV", gold)
+        }
         if game.inCone { return ("STARTFENSTER OFFEN", signal) }
         return ("ORBIT STABIL", Color(red: 0.45, green: 0.85, blue: 1))
     }
@@ -207,19 +233,25 @@ struct GameView: View {
             topBar
             statusLine
             effectsRow
+            if let line = game.contractLine { contractRow(line) }
             // unsichtbare Texte nicht jedes Bild neu setzen lassen (Textlayout ist der größte Posten im Profil)
             if game.time - game.lastLaunchTime < 1.4 && game.phase != .over && !game.dockLaunch {
                 precisionBadge
             } else {
                 Color.clear.frame(height: 42)
             }
+            // Gefechtshinweis oben, damit er die Piraten voraus nicht verdeckt
+            if game.phase == .combat && game.time - game.arenaStart < 3.5 {
+                combatHint
+            }
             Spacer()
-            if game.hintShown && game.started && game.phase != .docked && game.phase != .over && !game.dodgeAvailable {
+            if game.hintShown && game.started && game.phase != .docked && game.phase != .over && game.phase != .combat && !game.dodgeAvailable {
                 hint
             }
             // im Stationsmenü liegt das Panel unten, Telemetrie würde durchscheinen
             // in der Hindernispassage sitzen dort die Ausweichknöpfe
-            bottomBar.opacity(game.stationOpen || game.dodgeAvailable ? 0 : 1)
+            // im Gefecht liegt dort der Feuerknopf
+            bottomBar.opacity(game.stationOpen || game.dodgeAvailable || game.phase == .combat ? 0 : 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -325,12 +357,17 @@ struct GameView: View {
         let dot = Int(game.time * 2) % 2 == 0
         return HStack(spacing: 6) {
             Rectangle().fill(color).frame(width: 6, height: 6).rotationEffect(.degrees(45)).opacity(dot ? 1 : 0.35)
-            label(text).foregroundStyle(color).lineLimit(1).fixedSize()
+            // nie breiter als der Bildschirm: lange Gefechtszeilen schrumpfen statt das ganze HUD aufzuweiten
+            // (sonst rutschten HUD, Feuerknopf und Radar rechts aus dem Bild)
+            label(text).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.6)
+                .layoutPriority(1)
             Rectangle().fill(color.opacity(0.3)).frame(height: 1)
-            label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · T+\(missionClock)")
-                .foregroundStyle(dim)
-                .lineLimit(1)
-                .fixedSize()
+            if game.phase != .combat {
+                label("SEKTOR \(String(format: "%02d", game.score / 5 + 1)) · T+\(missionClock)")
+                    .foregroundStyle(dim)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 2)
     }
@@ -351,6 +388,96 @@ struct GameView: View {
             Spacer().frame(height: 14)
         }
         .transition(.opacity)
+    }
+
+    // MARK: Gefecht
+
+    private var combatHint: some View {
+        Text("Ziehen zum Lenken, Feuer halten.\nKanonen schwenken mit: seitlich vorbeiziehen.")
+            .font(.system(size: 11, design: .monospaced))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(warn)
+            .padding(10)
+            .background(panelBackground(cut: 8, edge: warn))
+    }
+
+    /// Steuerfläche über dem ganzen Bild, darüber Feuerknopf und (nach einer Weile) Abdrehen
+    private var combatControls: some View {
+        ZStack {
+          ZStack {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { v in
+                        game.stickOrigin = v.startLocation
+                        game.stickPoint = v.location
+                        game.setStick(from: v.startLocation, to: v.location)
+                    }
+                    .onEnded { _ in
+                        game.stick = nil
+                        game.stickOrigin = nil
+                        game.stickPoint = nil
+                    })
+            // Steuerknüppel unter dem Finger
+            if let o = game.stickOrigin, let p = game.stickPoint {
+                let dx = max(-70, min(70, p.x - o.x)), dy = max(-70, min(70, p.y - o.y))
+                ZStack {
+                    Circle().stroke(signal.opacity(0.5), lineWidth: 1.5).frame(width: 140, height: 140)
+                    Circle().fill(signal.opacity(0.35)).frame(width: 44, height: 44).offset(x: dx, y: dy)
+                }
+                .position(o)
+                .allowsHitTesting(false)
+            }
+          }
+          // ganze Bildschirmfläche: Fingerkoordinaten (global) und Anzeige passen dann zusammen
+          .ignoresSafeArea()
+            VStack {
+                Spacer()
+                HStack(alignment: .bottom) {
+                    if game.canFlee {
+                        Button { game.flee() } label: {
+                            VStack(spacing: 3) {
+                                Image(systemName: "arrow.uturn.backward").font(.system(size: 15, weight: .bold))
+                                label("ABDREHEN")
+                            }
+                            .foregroundStyle(dim)
+                            .frame(width: 84, height: 56)
+                            .background(Chamfer(cut: 8).fill(panel.opacity(0.8)))
+                            .overlay(Chamfer(cut: 8).stroke(dim.opacity(0.7), lineWidth: 1))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                    } else if let left = game.fleeCountdown {
+                        label("ABDREHEN IN \(left) S")
+                            .foregroundStyle(dim.opacity(0.8))
+                            .padding(.bottom, 8)
+                    }
+                    Spacer()
+                    // über dem Radar
+                    if !game.arenaReturning { fireButton.padding(.bottom, 96) }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+        }
+    }
+
+    private var fireButton: some View {
+        let held = game.fireHeld
+        return VStack(spacing: 4) {
+            Image(systemName: game.weapon.symbol).font(.system(size: 22, weight: .bold))
+            label("FEUER")
+        }
+        .foregroundStyle(warn)
+        .frame(width: 92, height: 92)
+        .background(Circle().fill(warn.opacity(held ? 0.35 : 0.14)))
+        .overlay(Circle().stroke(warn.opacity(0.9), lineWidth: 2))
+        .contentShape(Circle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in game.fireHeld = true }
+            .onEnded { _ in game.fireHeld = false })
+        .accessibilityLabel("Feuer")
     }
 
     private var pauseButton: some View {
@@ -386,6 +513,26 @@ struct GameView: View {
             }
             .foregroundStyle(color)
             .frame(width: 230, height: 50)
+            .background(Chamfer(cut: 10).fill(color.opacity(0.1)))
+            .overlay(Chamfer(cut: 10).stroke(color.opacity(0.8), lineWidth: 1.2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func halfButton(_ title: String, _ icon: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 13, weight: .bold))
+                Text(title)
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .tracking(1.5)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity)
+            .frame(height: 50)
             .background(Chamfer(cut: 10).fill(color.opacity(0.1)))
             .overlay(Chamfer(cut: 10).stroke(color.opacity(0.8), lineWidth: 1.2))
             .contentShape(Rectangle())
@@ -449,6 +596,10 @@ struct GameView: View {
             if game.superBombs > 0 { chip("×\(game.superBombs)", .superBomb) }
             if game.rescueCharges > 0 { chip("×\(game.rescueCharges)", .rescue) }
             if game.overflow > 0 { chip("\(Int(game.overflow))%", .tech) }
+            if game.ship.shieldMax > 0 {
+                tagChip("SCHILD \(Int(game.shieldHP))", "shield.lefthalf.filled",
+                        game.shieldHP > 0.5 ? Color(red: 0.45, green: 0.78, blue: 1) : dim)
+            }
             Spacer()
         }
         .frame(height: 20)
@@ -470,6 +621,35 @@ struct GameView: View {
             .background(Chamfer(cut: 5).fill(col.opacity(0.12 + 0.3 * Double(flash))))
             .overlay(Chamfer(cut: 5).stroke(col.opacity(0.6 + 0.4 * Double(flash)), lineWidth: 1))
             .scaleEffect(1 + 0.12 * flash)
+    }
+
+    /// laufender Auftrag: eine Zeile unter den Effekten
+    private func contractRow(_ text: String) -> some View {
+        let col = game.contracts.active?.color ?? signal
+        return HStack(spacing: 6) {
+            Image(systemName: game.contracts.active?.symbol ?? "doc.text.fill").font(.system(size: 9, weight: .bold))
+            label(text).lineLimit(1).minimumScaleFactor(0.7)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(col)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Chamfer(cut: 5).fill(panel.opacity(0.7)))
+        .overlay(Chamfer(cut: 5).stroke(col.opacity(0.5), lineWidth: 1))
+    }
+
+    private func tagChip(_ text: String, _ symbol: String, _ col: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 9, weight: .bold))
+            label(text)
+        }
+        .foregroundStyle(col)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Chamfer(cut: 5).fill(col.opacity(0.12)))
+        .overlay(Chamfer(cut: 5).stroke(col.opacity(0.6), lineWidth: 1))
     }
 
     private func chip(_ text: String, _ kind: ItemKind) -> some View {
@@ -562,7 +742,14 @@ struct GameView: View {
                     game.repair()
                 }
                 .disabled(!canRepair)
-                menuButton("WERFT", "airplane", gold) { showShop = true }
+                HStack(spacing: 10) {
+                    halfButton("WERFT", "airplane", gold) { showShop = true }
+                    halfButton("WERKSTATT", "wrench.adjustable.fill", gold) { showWorkshop = true }
+                }
+                .frame(width: 230)
+                // Auftragsterminal im eigenen Raum der Station
+                menuButton("KOMMANDORAUM",
+                           "desktopcomputer", Color(red: 0.42, green: 1, blue: 0.58)) { showBoard = true }
                 menuButton("WEITERFLIEGEN", "arrow.up.forward", signal) { game.leaveStation() }
             }
             .padding(.horizontal, 28)
@@ -596,6 +783,8 @@ struct GameView: View {
                         .tracking(2)
                     label("\(game.ship.name) · STUFE \(game.ship.level) · ⚙ \(game.profile.parts)")
                         .foregroundStyle(dim)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                 }
             }
             .foregroundStyle(gold)
@@ -607,6 +796,27 @@ struct GameView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// Werkstatt für Mods
+    private var workshopButton: some View {
+        let count = ModKind.allCases.filter { game.profile.modLevel($0) > 0 }.count
+        return Button {
+            showWorkshop = true
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "wrench.adjustable.fill")
+                    .font(.system(size: 14, weight: .bold))
+                label("\(count) MOD")
+            }
+            .foregroundStyle(gold)
+            .frame(width: 56, height: 48)
+            .background(Chamfer(cut: 8).fill(panel.opacity(0.85)))
+            .overlay(Chamfer(cut: 8).stroke(gold.opacity(0.7), lineWidth: 1.2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Werkstatt")
     }
 
     /// Missionen und Erfolge; zeigt, wie nah die nächste Mission ist
@@ -762,7 +972,7 @@ struct GameView: View {
     private static let menuRowWidth: CGFloat = 330
 
     private var titleView: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             titleTexts
                 .allowsHitTesting(false)
             // im oberen Drittel, direkt unter dem Titel
@@ -773,6 +983,7 @@ struct GameView: View {
             // alle Zeilen gleich breit
             HStack(spacing: 10) {
                 shipsButton
+                workshopButton
                 missionsButton
                 if SoundFX.available { soundButton }
             }
@@ -790,8 +1001,8 @@ struct GameView: View {
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 70)
-        .padding(.bottom, 178)
+        .padding(.top, 56)
+        .padding(.bottom, 150)
     }
 
     private var tapPrompt: some View {
@@ -875,6 +1086,13 @@ struct GameView: View {
             if game.runShipParts > 0 {
                 label("+\(game.runShipParts) SCHIFFSTEILE · GESAMT \(game.profile.shipParts)")
                     .foregroundStyle(hsl(ItemKind.shipPart.hue, 0.8, 0.68))
+            }
+            if game.runRaiderKills > 0 {
+                label("PIRATEN ABGESCHOSSEN ×\(game.runRaiderKills)").foregroundStyle(Color(red: 1, green: 0.55, blue: 0.4))
+            }
+            if let result = game.contractResult {
+                label(result).foregroundStyle(game.contractSuccess ? gold : warn)
+                label("RANG \(PilotRank.title(game.profile.rank)) · RUF \(game.profile.reputation)").foregroundStyle(dim)
             }
             Text("TIPPEN ZUM FORTFAHREN")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -1004,6 +1222,7 @@ final class GameLoop: NSObject {
         game.step(date: Date(timeIntervalSinceReferenceDate: link.targetTimestamp), size: size)
         if let world {
             game.project = world.project
+            game.project3 = world.project3
             world.sync(game, size: size)
         }
         PerfLog.frame(main: CACurrentMediaTime() - start, orbiting: game.phase == .orbiting)

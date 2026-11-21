@@ -487,7 +487,7 @@ enum Ship3D {
             let hm = SCNMaterial()
             hm.lightingModel = .constant
             hm.diffuse.contents = dotImage()
-            hm.multiply.contents = UIColor(red: 1, green: 0.5, blue: 0.15, alpha: 1)
+            hm.multiply.contents = m.role.engineColor
             hm.blendMode = .add
             hm.writesToDepthBuffer = false
             halo.geometry?.materials = [hm]
