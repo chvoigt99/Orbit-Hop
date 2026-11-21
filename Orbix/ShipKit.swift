@@ -1132,7 +1132,7 @@ enum ShipDesigns {
         k.box(2.1, 0.1, 0.86, 1.0, 0.7, 0.08, k.stripe, chamfer: 0.03)
         k.intake(1.7, -0.2, 0.9, h: 0.3, w: 0.2)
         k.box(1.7, 0.86, 0, 0.5, 0.06, 1.1, k.second, chamfer: 0.02, mirror: false)
-        k.canopy(2.5, 0.58, len: 1.0, height: 0.32, width: 0.95)
+        k.canopy(2.45, 0.74, len: 1.1, height: 0.38, width: 1.0)
         // Tragrohr von vorn bis zum Heck
         k.hull([S(1.5, 0.1, 0.42, 0.42), S(0.0, 0.1, 0.46, 0.46), S(-1.8, 0.1, 0.5, 0.5), S(-2.3, 0.1, 0.4, 0.4)],
                top: 0.45, bottom: 0.45, shoulder: 0.45, k.dark, mirror: false)
@@ -1289,11 +1289,11 @@ enum ShipDesigns {
         // Kommandoturm mit Sichtkanzel
         k.hull([S(-0.3, 0.7, 0.2, 0.1), S(-0.8, 0.85, 0.5, 0.3), S(-1.5, 0.85, 0.5, 0.3), S(-2.0, 0.7, 0.3, 0.14)],
                top: 0.6, bottom: 0.9, shoulder: 0.3, k.second, mirror: false)
-        let bridgeGlass = k.tintedGlass(UIColor(red: 0.45, green: 0.3, blue: 0.05, alpha: 1))
-        k.box(-0.62, 0.97, 0, 0.3, 0.13, 0.74, bridgeGlass, chamfer: 0.02, mirror: false)
-        k.box(-0.62, 1.06, 0, 0.4, 0.05, 0.84, k.dark, chamfer: 0.02, mirror: false)
+        let bridgeGlass = k.tintedGlass(UIColor(red: 0.05, green: 0.3, blue: 0.4, alpha: 1))
+        k.box(-0.5, 1.02, 0, 0.5, 0.2, 0.86, bridgeGlass, chamfer: 0.02, mirror: false)
+        k.box(-0.55, 1.14, 0, 0.62, 0.06, 0.96, k.dark, chamfer: 0.02, mirror: false)
         for wz in [-0.18, 0.0, 0.18] as [Float] {
-            k.box(-0.47, 0.97, wz + 0.09, 0.02, 0.14, 0.025, k.dark, chamfer: 0, mirror: false)
+            k.box(-0.245, 1.02, wz + 0.09, 0.02, 0.2, 0.03, k.dark, chamfer: 0, mirror: false)
         }
         // Container unter dem Deck
         for (i, x) in ([1.0, -0.2, -1.4] as [Float]).enumerated() {
