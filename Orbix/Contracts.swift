@@ -624,6 +624,11 @@ extension Game {
         Haptics.bonus()
         SoundFX.shared.play(.bonus)
         track(.contract)
+        // direkt zurück zur Raumstation (nur wenn der Flug an einer Station begann; im Tagesflug gibt es keine)
+        if planets.first?.isStation == true && !dailyMode {
+            homeReturnAt = time + 3
+            popups.append(Popup(pos: pos, text: "RÜCKSPRUNG ZUR STATION", color: gold, age: 0, lift: 80))
+        }
     }
 
     /// Fracht abliefern, sobald der Zielplanet (oder ein späterer) erreicht ist

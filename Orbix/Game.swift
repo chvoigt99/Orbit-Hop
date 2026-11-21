@@ -893,6 +893,8 @@ final class Game {
     var stationOpen = false
     /// Zeitpunkt, zu dem das Stationsmenü aufgeht (nach dem Einschwenken der Kamera)
     private var stationMenuAt: CGFloat?
+    /// nach erfülltem Auftrag: Rücksprung zur Raumstation, sobald das Schiff wieder ruhig im Orbit ist
+    var homeReturnAt: CGFloat?
     /// Sichtbarkeit der HUD-Anzeigen: vor dem Start aus, beim Abheben aus dem Hangar weich einblenden
     var hudAlpha: CGFloat {
         guard started else { return 0 }
@@ -1137,6 +1139,7 @@ final class Game {
         boostTime = 0
         stationOpen = false
         stationMenuAt = nil
+        homeReturnAt = nil
         arriveAt = nil
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
         let startNo = dailyMode ? -1 : min(profile.startStation, profile.stationsReached - 1)
@@ -1658,6 +1661,22 @@ final class Game {
         startedAt = time
     }
 
+    /// Auftrag erfüllt: Der Flug endet und das Schiff springt zurück zur Raumstation, an der es gestartet ist;
+    /// dort öffnet sich das Stationsmenü (Christian, 2026-11-21)
+    func returnToStation() {
+        let result = contractResult, success = contractSuccess
+        blog("return to station score=\(score)")
+        finishRun()
+        paused = false
+        reset()
+        contractResult = result
+        contractSuccess = success
+        started = true
+        startedAt = time
+        stationMenuAt = time + 0.8
+        popups.append(Popup(pos: pos, text: "ZURÜCK AN DER STATION", color: Color(red: 1, green: 0.85, blue: 0.42), age: 0, lift: 30))
+    }
+
     /// Lauf abbrechen und zurück zum Titel
     func abort() {
         finishRun()
@@ -1840,6 +1859,7 @@ final class Game {
             stationMenuAt = nil
             if atStation { stationOpen = true }
         }
+        if let t = homeReturnAt, time >= t, phase == .orbiting, !paused { returnToStation() }
         updateFx(simDt)
         updateCamera(dt, size)
         updateSound()
