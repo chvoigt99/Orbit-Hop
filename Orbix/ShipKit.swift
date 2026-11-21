@@ -694,16 +694,36 @@ final class ShipKit {
         add(g, mat, SCNVector3(0, 0, z), mirror: mirror)
     }
 
-    /// Tropfenförmige Glaskanzel, weich in den Rumpf eingelassen
-    func bubble(_ x: Float, _ y: Float, z: Float = 0, len: Float, height: Float, width: Float) {
+    /// Getöntes Kanzelglas: dunkel spiegelnd mit farbigem Schimmer
+    func tintedGlass(_ c: UIColor) -> SCNMaterial {
+        let g = glass.copy() as! SCNMaterial
+        g.diffuse.contents = c.withAlphaComponent(1)
+        g.emission.contents = c.withAlphaComponent(0.35)
+        g.roughness.contents = 0.1
+        return g
+    }
+
+    /// Tropfenförmige Glaskanzel, weich in den Rumpf eingelassen; frames = Zahl der Rahmenspanten
+    func bubble(_ x: Float, _ y: Float, z: Float = 0, len: Float, height: Float, width: Float,
+                frames: Int = 0, frame: SCNMaterial? = nil, tint: SCNMaterial? = nil) {
+        func radius(_ t: Float) -> Float { pow(sin(.pi * pow(t, 0.75)), 0.7) }
         var secs: [Sec] = []
         for i in 0...8 {
             let t = Float(i) / 8
             // vorn spitzer, hinten lang auslaufend
-            let r = pow(sin(.pi * pow(t, 0.75)), 0.7)
+            let r = radius(t)
             secs.append(Sec(x + len * (0.45 - t), y, max(0.01, width / 2 * r), max(0.01, height * r)))
         }
-        smoothHull(secs, z: z, round: 2, segments: 20, glass, mirror: false)
+        smoothHull(secs, z: z, round: 2, segments: 20, tint ?? glass, mirror: false)
+        if frames > 0 {
+            for f in 1...frames {
+                let t = Float(f) / Float(frames + 1)
+                let r = radius(t)
+                let cx = x + len * (0.45 - t)
+                let w = width / 2 * r * 1.04 + 0.006, h = height * r * 1.04 + 0.006
+                smoothHull([Sec(cx + 0.025, y, w, h), Sec(cx - 0.025, y, w, h)], z: z, round: 2, segments: 20, frame ?? metal, mirror: false)
+            }
+        }
         // schmaler Rahmenring um den Fuß der Kanzel
         smoothHull([Sec(x + len * 0.47, y - height * 0.15, width * 0.3, 0.03), Sec(x, y - height * 0.15, width * 0.56, 0.05),
                     Sec(x - len * 0.57, y - height * 0.15, width * 0.3, 0.03)], z: z, round: 2, segments: 16, dark, mirror: false)
@@ -1005,13 +1025,14 @@ enum ShipDesigns {
     static let navy = c(205, 0.12, 0.4)
     static let gold = c(44, 0.6, 0.55)
     static let night = c(262, 0.12, 0.17)
+    static let steel = c(212, 0.38, 0.36)
 
     static func build(_ m: ShipModel) -> SCNNode {
         let k: ShipKit
         switch m.id {
         case "libelle": k = kit(m, bone, orange, gunmetal, "LB"); libelle(k, m)
         case "atlas": k = kit(m, bone, olive, orange, "AT"); atlas(k, m)
-        case "bastion": k = kit(m, navy, bone, gunmetal, "BS"); bastion(k, m)
+        case "bastion": k = kit(m, steel, bone, gunmetal, "BS"); bastion(k, m)
         case "orion": k = kit(m, bone, navy, gunmetal, "OR"); orion(k, m)
         case "viper": k = kit(m, red, bone, gunmetal, "VP"); viper(k, m)   // rot lackiert, damit sie sich vom Falken abhebt
         case "titan": k = kit(m, gunmetal, olive, orange, "TT"); titan(k, m)
@@ -1079,7 +1100,14 @@ enum ShipDesigns {
         typealias S = ShipKit.Sec
         k.smoothHull([S(3.3, 0.05, 0.03, 0.03), S(2.9, 0.08, 0.26, 0.22), S(2.1, 0.12, 0.42, 0.36), S(1.2, 0.12, 0.4, 0.34),
                       S(0.2, 0.1, 0.3, 0.27), S(-1.0, 0.08, 0.24, 0.22), S(-1.9, 0.08, 0.26, 0.24)], round: 2.2, mirror: false)
-        k.bubble(2.15, 0.36, len: 1.7, height: 0.34, width: 0.66)
+        // Kanzel: zwei große Kugelaugen wie bei einer Libelle, grünlich getönt
+        let eyeGlass = k.tintedGlass(UIColor(red: 0.05, green: 0.3, blue: 0.22, alpha: 1))
+        for ez in [-0.24, 0.24] as [Float] {
+            let eye = SCNSphere(radius: 0.31)
+            eye.segmentCount = 32
+            k.addNode(eye, eyeGlass, SCNVector3(2.3, 0.3, ez))
+        }
+        k.box(2.3, 0.42, 0, 0.5, 0.3, 0.07, k.dark, chamfer: 0.03, mirror: false)
         // vorderes Flügelpaar leicht nach vorn, hinteres nach hinten gepfeilt
         _ = k.wing(rootLead: 1.2, rootTrail: 0.6, rootZ: 0.3, tip: (1.35, 2.7), tipChord: 0.42, bulge: 0.05, y: 0.16, thick: 0.07)
         _ = k.wing(rootLead: 0.2, rootTrail: -0.4, rootZ: 0.25, tip: (-0.9, 2.4), tipChord: 0.38, bulge: 0.1, y: 0.02, thick: 0.07, k.accent)
@@ -1104,8 +1132,8 @@ enum ShipDesigns {
         k.box(3.05, -0.12, 0, 0.3, 0.3, 1.0, k.second, chamfer: 0.04, mirror: false)
         k.box(2.1, 0.1, 0.86, 1.0, 0.7, 0.08, k.stripe, chamfer: 0.03)
         k.intake(1.7, -0.2, 0.9, h: 0.3, w: 0.2)
-        k.box(2.0, 0.86, 0, 0.9, 0.06, 1.1, k.second, chamfer: 0.02, mirror: false)
-        k.bubble(2.6, 0.72, len: 1.2, height: 0.26, width: 1.0)
+        k.box(1.7, 0.86, 0, 0.5, 0.06, 1.1, k.second, chamfer: 0.02, mirror: false)
+        k.canopy(2.5, 0.58, len: 1.0, height: 0.32, width: 0.95)
         // Tragrohr von vorn bis zum Heck
         k.hull([S(1.5, 0.1, 0.42, 0.42), S(0.0, 0.1, 0.46, 0.46), S(-1.8, 0.1, 0.5, 0.5), S(-2.3, 0.1, 0.4, 0.4)],
                top: 0.45, bottom: 0.45, shoulder: 0.45, k.dark, mirror: false)
@@ -1143,32 +1171,36 @@ enum ShipDesigns {
         k.turret(2.3, -0.5, r: 0.22, down: true)
     }
 
-    // Sturmschiff: gepanzerter Keilrumpf mit zwei nach vorn ragenden Kanonenauslegern und kurzen Panzerflügeln
+    // Schildschiff: breiter Hammerkopf-Bug mit Fensterband, schlanker Hals, wuchtiger Triebwerksblock
     private static func bastion(_ k: ShipKit, _ m: ShipModel) {
         typealias S = ShipKit.Sec
-        k.hull([S(3.2, -0.05, 0.15, 0.08), S(2.2, 0.05, 0.6, 0.3), S(0.8, 0.12, 1.0, 0.46), S(-1.0, 0.14, 1.15, 0.5),
-                S(-2.3, 0.1, 0.9, 0.4), S(-2.7, 0.08, 0.6, 0.26)], top: 0.5, bottom: 0.75, shoulder: 0.2, mirror: false)
-        // überlappende Rückenschilde hinter der Kanzel
-        let shields: [(Float, Float)] = [(0.2, 0.72), (-0.8, 0.85), (-1.7, 0.7)]
-        for (i, s) in shields.enumerated() {
-            let x = s.0, f = s.1
-            k.hull([S(x + 0.6, 0.46, 0.7 * f, 0.14), S(x + 0.2, 0.52, 1.0 * f, 0.2), S(x - 0.4, 0.54, 0.95 * f, 0.18),
-                    S(x - 0.6, 0.5, 0.75 * f, 0.12)], top: 0.7, bottom: 0.9, shoulder: 0.2, i % 2 == 0 ? k.stripe : k.second, mirror: false)
+        // Hammerkopf quer zum Rumpf
+        k.hull([S(3.1, 0.0, 1.5, 0.2), S(2.7, 0.05, 1.9, 0.42), S(2.0, 0.05, 1.9, 0.42), S(1.6, 0.05, 1.2, 0.3)],
+               top: 0.85, bottom: 0.9, shoulder: 0.3, mirror: false)
+        k.box(2.35, 0.48, 1.15, 0.5, 0.04, 0.9, k.accent, chamfer: 0.01)
+        k.box(2.35, 0.1, 1.92, 0.9, 0.5, 0.1, k.second, chamfer: 0.04)
+        // Fensterband über die Stirn und kleine Brücke obenauf
+        let visor = k.tintedGlass(UIColor(red: 0.04, green: 0.22, blue: 0.4, alpha: 1))
+        k.box(3.1, 0.02, 0, 0.08, 0.12, 2.3, visor, chamfer: 0.02, mirror: false)
+        k.hull([S(2.75, 0.5, 0.35, 0.08), S(2.35, 0.56, 0.55, 0.14), S(1.9, 0.5, 0.35, 0.08)],
+               top: 0.7, bottom: 0.9, shoulder: 0.2, k.second, mirror: false)
+        k.box(2.62, 0.58, 0, 0.1, 0.08, 0.72, visor, chamfer: 0.02, mirror: false)
+        // Hals mit Spanten
+        k.hull([S(1.8, 0.08, 0.45, 0.32), S(-0.6, 0.1, 0.5, 0.36)], top: 0.5, bottom: 0.5, shoulder: 0.5, k.dark, mirror: false)
+        for nx in [1.2, 0.6, 0.0] as [Float] {
+            k.box(nx, 0.09, 0, 0.14, 0.8, 1.1, k.paint, chamfer: 0.04, mirror: false)
         }
-        // Ausleger links und rechts, ragen vor den Bug und tragen die Kanonen
-        k.hull([S(2.5, 0.0, 0.1, 0.1), S(1.7, 0.0, 0.26, 0.24), S(-1.2, 0.02, 0.36, 0.32), S(-2.0, 0.02, 0.22, 0.2)],
-               z: 1.3, top: 0.5, bottom: 0.5, shoulder: 0.5, k.second)
-        k.box(0.2, 0.02, 1.15, 1.6, 0.3, 0.5, k.dark, chamfer: 0.05)
-        // kurze, dicke Panzerflügel
-        _ = k.wing(rootLead: 0.0, rootTrail: -1.9, rootZ: 1.5, tip: (-1.6, 2.5), tipChord: 0.8, bulge: 0.1, y: 0.02, thick: 0.2)
-        _ = k.wing(rootLead: -1.1, rootTrail: -1.9, rootZ: 2.0, tip: (-1.65, 2.55), tipChord: 0.7, bulge: 0.05, y: 0.04, thick: 0.22, k.accent)
-        k.bubble(1.5, 0.4, len: 1.4, height: 0.24, width: 0.6)
-        k.nacelle(-2.4, 0.12, 0.6, r: 0.4, len: 1.3, faceted: true)
-        k.fin(-1.6, 0.5, 0.7, height: 0.85, len: 1.0, tilt: -0.3)
-        k.intake(1.2, -0.1, 0.8, h: 0.3, w: 0.22)
-        k.lamp(-1.6, 0.04, 2.7, size: 0.1)
-        k.sensorNose(3.25, -0.05)
-        k.weapon(m.weapon, hardpoints: [(2.3, 0.0, 1.3)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
+        // Triebwerksblock
+        k.hull([S(-0.4, 0.1, 0.6, 0.4), S(-1.0, 0.14, 1.1, 0.6), S(-2.3, 0.12, 1.15, 0.6), S(-2.7, 0.1, 0.8, 0.4)],
+               top: 0.6, bottom: 0.75, shoulder: 0.35, mirror: false)
+        k.box(-1.6, 0.76, 0, 1.2, 0.06, 1.2, k.stripe, chamfer: 0.02, mirror: false)
+        _ = k.wing(rootLead: -0.9, rootTrail: -2.2, rootZ: 1.1, tip: (-1.9, 2.0), tipChord: 0.6, bulge: 0.05, y: 0.1, thick: 0.16)
+        k.nacelle(-2.5, 0.0, 0.7, r: 0.38, len: 1.2, faceted: true)
+        k.nacelle(-2.5, 0.5, 0, r: 0.3, len: 1.0, mirror: false, faceted: true)
+        k.fin(-1.6, 0.7, 0.8, height: 0.7, len: 0.9, tilt: -0.3)
+        k.lamp(2.4, 0.05, 1.98, size: 0.1)
+        k.lamp(-1.9, 0.12, 2.1, size: 0.09)
+        k.weapon(m.weapon, hardpoints: [(2.5, -0.32, 1.7)], spine: (-1.6, 3.0, 1.1), belly: (-0.4, -0.8))
     }
 
     // Kreuzer: runder Nadelrumpf in einem großen Ring, Kanzel in einer Seitenkapsel, drei Triebwerke
@@ -1204,7 +1236,13 @@ enum ShipDesigns {
         // Kanzel seitlich in eigener Kapsel, gegenüber eine Sensorkapsel
         k.smoothHull([S(2.4, 0.25, 0.05, 0.05), S(1.95, 0.28, 0.29, 0.23), S(0.6, 0.29, 0.34, 0.26), S(0.0, 0.27, 0.2, 0.15)],
                      z: 0.82, round: 2.3, segments: 20, k.stripe, mirror: false)
-        k.bubble(1.45, 0.46, z: 0.82, len: 1.2, height: 0.2, width: 0.42)
+        let noseGlass = k.tintedGlass(UIColor(red: 0.05, green: 0.2, blue: 0.4, alpha: 1))
+        k.smoothHull([S(2.44, 0.25, 0.05, 0.05), S(1.95, 0.28, 0.3, 0.24), S(1.4, 0.285, 0.33, 0.26)],
+                     z: 0.82, round: 2.3, segments: 20, noseGlass, mirror: false)
+        for fx in [1.95, 1.4] as [Float] {
+            k.smoothHull([S(fx + 0.03, 0.283, 0.335, 0.265), S(fx - 0.03, 0.283, 0.335, 0.265)],
+                         z: 0.82, round: 2.3, segments: 20, k.metal, mirror: false)
+        }
         k.smoothHull([S(2.0, 0.2, 0.04, 0.04), S(1.6, 0.2, 0.2, 0.16), S(0.6, 0.2, 0.22, 0.18), S(0.1, 0.2, 0.1, 0.08)],
                      z: -0.74, round: 2.3, segments: 18, k.dark, mirror: false)
         k.lamp(2.0, 0.2, -0.74, size: 0.08)
@@ -1217,7 +1255,7 @@ enum ShipDesigns {
         typealias S = ShipKit.Sec
         k.smoothHull([S(4.0, 0.0, 0.02, 0.02), S(3.3, 0.02, 0.12, 0.09), S(2.2, 0.06, 0.27, 0.2), S(0.6, 0.12, 0.4, 0.32),
                       S(-0.8, 0.14, 0.46, 0.34), S(-1.9, 0.12, 0.36, 0.26), S(-2.4, 0.1, 0.16, 0.12)], round: 2.3, mirror: false)
-        k.bubble(1.3, 0.36, len: 1.8, height: 0.27, width: 0.5)
+        k.bubble(1.2, 0.36, len: 2.4, height: 0.2, width: 0.38, frames: 3)
         // Sichelflügel: Spitze liegt weit vor der Wurzel
         _ = k.wing(rootLead: -0.4, rootTrail: -1.7, rootZ: 0.34, tip: (1.3, 2.35), tipChord: 0.5, bulge: -0.25, y: -0.02, thick: 0.11)
         _ = k.wing(rootLead: 1.05, rootTrail: 0.6, rootZ: 1.9, tip: (1.35, 2.4), tipChord: 0.4, bulge: 0.05, y: 0.0, thick: 0.13, k.accent)
@@ -1252,7 +1290,12 @@ enum ShipDesigns {
         // Kommandoturm mit Sichtkanzel
         k.hull([S(-0.3, 0.7, 0.2, 0.1), S(-0.8, 0.85, 0.5, 0.3), S(-1.5, 0.85, 0.5, 0.3), S(-2.0, 0.7, 0.3, 0.14)],
                top: 0.6, bottom: 0.9, shoulder: 0.3, k.second, mirror: false)
-        k.bubble(-0.85, 1.1, len: 0.9, height: 0.16, width: 0.7)
+        let bridgeGlass = k.tintedGlass(UIColor(red: 0.45, green: 0.3, blue: 0.05, alpha: 1))
+        k.box(-0.62, 0.97, 0, 0.3, 0.13, 0.74, bridgeGlass, chamfer: 0.02, mirror: false)
+        k.box(-0.62, 1.06, 0, 0.4, 0.05, 0.84, k.dark, chamfer: 0.02, mirror: false)
+        for wz in [-0.18, 0.0, 0.18] as [Float] {
+            k.box(-0.47, 0.97, wz + 0.09, 0.02, 0.14, 0.025, k.dark, chamfer: 0, mirror: false)
+        }
         // Container unter dem Deck
         for (i, x) in ([1.0, -0.2, -1.4] as [Float]).enumerated() {
             k.box(x, -0.38, 0.45, 1.08, 0.74, 0.8, i == 1 ? k.second : k.accent, chamfer: 0.06)
@@ -1284,9 +1327,10 @@ enum ShipDesigns {
         // Rückengrat, trägt die Schienenkanone
         k.smoothHull([S(2.5, 0.3, 0.1, 0.06), S(1.6, 0.45, 0.22, 0.12), S(-0.4, 0.5, 0.24, 0.1), S(-1.2, 0.4, 0.1, 0.05)],
                      round: 2.4, segments: 18, k.second, mirror: false)
-        // zwei Kanzelblasen links und rechts vom Grat
-        k.bubble(1.0, 0.4, z: 0.5, len: 1.4, height: 0.2, width: 0.36)
-        k.bubble(1.0, 0.4, z: -0.5, len: 1.4, height: 0.2, width: 0.36)
+        // flaches rotes Sichtband quer über dem Bug
+        let visor = k.tintedGlass(UIColor(red: 0.45, green: 0.04, blue: 0.06, alpha: 1))
+        k.smoothHull([S(2.45, 0.2, 0.3, 0.08), S(2.0, 0.28, 0.55, 0.13), S(1.5, 0.33, 0.6, 0.14), S(1.3, 0.32, 0.4, 0.08)],
+                     round: 2.8, segments: 24, visor, mirror: false)
         // rote Leuchtlinie entlang der geschwungenen Vorderkante
         let red = ShipKit.glow(UIColor(red: 1, green: 0.15, blue: 0.2, alpha: 1))
         let lead = Array(w[1...8])
@@ -1313,7 +1357,10 @@ enum ShipDesigns {
         k.sidePanels(x0: -1.8, x1: 0.4, y: 0.1, z: 0.6, count: 4)
         k.smoothHull([S(0.2, 0.5, 0.05, 0.04), S(-0.6, 0.58, 0.22, 0.12), S(-1.8, 0.5, 0.18, 0.1), S(-2.5, 0.32, 0.05, 0.04)],
                      round: 4, segments: 24, k.accent, mirror: false)
-        k.bubble(1.3, 0.46, len: 2.2, height: 0.3, width: 0.6)
+        k.bubble(1.9, 0.4, len: 1.2, height: 0.24, width: 0.5, frames: 1, frame: k.accent,
+                 tint: k.tintedGlass(UIColor(red: 0.05, green: 0.16, blue: 0.4, alpha: 1)))
+        k.bubble(0.8, 0.52, len: 1.3, height: 0.28, width: 0.56, frames: 1, frame: k.accent,
+                 tint: k.tintedGlass(UIColor(red: 0.05, green: 0.16, blue: 0.4, alpha: 1)))
         _ = k.wing(rootLead: 1.2, rootTrail: -1.4, rootZ: 0.45, tip: (-1.5, 2.55), tipChord: 0.7, bulge: 0.12, y: 0.0, thick: 0.13)
         // Entenflügel am Bug
         _ = k.wing(rootLead: 2.9, rootTrail: 2.3, rootZ: 0.22, tip: (2.1, 1.0), tipChord: 0.26, bulge: 0.15, y: 0.08, thick: 0.06, k.accent)
