@@ -846,6 +846,12 @@ final class Game {
     static let manualCombat = ProcessInfo.processInfo.arguments.contains("-manualCombat")
     /// Test: Auftrag an der ersten Station automatisch annehmen
     static let contractTest = ProcessInfo.processInfo.arguments.contains("-contractTest")
+    /// Testargument "-startStation N": Flug beginnt an Station N (0 = erste), unabhängig vom Profil
+    static let startStationArg: Int? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-startStation"), i + 1 < args.count else { return nil }
+        return Int(args[i + 1])
+    }()
     /// Nur für Tests: alle 3 s drei Meldungen auf einmal, um das Stapeln zu prüfen
     static let popupTest = ProcessInfo.processInfo.arguments.contains("-popupTest")
     /// Nur für Tests: Flug startet mit 20 % Panzerung, um Rauch und Funken zu sehen
@@ -1152,7 +1158,7 @@ final class Game {
         homeReturnAt = nil
         arriveAt = nil
         // Start im Hangar oder an einer schon erreichten Raumstation (nie im Tagesflug)
-        let startNo = dailyMode ? -1 : (override ?? min(profile.startStation, profile.stationsReached - 1))
+        let startNo = dailyMode ? -1 : (override ?? Game.startStationArg ?? min(profile.startStation, profile.stationsReached - 1))
         planetBase = startNo >= 0 ? Game.stationPlanet(startNo) : 0
         nextStationNo = startNo + 1
         outpostAt = startNo >= 0 ? planetBase + 5 : nil
