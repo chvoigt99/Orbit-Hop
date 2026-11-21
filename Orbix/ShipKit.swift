@@ -774,7 +774,9 @@ final class ShipKit {
 
     /// Jäger-Bewaffnung: lange Zwillingskanonen am Bug und Kanonengondeln an den Flügelspitzen, dazu Leuchtstreifen
     func fighterGuns(nose: (Float, Float, Float), tips: (Float, Float, Float), strip: (Float, Float, Float, CGFloat)) {
-        cannon(nose.0, nose.1, nose.2, len: 2.4, r: 0.08)
+        // Bugkanonen: kräftige Läufe in einer Verkleidung seitlich unter der Nase, gut sichtbar
+        box(nose.0 - 0.7, nose.1, nose.2, 1.3, 0.24, 0.26, second, chamfer: 0.07)
+        cannon(nose.0, nose.1, nose.2, len: 2.4, r: 0.1)
         box(tips.0 - 0.3, tips.1, tips.2, 1.3, 0.2, 0.22, second, chamfer: 0.06)
         cannon(tips.0 + 0.5, tips.1, tips.2, len: 1.5, r: 0.06)
         lamp(tips.0 - 0.95, tips.1, tips.2, size: 0.09)
@@ -835,7 +837,7 @@ enum ShipDesigns {
         case "atlas": k = kit(m, bone, olive, orange, "AT"); atlas(k, m)
         case "bastion": k = kit(m, olive, bone, gunmetal, "BS"); bastion(k, m)
         case "orion": k = kit(m, bone, navy, gunmetal, "OR"); orion(k, m)
-        case "viper": k = kit(m, bone, red, gunmetal, "VP"); viper(k, m)
+        case "viper": k = kit(m, red, bone, gunmetal, "VP"); viper(k, m)   // rot lackiert, damit sie sich vom Falken abhebt
         case "titan": k = kit(m, gunmetal, olive, orange, "TT"); titan(k, m)
         case "phantom": k = kit(m, night, red, gunmetal, "PH"); phantom(k, m)
         case "nova": k = kit(m, bone, gold, navy, "NV"); nova(k, m)
@@ -890,7 +892,7 @@ enum ShipDesigns {
         k.sensorNose(3.5, 0.0)
         k.antenna(-1.6, 0.5, 0.2, h: 0.5)
         k.weapon(m.weapon, hardpoints: [(1.0, -0.12, 1.55), (2.2, -0.2, 0.42)], spine: (-1.2, 3.2, 0.62), belly: (-0.3, -0.62))
-        k.fighterGuns(nose: (2.5, -0.26, 0.2), tips: (-0.9, 0.02, 2.78), strip: (0.6, 0.3, 0.49, 1.8))
+        k.fighterGuns(nose: (2.3, -0.12, 0.5), tips: (-0.9, 0.02, 2.78), strip: (0.6, 0.3, 0.49, 1.8))
         // Bauchflosse und Nachbrenner-Ringe für die aggressive Silhouette
         k.profile([(-0.6, -0.35), (-1.9, -0.95), (-2.2, -0.95), (-2.0, -0.35)], z: 0, thick: 0.08, k.accent, mirror: false)
         _ = tail
@@ -951,11 +953,9 @@ enum ShipDesigns {
         }
         // Tragrahmen unter den Containern und Kranarm am Heck
         k.box(0.0, -0.45, 0.98, 3.1, 0.12, 0.7, k.dark, chamfer: 0.03)
-        k.box(-1.5, 1.05, 0, 0.16, 0.7, 0.16, k.metal, chamfer: 0.02, mirror: false)
-        k.box(-0.9, 1.38, 0, 1.4, 0.1, 0.12, k.metal, chamfer: 0.02, mirror: false)
-        k.lamp(-0.25, 1.32, 0, size: 0.1)
-        // Geschützturm auf dem Rücken
-        k.turret(1.3, 1.1)
+        // Geschützturm auf dem Rücken, auf einem festen Sockel
+        k.box(1.3, 1.08, 0, 1.1, 0.14, 1.0, k.dark, chamfer: 0.04, mirror: false)
+        k.turret(1.3, 1.16)
         // Schlepper-Triebwerke unten
         k.engine(-2.4, -0.4, 0.5, r: 0.3, len: 1.0)
     }
@@ -1048,7 +1048,7 @@ enum ShipDesigns {
         k.sensorNose(3.7, 0.0)
         k.antenna(-1.4, 0.42, 0.18, h: 0.45)
         k.weapon(m.weapon, hardpoints: [(0.9, -0.1, 2.3), (2.4, -0.2, 0.35)], spine: (-1.2, 3.4, 0.55), belly: (-0.2, -0.5))
-        k.fighterGuns(nose: (2.7, -0.22, 0.17), tips: (0.45, 0.02, 2.6), strip: (0.5, 0.26, 0.42, 2.0))
+        k.fighterGuns(nose: (2.4, -0.1, 0.44), tips: (0.45, 0.02, 2.6), strip: (0.5, 0.26, 0.42, 2.0))
         // Entenflügel am Bug und Bauchflosse
         k.plate([(2.3, 0.3), (1.6, 1.05), (1.3, 1.05), (1.5, 0.3)], y: 0.05, thick: 0.07, k.accent, chamfer: 0.02)
         k.profile([(-0.8, -0.3), (-2.0, -0.9), (-2.25, -0.9), (-2.1, -0.3)], z: 0, thick: 0.08, k.accent, mirror: false)
