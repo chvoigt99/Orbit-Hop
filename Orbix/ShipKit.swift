@@ -698,7 +698,6 @@ final class ShipKit {
     func tintedGlass(_ c: UIColor) -> SCNMaterial {
         let g = glass.copy() as! SCNMaterial
         g.diffuse.contents = c.withAlphaComponent(1)
-        g.emission.contents = c.withAlphaComponent(0.35)
         g.roughness.contents = 0.1
         return g
     }
