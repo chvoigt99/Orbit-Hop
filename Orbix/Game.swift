@@ -1490,7 +1490,8 @@ final class Game {
             }
             if phase != .docked && phase != .over && hypot(p.x - pos.x, p.y - pos.y) < 16 && abs(dAlt) < 22 {
                 let shot = enemyShots.remove(at: i)
-                let damage = takeHit(shot.damage, armorFactor: 0.6)
+                // dicke Frachterhülle: im Gefecht kommt weniger Schaden durch
+                let damage = takeHit(shot.damage * (shot.raider ? ship.model.role.combatDamageTaken : 1), armorFactor: 0.6)
                 brakeFlash = max(brakeFlash, 0.6)
                 burst(at: p, count: 18, hue: damage > 0 ? 355 : 200, speed: 200, life: 0.6, alt: altitude)
                 popups.append(Popup(pos: pos, text: damage > 0 ? "PLASMATREFFER -\(Int(damage))" : "SCHILD HÄLT",
@@ -2367,7 +2368,8 @@ final class Game {
     static let railWidthNear: CGFloat = 12
 
     /// Nahes Hindernis fast genau voraus (bis ca. 15° seitlich, 750 weit; Railgun weiter)
-    func aimTarget() -> Asteroid? {
+    /// arc: halber Erfassungswinkel im Gefecht (Bugkanonen eng, Geschützturm rundum); nil = normales Verhalten
+    func aimTarget(arc: CGFloat? = nil) -> Asteroid? {
         let reach: CGFloat = (weapon == .railgun ? 1.8 : 1) * rangeFactor
         let fwd = CGVector(dx: cos(heading), dy: sin(heading))
         var best: Asteroid?
@@ -2383,8 +2385,12 @@ final class Game {
             if a.kind == .raider && abs(a.alt - altitude) > d * 0.6 { continue }
             let cosA = (dx * fwd.dx + dy * fwd.dy) / d
             // Drohnen greifen von der Seite an: weiter Erfassungswinkel
-            guard cosA > (mobile ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
-            guard cosA > 0 else { continue }
+            if let arc, a.kind == .raider {
+                guard cosA > cos(min(.pi, arc)) - 0.001 else { continue }
+            } else {
+                guard cosA > (mobile ? 0.6 : 0.96) || d * sqrt(max(0, 1 - cosA * cosA)) < a.radius + 30 else { continue }
+                guard cosA > 0 else { continue }
+            }
             // Objekte direkt in der Flugbahn haben Vorrang
             let side = d * sqrt(max(0, 1 - cosA * cosA))
             let score = d * 0.4 + max(0, side - a.radius) * 4

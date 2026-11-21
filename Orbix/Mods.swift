@@ -94,6 +94,56 @@ enum ShipRole {
         }
     }
 
+    var symbol: String {
+        switch self {
+        case .freighter: return "shippingbox.fill"
+        case .fighter: return "scope"
+        case .allround: return "circle.hexagongrid.fill"
+        }
+    }
+
+    /// ein Satz, der die Rolle im Hangar erklärt
+    var pitch: String {
+        switch self {
+        case .freighter: return "Viel Fracht, dicke Hülle, Rundum-Geschützturm. Träge im Gefecht."
+        case .fighter: return "Wendig, starke Bugkanonen. Kaum Frachtraum."
+        case .allround: return "Kann beides ein wenig, nichts davon richtig."
+        }
+    }
+
+    /// Farbe der Triebwerksglut: Jäger blaues Plasma, Frachter schwere orange Brenner
+    var engineColor: UIColor {
+        switch self {
+        case .freighter: return UIColor(red: 1, green: 0.42, blue: 0.08, alpha: 1)
+        case .fighter: return UIColor(red: 0.35, green: 0.75, blue: 1, alpha: 1)
+        case .allround: return UIColor(red: 1, green: 0.72, blue: 0.3, alpha: 1)
+        }
+    }
+
+    /// Größe im Flug: Frachter wirken wuchtig, Jäger klein und flink
+    var flightScale: CGFloat {
+        switch self {
+        case .freighter: return 1.3
+        case .fighter: return 0.92
+        case .allround: return 1.1
+        }
+    }
+
+    // Gefecht
+    /// Wendigkeit und Tempo im Gefecht
+    var combatTurn: CGFloat { self == .fighter ? 1.3 : (self == .freighter ? 0.7 : 1) }
+    var combatSpeed: CGFloat { self == .fighter ? 1.15 : (self == .freighter ? 0.85 : 1) }
+    /// Schaden und Feuerpause der Bordkanonen
+    /// (Jäger feuern zwei Rohre zugleich: zusammen etwa das Dreifache eines Frachter-Turms)
+    var gunDamage: CGFloat { self == .fighter ? 0.85 : (self == .freighter ? 1.0 : 1.2) }
+    var gunCooldown: CGFloat { self == .fighter ? 0.85 : (self == .freighter ? 1.5 : 1.15) }
+    /// Rohre: Jäger feuern Zwillingskanonen aus dem Bug, die anderen ein Geschütz
+    var gunBarrels: Int { self == .fighter ? 2 : 1 }
+    /// Schwenkbereich: Bugkanonen nach vorn, der Frachter-Turm rundum
+    var gunArc: CGFloat { self == .fighter ? 0.9 : (self == .freighter ? .pi : 1.3) }
+    /// Anteil des Schadens, der im Gefecht durchkommt (dicke Frachterhülle)
+    var combatDamageTaken: CGFloat { self == .freighter ? 0.7 : (self == .fighter ? 1 : 0.85) }
+
     var color: Color {
         switch self {
         case .freighter: return Color(red: 0.55, green: 0.7, blue: 1)

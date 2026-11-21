@@ -2529,7 +2529,8 @@ final class World3D {
         bankNode.eulerAngles.z = Float(game.phase == .combat ? game.climb : 0)
         // bildschirmfest, aber nie zu groß im Vergleich zu den Planeten
         let topScale = min(8.4 * px, 14)
-        var sc = topScale + (5.0 - topScale) * k
+        // Frachter wuchtig, Jäger klein und flink
+        var sc = (topScale + (5.0 - topScale) * k) * game.ship.model.role.flightScale
         sc += (parkedScale - sc) * ka
         sc += (5.0 - sc) * kh
         lastShipScale = sc

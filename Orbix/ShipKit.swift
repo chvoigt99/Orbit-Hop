@@ -378,7 +378,8 @@ final class ShipKit {
     let weaponGlow: SCNMaterial
     var rng: SeededRNG
 
-    init(seed: String, base: UIColor, accent accentColor: UIColor, second secondColor: UIColor, weaponHue: Double, marking: String) {
+    init(seed: String, base: UIColor, accent accentColor: UIColor, second secondColor: UIColor, weaponHue: Double, marking: String,
+         engine: UIColor = UIColor(red: 1, green: 0.5, blue: 0.12, alpha: 1)) {
         rng = SeededRNG(seed)
         paint = WornPaint.material("p-\(seed)", base: base, marking: marking)
         accent = WornPaint.material("a-\(seed)", base: accentColor)
@@ -397,7 +398,7 @@ final class ShipKit {
         glass.roughness.contents = 0.06
         glass.emission.contents = UIColor(red: 0.12, green: 0.06, blue: 0.02, alpha: 1)
         lamp = ShipKit.glow(UIColor(red: 1, green: 0.55, blue: 0.15, alpha: 1))
-        fire = ShipKit.glow(UIColor(red: 1, green: 0.5, blue: 0.12, alpha: 1))
+        fire = ShipKit.glow(engine)
         fire.name = "engineFire"   // Düsenglut: World3D schaltet sie aus, wenn die Triebwerke aus sind
         weaponGlow = ShipKit.glow(UIColor(hsl(weaponHue, 0.9, 0.6)))
         weaponGlow.name = "weaponGlow"   // Leuchtringe der Waffe: erlöschen am Spielende wie die Düsenglut
@@ -771,6 +772,33 @@ final class ShipKit {
         }
     }
 
+    /// Jäger-Bewaffnung: lange Zwillingskanonen am Bug und Kanonengondeln an den Flügelspitzen, dazu Leuchtstreifen
+    func fighterGuns(nose: (Float, Float, Float), tips: (Float, Float, Float), strip: (Float, Float, Float, CGFloat)) {
+        cannon(nose.0, nose.1, nose.2, len: 2.4, r: 0.08)
+        box(tips.0 - 0.3, tips.1, tips.2, 1.3, 0.2, 0.22, second, chamfer: 0.06)
+        cannon(tips.0 + 0.5, tips.1, tips.2, len: 1.5, r: 0.06)
+        lamp(tips.0 - 0.95, tips.1, tips.2, size: 0.09)
+        // Leuchtstreifen in Waffenfarbe entlang der Rumpfflanke
+        box(strip.0, strip.1, strip.2, strip.3, 0.05, 0.03, weaponGlow, chamfer: 0.01)
+        box(strip.0 - Float(strip.3) * 0.62, strip.1, strip.2, strip.3 * 0.18, 0.05, 0.03, weaponGlow, chamfer: 0.01)
+    }
+
+    /// Frachter-Geschützturm: drehbare Kuppel mit Doppelrohr, deckt rundum
+    func turret(_ x: Float, _ y: Float, r: CGFloat = 0.36) {
+        let base = SCNCylinder(radius: r * 1.15, height: 0.14)
+        base.radialSegmentCount = 12
+        addNode(base, dark, SCNVector3(x, y, 0))
+        let dome = SCNCylinder(radius: r, height: 0.3)
+        dome.radialSegmentCount = 8
+        addNode(dome, second, SCNVector3(x, y + 0.2, 0))
+        box(x + Float(r) * 0.6, y + 0.22, 0, r * 1.1, 0.2, r * 1.2, metal, chamfer: 0.04, mirror: false)
+        for z in [-0.11, 0.11] as [Float] {
+            tube(x + Float(r) + 0.5, y + 0.22, z, r: 0.055, len: 1.1, metal, mirror: false)
+            tube(x + Float(r) + 1.06, y + 0.22, z, r: 0.035, len: 0.02, weaponGlow, mirror: false)
+        }
+        lamp(x - Float(r) * 0.5, y + 0.37, 0, size: 0.08)
+    }
+
     func weapon(_ kind: WeaponKind, hardpoints: [(Float, Float, Float)], spine: (Float, Float, Float), belly: (Float, Float)) {
         switch kind {
         case .cannon:
@@ -836,7 +864,7 @@ enum ShipDesigns {
     }
 
     private static func kit(_ m: ShipModel, _ base: UIColor, _ acc: UIColor, _ sec: UIColor, _ code: String) -> ShipKit {
-        ShipKit(seed: m.id, base: base, accent: acc, second: sec, weaponHue: m.weapon.hue, marking: code)
+        ShipKit(seed: m.id, base: base, accent: acc, second: sec, weaponHue: m.weapon.hue, marking: code, engine: m.role.engineColor)
     }
 
     // Jäger wie im Vorbild: spitzer Rumpf, Pfeilflügel, zwei Gondeln, zwei Leitwerke
@@ -862,6 +890,9 @@ enum ShipDesigns {
         k.sensorNose(3.5, 0.0)
         k.antenna(-1.6, 0.5, 0.2, h: 0.5)
         k.weapon(m.weapon, hardpoints: [(1.0, -0.12, 1.55), (2.2, -0.2, 0.42)], spine: (-1.2, 3.2, 0.62), belly: (-0.3, -0.62))
+        k.fighterGuns(nose: (2.5, -0.26, 0.2), tips: (-0.9, 0.02, 2.78), strip: (0.6, 0.3, 0.49, 1.8))
+        // Bauchflosse und Nachbrenner-Ringe für die aggressive Silhouette
+        k.profile([(-0.6, -0.35), (-1.9, -0.95), (-2.2, -0.95), (-2.0, -0.35)], z: 0, thick: 0.08, k.accent, mirror: false)
         _ = tail
     }
 
@@ -913,6 +944,20 @@ enum ShipDesigns {
         k.antenna(-1.4, 0.7, 0.4, h: 0.6)
         k.antenna(0.9, 1.1, 0.3, h: 0.4)
         k.weapon(m.weapon, hardpoints: [(2.3, -0.45, 0.55)], spine: (-1.6, 2.8, 1.15), belly: (0.2, -0.85))
+        // zweite Containerlage außen, mit Verzurrgurten: der Frachter soll wuchtig und beladen wirken
+        for (i, x) in [0.5, -0.5].enumerated() {
+            k.box(Float(x), 0.72, 1.0, 0.9, 0.5, 0.58, i == 0 ? k.second : k.stripe, chamfer: 0.05)
+            k.box(Float(x), 0.72, 1.0, 0.08, 0.54, 0.62, k.metal, chamfer: 0.01)
+        }
+        // Tragrahmen unter den Containern und Kranarm am Heck
+        k.box(0.0, -0.45, 0.98, 3.1, 0.12, 0.7, k.dark, chamfer: 0.03)
+        k.box(-1.5, 1.05, 0, 0.16, 0.7, 0.16, k.metal, chamfer: 0.02, mirror: false)
+        k.box(-0.9, 1.38, 0, 1.4, 0.1, 0.12, k.metal, chamfer: 0.02, mirror: false)
+        k.lamp(-0.25, 1.32, 0, size: 0.1)
+        // Geschützturm auf dem Rücken
+        k.turret(1.3, 1.1)
+        // Schlepper-Triebwerke unten
+        k.engine(-2.4, -0.4, 0.5, r: 0.3, len: 1.0)
     }
 
     // Panzerschiff: breiter Keil, Panzerplatten, Turm
@@ -1003,6 +1048,10 @@ enum ShipDesigns {
         k.sensorNose(3.7, 0.0)
         k.antenna(-1.4, 0.42, 0.18, h: 0.45)
         k.weapon(m.weapon, hardpoints: [(0.9, -0.1, 2.3), (2.4, -0.2, 0.35)], spine: (-1.2, 3.4, 0.55), belly: (-0.2, -0.5))
+        k.fighterGuns(nose: (2.7, -0.22, 0.17), tips: (0.45, 0.02, 2.6), strip: (0.5, 0.26, 0.42, 2.0))
+        // Entenflügel am Bug und Bauchflosse
+        k.plate([(2.3, 0.3), (1.6, 1.05), (1.3, 1.05), (1.5, 0.3)], y: 0.05, thick: 0.07, k.accent, chamfer: 0.02)
+        k.profile([(-0.8, -0.3), (-2.0, -0.9), (-2.25, -0.9), (-2.1, -0.3)], z: 0, thick: 0.08, k.accent, mirror: false)
     }
 
     // Schlachtschiff: massiv, drei Triebwerke, zwei Türme

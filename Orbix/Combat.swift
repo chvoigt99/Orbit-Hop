@@ -59,37 +59,40 @@ extension Game {
     static let fleeAfter: CGFloat = 20
 
     // ruhiges Tempo, damit man zielen und taktieren kann statt Autoscooter zu fahren (Christian, 2026-11-20)
-    var combatCruise: CGFloat { 120 * ship.speed }
-    var combatTop: CGFloat { 120 * ship.speed }
-    /// schnelle Schiffe sind auch wendiger
-    var combatTurn: CGFloat { 1.7 + 0.8 * max(0, ship.speed - 0.8) }
+    var combatCruise: CGFloat { 120 * ship.speed * ship.model.role.combatSpeed }
+    var combatTop: CGFloat { combatCruise }
+    /// schnelle Schiffe sind auch wendiger; Jäger drehen eng, Frachter träge
+    var combatTurn: CGFloat { (1.7 + 0.8 * max(0, ship.speed - 0.8)) * ship.model.role.combatTurn }
 
     /// Bordkanonen: im Gefecht immer verfügbar, ohne Energie; Jäger mit starken Kanonen treffen härter
     static let boardShotSpeed: CGFloat = 900
     static let boardCooldown: CGFloat = 0.16
 
     func fireBoardCannons() {
-        weaponCooldown = Game.boardCooldown * ship.weaponReloadFactor
-        let muzzle = point(from: pos, angle: heading, distance: 30)
-        let target = aimTarget()
+        let role = ship.model.role
+        weaponCooldown = Game.boardCooldown * ship.weaponReloadFactor * role.gunCooldown
+        let target = aimTarget(arc: role.gunArc)
         var hd = heading
         var valt = sin(climb) * Game.boardShotSpeed
         if let t = target {
-            let d = max(1, hypot(t.center.x - muzzle.x, t.center.y - muzzle.y))
+            let d = max(1, hypot(t.center.x - pos.x, t.center.y - pos.y))
             let lead = d / Game.boardShotSpeed
-            let want = atan2(t.center.y + t.vel.dy * lead - muzzle.y, t.center.x + t.vel.dx * lead - muzzle.x)
-            // schwenkbare Bordkanonen: zielen bis etwa 55° zur Seite selbst, damit man nicht frontal in die
-            // Schüsse fliegen muss, um zu treffen; man kann seitlich vorbeiziehen und dabei feuern (Christian, 2026-11-20)
-            let limit = min(1.15, 0.95 * ship.aimAssistFactor)
+            let want = atan2(t.center.y + t.vel.dy * lead - pos.y, t.center.x + t.vel.dx * lead - pos.x)
+            // Jäger: starre Bugkanonen mit Zielhilfe nach vorn, man muss den Gegner vor den Bug holen.
+            // Frachter: schwacher Geschützturm, der rundum schwenkt und auch nach hinten deckt.
+            let limit = role.gunArc
             hd = heading + max(-limit, min(limit, wrap(want - heading)))
             let dAlt = t.alt - altitude
             if abs(dAlt) < d * 0.5 { valt = dAlt / lead }
         }
         let fwd = CGVector(dx: cos(hd), dy: sin(hd))
+        // Bugkanonen sitzen vorn, der Turm mittschiffs
+        let muzzle = role == .freighter ? pos : point(from: pos, angle: heading, distance: 30)
         let v = CGVector(dx: fwd.dx * Game.boardShotSpeed + vel.dx, dy: fwd.dy * Game.boardShotSpeed + vel.dy)
-        let sides: [CGFloat] = ship.twinCannon ? [-1, 1] : [0]
-        for side in sides {
-            let m = CGPoint(x: muzzle.x - fwd.dy * 9 * side, y: muzzle.y + fwd.dx * 9 * side)
+        let barrels = role.gunBarrels * (ship.twinCannon ? 2 : 1)
+        for b in 0..<barrels {
+            let side = barrels == 1 ? 0 : (CGFloat(b) - CGFloat(barrels - 1) / 2) * (barrels > 2 ? 9 : 16)
+            let m = CGPoint(x: muzzle.x - fwd.dy * side, y: muzzle.y + fwd.dx * side)
             var pr = Projectile(kind: .cannon, p: m, v: v, maxAge: 1.25 * rangeFactor, target: target?.uid)
             pr.alt = altitude
             pr.valt = valt
@@ -547,7 +550,7 @@ extension Game {
     /// die wendigen Schiffe teilweise aus. Der Schild fängt zuerst ab, danach geht es auf den Rumpf.
     func damageRaider(_ i: Int, _ base: CGFloat, blast: Bool) {
         guard asteroids.indices.contains(i), asteroids[i].kind == .raider else { return }
-        let weaponFactor: CGFloat = blast ? 0.6 : (phase == .combat ? 1.3 : (weapon == .cannon ? 1.6 : 1))
+        let weaponFactor: CGFloat = blast ? 0.6 : (phase == .combat ? 1.0 * ship.model.role.gunDamage : (weapon == .cannon ? 1.6 : 1))
         var dmg = base * weaponDamageFactor * weaponFactor * ship.shipDamageFactor
         asteroids[i].hitAt = time
         let c = asteroids[i].center

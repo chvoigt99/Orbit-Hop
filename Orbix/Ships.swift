@@ -110,11 +110,11 @@ struct ShipModel: Identifiable {
     let drain: CGFloat
 
     static let all: [ShipModel] = [
-        ShipModel(id: "falke", name: "FALKE", classTitle: "JÄGER", blurb: "Ausgewogen. Der Standard der Flotte.",
+        ShipModel(id: "falke", name: "FALKE", classTitle: "JÄGER", blurb: "Wendiger Jäger mit Zwillingskanonen. Der Standard der Flotte.",
                   grade: .start, hull: .fighter, weapon: .cannon, speed: 1.0, energy: 100, armor: 0.1, drain: 1.0),
         ShipModel(id: "libelle", name: "LIBELLE", classTitle: "SPÄHER", blurb: "Sehr schnell und wendig, kleiner Speicher, keine Panzerung.",
                   grade: .normal, hull: .scout, weapon: .rocket, speed: 1.25, energy: 85, armor: 0, drain: 0.95),
-        ShipModel(id: "atlas", name: "ATLAS", classTitle: "FRACHTER", blurb: "Riesiger Energiespeicher, dafür träge.",
+        ShipModel(id: "atlas", name: "ATLAS", classTitle: "FRACHTER", blurb: "Riesiger Frachtraum und Energiespeicher, dafür träge.",
                   grade: .normal, hull: .hauler, weapon: .bomb, speed: 0.85, energy: 150, armor: 0.15, drain: 1.0),
         ShipModel(id: "bastion", name: "BASTION", classTitle: "PANZERSCHIFF", blurb: "Schwer gepanzert, Asteroiden bremsen kaum.",
                   grade: .normal, hull: .tank, weapon: .cannon, speed: 0.85, energy: 115, armor: 0.55, drain: 1.05),
@@ -122,7 +122,7 @@ struct ShipModel: Identifiable {
                   grade: .good, hull: .cruiser, weapon: .railgun, speed: 1.05, energy: 130, armor: 0.3, drain: 0.95),
         ShipModel(id: "viper", name: "VIPER", classTitle: "ABFANGJÄGER", blurb: "Extrem schnell, schwere Kanonen: der Schrecken der Piraten.",
                   grade: .good, hull: .interceptor, weapon: .cannon, speed: 1.35, energy: 105, armor: 0.15, drain: 0.9),
-        ShipModel(id: "titan", name: "TITAN", classTitle: "SCHLACHTSCHIFF", blurb: "Gewaltiger Speicher und dicke Panzerung.",
+        ShipModel(id: "titan", name: "TITAN", classTitle: "SCHWERER FRACHTER", blurb: "Gewaltiger Frachtraum, dicke Panzerung, zwei Geschütztürme.",
                   grade: .good, hull: .battleship, weapon: .bomb, speed: 0.9, energy: 170, armor: 0.6, drain: 1.0),
         ShipModel(id: "phantom", name: "PHANTOM", classTitle: "TARNSCHIFF", blurb: "Verbraucht kaum Energie, schnell und gut geschützt.",
                   grade: .superior, hull: .phantom, weapon: .railgun, speed: 1.3, energy: 140, armor: 0.4, drain: 0.7),
@@ -647,6 +647,16 @@ struct ShipShopView: View {
             VStack(spacing: 4) {
                 label("\(m.grade.title) · \(m.classTitle)")
                     .foregroundStyle(m.grade.color)
+                // Rolle groß und farbig: Jäger rot, Frachter blau
+                HStack(spacing: 5) {
+                    Image(systemName: m.role.symbol).font(.system(size: 10, weight: .bold))
+                    label(m.role.title)
+                }
+                .foregroundStyle(m.role.color)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Chamfer(cut: 5).fill(m.role.color.opacity(0.14)))
+                .overlay(Chamfer(cut: 5).stroke(m.role.color.opacity(0.7), lineWidth: 1))
                 Text(m.name)
                     .font(.system(size: 34, weight: .heavy, design: .monospaced))
                     .tracking(5)
@@ -687,6 +697,11 @@ struct ShipShopView: View {
                 statRow("PANZER", "\(Int(ship.armor * 100)) %", norm(ship.armor, 0, 0.85), Color(red: 1, green: 0.65, blue: 0.4))
                 statRow("VERBRAUCH", "\(Int(ship.drain * 100)) %", norm(1.15 - ship.drain, 0.05, 0.65), Color(red: 0.6, green: 0.7, blue: 1))
                 // Rolle: Frachter verdienen an Fracht, Jäger an Kopfgeld
+                Text(m.role.pitch)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(m.role.color)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 HStack(spacing: 6) {
                     label(m.role.title).foregroundStyle(m.role.color)
                     Spacer()
